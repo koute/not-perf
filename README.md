@@ -1,3 +1,5 @@
+[![Build Status](https://api.travis-ci.org/nokia/nperf.svg)](https://travis-ci.org/nokia/nperf)
+
 # A sampling CPU profiler for Linux
 
 `nperf` is a sampling CPU profiler for Linux similar to `perf`.
