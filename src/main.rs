@@ -75,6 +75,7 @@ use std::process::exit;
 use clap::{Arg, App, AppSettings, SubCommand};
 
 use cmd_record::TargetProcess;
+use cmd_collate::CollateFormat;
 
 fn main_impl() -> Result< (), Box< Error >  > {
     if env::var( "RUST_LOG" ).is_err() {
@@ -218,6 +219,17 @@ fn main_impl() -> Result< (), Box< Error >  > {
                         .help( "Completely ignores kernel callstacks" )
                 )
                 .arg(
+                    Arg::with_name( "format" )
+                        .long( "format" )
+                        .takes_value( true )
+                        .possible_values( &[
+                            "collapsed",
+                            "perf-like"
+                        ])
+                        .default_value( "collapsed" )
+                        .help( "Selects the output format" )
+                )
+                .arg(
                     Arg::with_name( "INPUT" )
                         .required( true )
                         .help( "The input file to use; record it with the `record` subcommand" )
@@ -319,6 +331,12 @@ fn main_impl() -> Result< (), Box< Error >  > {
             None
         };
 
+        let format = match matches.value_of( "format" ).unwrap() {
+            "collapsed" => CollateFormat::Collapsed,
+            "perf-like" => CollateFormat::PerfLike,
+            _ => unreachable!()
+        };
+
         let without_kernel_callstacks = matches.occurrences_of( "without-kernel-callstacks" ) > 0;
         let args = cmd_collate::Args {
             input_path,
@@ -326,7 +344,8 @@ fn main_impl() -> Result< (), Box< Error >  > {
             force_stack_size,
             omit_symbols,
             only_sample,
-            without_kernel_callstacks
+            without_kernel_callstacks,
+            format
         };
 
         cmd_collate::main( args )?;

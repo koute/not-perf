@@ -9,6 +9,7 @@ use std::path::Path;
 use std::cmp::min;
 use std::fmt;
 use std::error::Error;
+use std::borrow::Cow;
 
 use speedy::Endianness;
 use cpp_demangle;
@@ -40,7 +41,7 @@ enum Frame {
     MainThread,
     User( u64 ),
     UserBinary( BinaryId, u64 ),
-    UserSymbol( BinaryId, usize, Table ),
+    UserSymbol( BinaryId, u64, usize, Table ),
     Kernel( u64 ),
     KernelSymbol( usize )
 }
@@ -137,7 +138,7 @@ fn decode_user_frame(
                         }
                     }
 
-                    return Some( Frame::UserSymbol( binary_id, index, Table::Debug ) );
+                    return Some( Frame::UserSymbol( binary_id, address, index, Table::Debug ) );
                 }
             }
 
@@ -151,7 +152,7 @@ fn decode_user_frame(
                         }
                     }
 
-                    return Some( Frame::UserSymbol( binary_id, index, Table::Original ) );
+                    return Some( Frame::UserSymbol( binary_id, address, index, Table::Original ) );
                 }
             }
 
@@ -164,7 +165,7 @@ fn decode_user_frame(
                         }
                     }
 
-                    return Some( Frame::UserSymbol( binary_id, index, Table::AddressSpace ) );
+                    return Some( Frame::UserSymbol( binary_id, address, index, Table::AddressSpace ) );
                 }
             }
 
@@ -260,45 +261,9 @@ fn look_through_debug_symbols( debug_symbols: &[&OsStr] ) -> HashMap< String, Sy
     results
 }
 
-fn emit_frames(
-    omit_regex: &Option< Regex >,
-    kallsyms: &RangeMap< KernelSymbol >,
-    address_space: Option< &Box< IAddressSpace > >,
-    binary_by_id: &HashMap< BinaryId, Binary >,
-    process: &Process,
-    pid: u32,
-    tid: u32,
-    user_backtrace: &[UserFrame],
-    kernel_backtrace: &[u64],
-    stacks: &mut HashMap< Vec< Frame >, u64 >
-) {
-    let mut frames = Vec::with_capacity( user_backtrace.len() + kernel_backtrace.len() + 1 );
-    for &addr in kernel_backtrace.iter() {
-        if let Some( index ) = kallsyms.get_index( addr ) {
-            frames.push( Frame::KernelSymbol( index ) );
-        } else {
-            frames.push( Frame::Kernel( addr ) );
-        }
-    }
-
-    for user_frame in user_backtrace.iter() {
-        let frame = match decode_user_frame( omit_regex, address_space, process, &binary_by_id, user_frame ) {
-            Some( frame ) => frame,
-            None => return // Was filtered out.
-        };
-
-        frames.push( frame );
-    }
-
-    if pid == tid {
-        frames.push( Frame::MainThread );
-    } else {
-        frames.push( Frame::Thread( tid ) );
-    }
-
-    frames.push( Frame::Process( pid ) );
-
-    *stacks.entry( frames ).or_insert( 0 ) += 1;
+pub enum CollateFormat {
+    Collapsed,
+    PerfLike
 }
 
 pub struct Args< 'a > {
@@ -307,12 +272,20 @@ pub struct Args< 'a > {
     pub force_stack_size: Option< u32 >,
     pub omit_symbols: Vec< &'a str >,
     pub only_sample: Option< u64 >,
-    pub without_kernel_callstacks: bool
+    pub without_kernel_callstacks: bool,
+    pub format: CollateFormat
+}
+
+struct CollateArgs< 'a > {
+    input_path: &'a OsStr,
+    debug_symbols: &'a [&'a OsStr],
+    force_stack_size: Option< u32 >,
+    only_sample: Option< u64 >,
+    without_kernel_callstacks: bool,
 }
 
 struct Collation {
     kallsyms: RangeMap< KernelSymbol >,
-    stacks: HashMap< Vec< Frame >, u64 >,
     process_index_by_pid: HashMap< u32, usize >,
     processes: Vec< Process >,
     thread_names: HashMap< u32, String >,
@@ -320,38 +293,63 @@ struct Collation {
     address_space: Option< Box< IAddressSpace > >
 }
 
-fn collate( args: Args ) -> Result< Collation, Box< Error > > {
+impl Collation {
+    fn get_user_symbol< 'a >( &'a self, demangle_cache: &'a mut DemangleCache, binary_id: &BinaryId, symbol_index: usize, table: Table ) -> (&'a str, &'a Binary) {
+        let binary = self.binary_by_id.get( &binary_id ).unwrap();
+        let symbol = match table {
+            Table::Original => binary.symbols.as_ref().unwrap().get_symbol_by_index( symbol_index ).unwrap().1,
+            Table::Debug => binary.debug_symbols.as_ref().unwrap().get_symbol_by_index( symbol_index ).unwrap().1,
+            Table::AddressSpace => self.address_space.as_ref().unwrap().get_symbol_by_index( &binary_id, symbol_index ).1
+        };
+
+        (demangle_cache.demangle( symbol ).unwrap_or( symbol ), binary)
+    }
+
+    fn get_kernel_symbol( &self, symbol_index: usize ) -> &KernelSymbol {
+        self.kallsyms.get_value_by_index( symbol_index ).unwrap()
+    }
+
+    fn get_binary( &self, binary_id: &BinaryId ) -> &Binary {
+        self.binary_by_id.get( binary_id ).unwrap()
+    }
+
+    fn get_thread_name( &self, tid: u32 ) -> Option< &str > {
+        self.thread_names.get( &tid ).map( |str| str.as_str() )
+    }
+
+    fn get_process( &self, pid: u32 ) -> Option< &Process > {
+        self.process_index_by_pid.get( &pid ).map( |&index| &self.processes[ index ] )
+    }
+}
+
+fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box< Error > >
+    where F: FnMut( &Collation, u64, &Process, u32, u32, &[UserFrame], &[u64] )
+{
     let fp = fs::File::open( args.input_path ).map_err( |err| format!( "cannot open {:?}: {}", args.input_path, err ) )?;
     let mut reader = ArchiveReader::new( fp ).validate_header().unwrap().skip_unknown();
 
-    let mut stacks = HashMap::new();
-    let mut processes: Vec< Process > = Vec::new();
-    let mut process_index_by_pid: HashMap< u32, usize > = HashMap::new();
-    let mut binary_by_id = HashMap::new();
+    let mut collation = Collation {
+        kallsyms: RangeMap::new(),
+        process_index_by_pid: HashMap::new(),
+        processes: Vec::new(),
+        thread_names: HashMap::new(),
+        binary_by_id: HashMap::new(),
+        address_space: None
+    };
+
     let mut machine_architecture = String::new();
     let mut machine_endianness = Endianness::LittleEndian;
     let mut machine_bitness = Bitness::B64;
-    let mut kallsyms = RangeMap::new();
-    let mut address_space: Option< Box< IAddressSpace > > = None;
     let mut sample_counter = 0;
-    let mut thread_names = HashMap::new();
     let mut binary_source_map = HashMap::new();
 
     let mut debug_symbols = look_through_debug_symbols( &args.debug_symbols );
-
-    let omit_regex = if args.omit_symbols.is_empty() {
-        None
-    } else {
-        let regex = args.omit_symbols.join( "|" );
-        let regex = Regex::new( &regex ).expect( "invalid regexp passed in `--omit`" );
-        Some( regex )
-    };
 
     while let Some( packet ) = reader.next() {
         let packet = packet.unwrap();
         match packet {
             Packet::MachineInfo { architecture, bitness, endianness, .. } => {
-                address_space = match &*architecture {
+                collation.address_space = match &*architecture {
                     arch::arm::Arch::NAME => Some( Box::new( AddressSpace::< arch::arm::Arch >::new() ) ),
                     arch::amd64::Arch::NAME => Some( Box::new( AddressSpace::< arch::amd64::Arch >::new() ) ),
                     arch::mips64::Arch::NAME => Some( Box::new( AddressSpace::< arch::mips64::Arch >::new() ) ),
@@ -375,9 +373,9 @@ fn collate( args: Args ) -> Result< Collation, Box< Error > > {
                     address_space_needs_reload: true
                 };
 
-                let process_index = processes.len();
-                processes.push( process );
-                process_index_by_pid.insert( pid, process_index );
+                let process_index = collation.processes.len();
+                collation.processes.push( process );
+                collation.process_index_by_pid.insert( pid, process_index );
             },
             Packet::BinaryInfo { id, symbol_table_count, path, debuglink, .. } => {
                 let debuglink_length = debuglink.iter().position( |&byte| byte == 0 ).unwrap_or( debuglink.len() );
@@ -406,11 +404,11 @@ fn collate( args: Args ) -> Result< Collation, Box< Error > > {
                     }
                 }
 
-                binary_by_id.insert( id, binary );
+                collation.binary_by_id.insert( id, binary );
             },
             Packet::MemoryRegionMap { pid, range, is_read, is_write, is_executable, is_shared, file_offset, inode, major, minor, name } => {
-                let process = match process_index_by_pid.get( &pid ).cloned() {
-                    Some( index ) => &mut processes[ index ],
+                let process = match collation.process_index_by_pid.get( &pid ).cloned() {
+                    Some( index ) => &mut collation.processes[ index ],
                     None => continue
                 };
 
@@ -439,8 +437,8 @@ fn collate( args: Args ) -> Result< Collation, Box< Error > > {
                 process.address_space_needs_reload = true;
             },
             Packet::MemoryRegionUnmap { pid, range } => {
-                let process = match process_index_by_pid.get( &pid ).cloned() {
-                    Some( index ) => &mut processes[ index ],
+                let process = match collation.process_index_by_pid.get( &pid ).cloned() {
+                    Some( index ) => &mut collation.processes[ index ],
                     None => continue
                 };
 
@@ -449,12 +447,12 @@ fn collate( args: Args ) -> Result< Collation, Box< Error > > {
                 process.address_space_needs_reload = true;
             },
             Packet::BinaryMap { pid, id, base_address } => {
-                let process = match process_index_by_pid.get( &pid ).cloned() {
-                    Some( index ) => &mut processes[ index ],
+                let process = match collation.process_index_by_pid.get( &pid ).cloned() {
+                    Some( index ) => &mut collation.processes[ index ],
                     None => continue
                 };
 
-                let binary = match binary_by_id.get( &id ) {
+                let binary = match collation.binary_by_id.get( &id ) {
                     Some( binary ) => binary,
                     None => {
                         warn!( "Unknown binary mapped for PID {}: {:?}", pid, id );
@@ -467,12 +465,12 @@ fn collate( args: Args ) -> Result< Collation, Box< Error > > {
                 process.address_space_needs_reload = true;
             },
             Packet::BinaryUnmap { pid, id, .. } => {
-                let process = match process_index_by_pid.get( &pid ).cloned() {
-                    Some( index ) => &mut processes[ index ],
+                let process = match collation.process_index_by_pid.get( &pid ).cloned() {
+                    Some( index ) => &mut collation.processes[ index ],
                     None => continue
                 };
 
-                let binary = match binary_by_id.get( &id ) {
+                let binary = match collation.binary_by_id.get( &id ) {
                     Some( binary ) => binary,
                     None => {
                         warn!( "Unknown binary unmapped for PID {}: {:?}", pid, id );
@@ -485,11 +483,11 @@ fn collate( args: Args ) -> Result< Collation, Box< Error > > {
                 process.address_space_needs_reload = true;
             },
             Packet::StringTable { binary_id, offset, data } => {
-                let binary = binary_by_id.get_mut( &binary_id ).unwrap();
+                let binary = collation.binary_by_id.get_mut( &binary_id ).unwrap();
                 Arc::get_mut( &mut binary.string_tables ).unwrap().add( offset, data.into_owned() );
             },
             Packet::SymbolTable { binary_id, offset, data, string_table_offset, is_dynamic } => {
-                let binary = binary_by_id.get_mut( &binary_id ).unwrap();
+                let binary = collation.binary_by_id.get_mut( &binary_id ).unwrap();
 
                 let range = offset..offset + data.len() as u64;
                 let strtab_range = binary.string_tables.range_by_offset( string_table_offset );
@@ -518,7 +516,7 @@ fn collate( args: Args ) -> Result< Collation, Box< Error > > {
                     binary.symbol_tables_chunks.clear();
                 }
             },
-            Packet::Sample { user_backtrace, mut kernel_backtrace, pid, tid, .. } => {
+            Packet::Sample { user_backtrace, mut kernel_backtrace, pid, tid, cpu, timestamp, .. } => {
                 if let Some( only_sample ) = args.only_sample {
                     if only_sample != sample_counter {
                         sample_counter += 1;
@@ -528,7 +526,7 @@ fn collate( args: Args ) -> Result< Collation, Box< Error > > {
 
                 debug!( "Sample #{}", sample_counter );
 
-                let process = &processes[0];
+                let process = &collation.processes[ 0 ];
                 if process.pid != pid {
                     debug!( "Sample #{} is from different process with PID {}, skipping!", sample_counter, pid );
                     continue;
@@ -538,22 +536,11 @@ fn collate( args: Args ) -> Result< Collation, Box< Error > > {
                     kernel_backtrace = Vec::new().into();
                 }
 
-                emit_frames(
-                    &omit_regex,
-                    &kallsyms,
-                    None,
-                    &binary_by_id,
-                    process,
-                    pid,
-                    tid,
-                    &user_backtrace,
-                    &kernel_backtrace,
-                    &mut stacks
-                );
+                on_sample( &collation, timestamp, process, tid, cpu, &user_backtrace, &kernel_backtrace );
 
                 sample_counter += 1;
             },
-            Packet::RawSample { mut kernel_backtrace, pid, tid, stack, regs, .. } => {
+            Packet::RawSample { mut kernel_backtrace, pid, tid, stack, regs, cpu, timestamp, .. } => {
                 if let Some( only_sample ) = args.only_sample {
                     if only_sample != sample_counter {
                         sample_counter += 1;
@@ -563,8 +550,7 @@ fn collate( args: Args ) -> Result< Collation, Box< Error > > {
 
                 debug!( "Sample #{}", sample_counter );
 
-                let process = &mut processes[0];
-                if process.pid != pid {
+                if collation.processes[ 0 ].pid != pid {
                     debug!( "Sample #{} is from different process with PID {}, skipping!", sample_counter, pid );
                     continue;
                 }
@@ -573,7 +559,8 @@ fn collate( args: Args ) -> Result< Collation, Box< Error > > {
                     kernel_backtrace = Vec::new().into();
                 }
 
-                if let Some( ref mut address_space ) = address_space {
+                let user_backtrace = if let Some( ref mut address_space ) = collation.address_space {
+                    let mut process = &mut collation.processes[ 0 ];
                     if process.address_space_needs_reload {
                         process.address_space_needs_reload = false;
                         let binaries = binary_source_map.clone();
@@ -594,19 +581,13 @@ fn collate( args: Args ) -> Result< Collation, Box< Error > > {
                     let reader = StackReader { stack: stack.into() };
                     let mut user_backtrace = Vec::new();
                     address_space.unwind( &mut dwarf_regs, &reader, &mut user_backtrace );
+                    Some( user_backtrace )
+                } else {
+                    None
+                };
 
-                    emit_frames(
-                        &omit_regex,
-                        &kallsyms,
-                        Some( address_space ),
-                        &binary_by_id,
-                        process,
-                        pid,
-                        tid,
-                        &user_backtrace,
-                        &kernel_backtrace,
-                        &mut stacks
-                    );
+                if let Some( user_backtrace ) = user_backtrace {
+                    on_sample( &collation, timestamp, &collation.processes[ 0 ], tid, cpu, &user_backtrace, &kernel_backtrace );
                 }
 
                 sample_counter += 1;
@@ -617,142 +598,264 @@ fn collate( args: Args ) -> Result< Collation, Box< Error > > {
                 binary_source_map.insert( id, source );
             },
             Packet::FileBlob { ref path, ref data } if path.as_ref() == b"/proc/kallsyms" => {
-                kallsyms = kallsyms::parse( data.as_ref() );
+                collation.kallsyms = kallsyms::parse( data.as_ref() );
             },
             Packet::ThreadName { tid, name, .. } => {
                 if name.is_empty() {
-                    thread_names.remove( &tid );
+                    collation.thread_names.remove( &tid );
                     continue;
                 }
 
                 let name = String::from_utf8_lossy( &name ).into_owned();
-                thread_names.insert( tid, name );
+                collation.thread_names.insert( tid, name );
             },
             _ => {}
         }
     }
 
 
-    Ok( Collation {
-        kallsyms,
-        stacks,
-        process_index_by_pid,
-        processes,
-        thread_names,
-        binary_by_id,
-        address_space
-    })
+    Ok( collation )
 }
 
-struct Decoder< 'a > {
-    collation: &'a Collation,
-    demangle_cache: DemangleCache
-}
-
-impl< 'a > Decoder< 'a > {
-    fn new( collation: &'a Collation ) -> Self {
-        Decoder {
-            collation,
-            demangle_cache: DemangleCache::new()
+fn collapse_frames(
+    omit_regex: &Option< Regex >,
+    collation: &Collation,
+    process: &Process,
+    tid: u32,
+    user_backtrace: &[UserFrame],
+    kernel_backtrace: &[u64],
+    stacks: &mut HashMap< Vec< Frame >, u64 >
+) {
+    let mut frames = Vec::with_capacity( user_backtrace.len() + kernel_backtrace.len() + 1 );
+    for &addr in kernel_backtrace.iter() {
+        if let Some( index ) = collation.kallsyms.get_index( addr ) {
+            frames.push( Frame::KernelSymbol( index ) );
+        } else {
+            frames.push( Frame::Kernel( addr ) );
         }
     }
 
-    fn get_user_symbol( &mut self, binary_id: &BinaryId, symbol_index: usize, table: Table ) -> (&str, &Binary) {
-        let binary = self.collation.binary_by_id.get( &binary_id ).unwrap();
-        let symbol = match table {
-            Table::Original => binary.symbols.as_ref().unwrap().get_symbol_by_index( symbol_index ).unwrap().1,
-            Table::Debug => binary.debug_symbols.as_ref().unwrap().get_symbol_by_index( symbol_index ).unwrap().1,
-            Table::AddressSpace => self.collation.address_space.as_ref().unwrap().get_symbol_by_index( &binary_id, symbol_index ).1
+    for user_frame in user_backtrace.iter() {
+        let frame = match decode_user_frame(
+            omit_regex,
+            collation.address_space.as_ref(),
+            process,
+            &collation.binary_by_id,
+            user_frame
+        ) {
+            Some( frame ) => frame,
+            None => return // Was filtered out.
         };
 
-        (self.demangle_cache.demangle( symbol ).unwrap_or( symbol ), binary)
+        frames.push( frame );
     }
 
-    fn get_kernel_symbol( &self, symbol_index: usize ) -> &KernelSymbol {
-        self.collation.kallsyms.get_value_by_index( symbol_index ).unwrap()
+    if process.pid == tid {
+        frames.push( Frame::MainThread );
+    } else {
+        frames.push( Frame::Thread( tid ) );
     }
 
-    fn get_binary( &self, binary_id: &BinaryId ) -> &Binary {
-        self.collation.binary_by_id.get( binary_id ).unwrap()
+    frames.push( Frame::Process( process.pid ) );
+
+    *stacks.entry( frames ).or_insert( 0 ) += 1;
+}
+
+fn escape< 'a >( string: &'a str ) -> Cow< 'a, str > {
+    let mut output: Cow< str > = string.into();
+    if output.contains( " " ) {
+        output = output.replace( " ", "_" ).into();
+    }
+    output
+}
+
+fn write_perf_like_output< T: io::Write >(
+    omit_regex: &Option< Regex >,
+    collation: &Collation,
+    demangle_cache: &mut DemangleCache,
+    process: &Process,
+    tid: u32,
+    user_backtrace: &[UserFrame],
+    kernel_backtrace: &[u64],
+    cpu: u32,
+    timestamp: u64,
+    output: &mut T
+) -> Result< (), io::Error > {
+    let mut frames = Vec::new();
+    for user_frame in user_backtrace {
+        let frame = decode_user_frame(
+            omit_regex,
+            collation.address_space.as_ref(),
+            process,
+            &collation.binary_by_id,
+            user_frame
+        );
+
+        let frame = match frame {
+            Some( frame ) => frame,
+            None => return Ok(()) // Was filtered out.
+        };
+
+        frames.push( frame );
     }
 
-    fn get_thread_name( &self, tid: u32 ) -> Option< &str > {
-        self.collation.thread_names.get( &tid ).map( |str| str.as_str() )
-    }
+    let secs = timestamp / 1000_000_000;
+    let nsecs = timestamp - (secs * 1000_000_000);
+    write!( output, "{}", escape( &process.executable ) )?;
+    writeln!( output, " {}/{} [{:03}] {}.{:09}: cpu-clock: ", process.pid, tid, cpu, secs, nsecs )?;
 
-    fn get_process( &self, pid: u32 ) -> Option< &Process > {
-        self.collation.process_index_by_pid.get( &pid ).map( |&index| &self.collation.processes[ index ] )
-    }
-
-    fn write_frame< T: fmt::Write >( &mut self, output: &mut T, frame: &Frame ) {
-        match *frame {
-            Frame::Process( pid ) => {
-                if let Some( process ) = self.get_process( pid ) {
-                    write!( output, "{} [PID={}]", process.executable, pid ).unwrap()
-                } else {
-                    write!( output, "[PID={}]", pid ).unwrap()
-                }
-            },
-            Frame::MainThread => {
-                write!( output, "[MAIN_THREAD]" ).unwrap()
-            },
-            Frame::Thread( tid ) => {
-                if let Some( name ) = self.get_thread_name( tid ) {
-                    write!( output, "{} [THREAD={}]", name, tid ).unwrap()
-                } else {
-                    write!( output, "[THREAD={}]", tid ).unwrap()
-                }
-            },
-            Frame::UserSymbol( ref binary_id, symbol_index, table ) => {
-                let (symbol, binary) = self.get_user_symbol( binary_id, symbol_index, table );
-                write!( output, "{} [{}]", symbol, binary.basename ).unwrap()
-            },
-            Frame::UserBinary( ref binary_id, addr ) => {
-                let binary = self.get_binary( binary_id );
-                write!( output, "0x{:016X} [{}]", addr, binary.basename ).unwrap()
-            },
-            Frame::User( addr ) => {
-                write!( output, "0x{:016X}", addr ).unwrap()
-            },
-            Frame::KernelSymbol( symbol_index ) => {
-                let symbol = self.get_kernel_symbol( symbol_index );
-                if let Some( module ) = symbol.module.as_ref() {
-                    write!( output, "{} [linux:{}]_[k]", symbol.name, module ).unwrap()
-                } else {
-                    write!( output, "{} [linux]_[k]", symbol.name ).unwrap()
-                }
-            },
-            Frame::Kernel( addr ) => {
-                write!( output, "0x{:016X}_[k]", addr ).unwrap()
+    for &address in kernel_backtrace {
+        if let Some( symbol ) = collation.kallsyms.get_value( address ) {
+            if let Some( module ) = symbol.module.as_ref() {
+                writeln!( output, "\t{:16X} {} ([linux:{}])", address, symbol.name, module ).unwrap()
+            } else {
+                writeln!( output, "\t{:16X} {} ([linux])", address, symbol.name ).unwrap()
             }
+        } else {
+            writeln!( output, "\t{:16X} 0x{:016X} ([linux])", address, address )?;
+        }
+    }
+
+    for frame in frames {
+        match frame {
+            Frame::User( address ) => {
+                writeln!( output, "\t{:16X} 0x{:016X} ([unknown])", address, address )?;
+            },
+            Frame::UserBinary( ref binary_id, address ) => {
+                let binary = collation.get_binary( binary_id );
+                writeln!( output, "\t{:16X} 0x{:016X} ({})", address, address, binary.basename )?;
+            },
+            Frame::UserSymbol( ref binary_id, address, symbol_index, table ) => {
+                let (symbol, binary) = collation.get_user_symbol( demangle_cache, binary_id, symbol_index, table );
+                writeln!( output, "\t{:16X} {} ({})", address, symbol, binary.basename )?;
+            },
+            _ => unreachable!()
+        }
+    }
+
+    writeln!( output )?;
+
+    Ok(())
+}
+
+fn write_frame< T: fmt::Write >( collation: &Collation, demangle_cache: &mut DemangleCache, output: &mut T, frame: &Frame ) {
+    match *frame {
+        Frame::Process( pid ) => {
+            if let Some( process ) = collation.get_process( pid ) {
+                write!( output, "{} [PID={}]", process.executable, pid ).unwrap()
+            } else {
+                write!( output, "[PID={}]", pid ).unwrap()
+            }
+        },
+        Frame::MainThread => {
+            write!( output, "[MAIN_THREAD]" ).unwrap()
+        },
+        Frame::Thread( tid ) => {
+            if let Some( name ) = collation.get_thread_name( tid ) {
+                write!( output, "{} [THREAD={}]", name, tid ).unwrap()
+            } else {
+                write!( output, "[THREAD={}]", tid ).unwrap()
+            }
+        },
+        Frame::UserSymbol( ref binary_id, _, symbol_index, table ) => {
+            let (symbol, binary) = collation.get_user_symbol( demangle_cache, binary_id, symbol_index, table );
+            write!( output, "{} [{}]", symbol, binary.basename ).unwrap()
+        },
+        Frame::UserBinary( ref binary_id, addr ) => {
+            let binary = collation.get_binary( binary_id );
+            write!( output, "0x{:016X} [{}]", addr, binary.basename ).unwrap()
+        },
+        Frame::User( addr ) => {
+            write!( output, "0x{:016X}", addr ).unwrap()
+        },
+        Frame::KernelSymbol( symbol_index ) => {
+            let symbol = collation.get_kernel_symbol( symbol_index );
+            if let Some( module ) = symbol.module.as_ref() {
+                write!( output, "{} [linux:{}]_[k]", symbol.name, module ).unwrap()
+            } else {
+                write!( output, "{} [linux]_[k]", symbol.name ).unwrap()
+            }
+        },
+        Frame::Kernel( addr ) => {
+            write!( output, "0x{:016X}_[k]", addr ).unwrap()
         }
     }
 }
 
 pub fn main( args: Args ) -> Result< (), Box< Error > > {
-    let collation = collate( args )?;
+    let omit_regex = if args.omit_symbols.is_empty() {
+        None
+    } else {
+        let regex = args.omit_symbols.join( "|" );
+        let regex = Regex::new( &regex ).expect( "invalid regexp passed in `--omit`" );
+        Some( regex )
+    };
 
-    let mut decoder = Decoder::new( &collation );
-    let stdout = io::stdout();
-    let mut stdout = stdout.lock();
+    let collate_args = CollateArgs {
+        input_path: args.input_path,
+        debug_symbols: &args.debug_symbols,
+        force_stack_size: args.force_stack_size,
+        only_sample: args.only_sample,
+        without_kernel_callstacks: args.without_kernel_callstacks
+    };
 
-    let mut line = String::new();
-    for (ref frames, count) in &decoder.collation.stacks {
-        line.clear();
+    match args.format {
+        CollateFormat::Collapsed => {
+            let mut stacks: HashMap< Vec< Frame >, u64 > = HashMap::new();
+            let collation = collate( collate_args, |collation, _timestamp, process, tid, _cpu, user_backtrace, kernel_backtrace| {
+                collapse_frames(
+                    &omit_regex,
+                    &collation,
+                    process,
+                    tid,
+                    &user_backtrace,
+                    &kernel_backtrace,
+                    &mut stacks
+                );
+            })?;
 
-        let mut is_first = true;
-        for frame in frames.into_iter().rev() {
-            if is_first {
-                is_first = false;
-            } else {
-                line.push( ';' );
+            let mut demangle_cache = DemangleCache::new();
+            let stdout = io::stdout();
+            let mut stdout = stdout.lock();
+
+            let mut line = String::new();
+            for (ref frames, count) in &stacks {
+                line.clear();
+
+                let mut is_first = true;
+                for frame in frames.into_iter().rev() {
+                    if is_first {
+                        is_first = false;
+                    } else {
+                        line.push( ';' );
+                    }
+
+                    write_frame( &collation, &mut demangle_cache, &mut line, frame );
+                }
+
+                write!( &mut line, " {}\n", count ).unwrap();
+                stdout.write_all( line.as_bytes() ).unwrap();
             }
-
-            decoder.write_frame( &mut line, frame );
+        },
+        CollateFormat::PerfLike => {
+            let mut demangle_cache = DemangleCache::new();
+            let stdout = io::stdout();
+            let mut stdout = stdout.lock();
+            collate( collate_args, |collation, timestamp, process, tid, cpu, user_backtrace, kernel_backtrace| {
+                write_perf_like_output(
+                    &omit_regex,
+                    &collation,
+                    &mut demangle_cache,
+                    process,
+                    tid,
+                    &user_backtrace,
+                    &kernel_backtrace,
+                    cpu,
+                    timestamp,
+                    &mut stdout
+                ).unwrap();
+            })?;
         }
-
-        write!( &mut line, " {}\n", count ).unwrap();
-        stdout.write_all( line.as_bytes() ).unwrap();
     }
 
     Ok(())
@@ -760,34 +863,58 @@ pub fn main( args: Args ) -> Result< (), Box< Error > > {
 
 #[cfg(test)]
 mod test {
-    use super::{Args, Frame, Decoder, Collation, collate};
+    use super::{CollateArgs, Frame, DemangleCache, Collation, collate, collapse_frames};
     use std::path::Path;
+    use std::collections::HashMap;
+    use std::cell::RefCell;
     use env_logger;
 
-    fn load( filename: &str ) -> Collation {
-        let _ = env_logger::try_init();
-        let path = Path::new( env!( "CARGO_MANIFEST_DIR" ) ).join( "test-data" ).join( "artifacts" ).join( filename );
-        let collation = collate( Args {
-            input_path: path.as_os_str(),
-            debug_symbols: vec![],
-            force_stack_size: None,
-            omit_symbols: vec![],
-            only_sample: None,
-            without_kernel_callstacks: false
-        }).unwrap();
-
-        collation
+    struct Data {
+        collation: Collation,
+        demangle_cache: RefCell< DemangleCache >,
+        stacks: HashMap< Vec< Frame >, u64 >
     }
 
-    fn most_frequent_trace< 'a >( decoder: &Decoder< 'a > ) -> (&'a [Frame], u64) {
-        let (frames, count) = decoder.collation.stacks.iter().max_by( |a, b| a.1.cmp( &b.1 ) ).unwrap();
+    fn load( filename: &str ) -> Data {
+        let _ = env_logger::try_init();
+        let path = Path::new( env!( "CARGO_MANIFEST_DIR" ) ).join( "test-data" ).join( "artifacts" ).join( filename );
+        let args = CollateArgs {
+            input_path: path.as_os_str(),
+            debug_symbols: &[],
+            force_stack_size: None,
+            only_sample: None,
+            without_kernel_callstacks: false
+        };
+
+        let mut stacks: HashMap< Vec< Frame >, u64 > = HashMap::new();
+        let collation = collate( args, |collation, _timestamp, process, tid, _cpu, user_backtrace, kernel_backtrace| {
+            collapse_frames(
+                &None,
+                &collation,
+                process,
+                tid,
+                &user_backtrace,
+                &kernel_backtrace,
+                &mut stacks
+            );
+        }).unwrap();
+
+        Data {
+            collation,
+            demangle_cache: RefCell::new( DemangleCache::new() ),
+            stacks
+        }
+    }
+
+    fn most_frequent_trace( data: &Data ) -> (&[Frame], u64) {
+        let (frames, count) = data.stacks.iter().max_by( |a, b| a.1.cmp( &b.1 ) ).unwrap();
         (&frames, *count)
     }
 
-    fn frame_to_str( decoder: &mut Decoder, frame: &Frame ) -> String {
+    fn frame_to_str( data: &Data, frame: &Frame ) -> String {
         match *frame {
             Frame::Process( pid ) => {
-                if let Some( process ) = decoder.get_process( pid ) {
+                if let Some( process ) = data.collation.get_process( pid ) {
                     format!( "[process:{}]", process.executable )
                 } else {
                     format!( "[process]" )
@@ -797,25 +924,26 @@ mod test {
                 format!( "[main_thread]" )
             },
             Frame::Thread( tid ) => {
-                if let Some( name ) = decoder.get_thread_name( tid ) {
+                if let Some( name ) = data.collation.get_thread_name( tid ) {
                     format!( "[thread:{}]", name )
                 } else {
                     format!( "[thread]" )
                 }
             },
-            Frame::UserSymbol( ref binary_id, symbol_index, table ) => {
-                let (symbol, binary) = decoder.get_user_symbol( binary_id, symbol_index, table );
+            Frame::UserSymbol( ref binary_id, _, symbol_index, table ) => {
+                let mut demangle_cache = data.demangle_cache.borrow_mut();
+                let (symbol, binary) = data.collation.get_user_symbol( &mut demangle_cache, binary_id, symbol_index, table );
                 format!( "{}:{}", symbol, binary.basename )
             },
             Frame::UserBinary( ref binary_id, _ ) => {
-                let binary = decoder.get_binary( binary_id );
+                let binary = data.collation.get_binary( binary_id );
                 format!( "?:{}", binary.basename )
             },
             Frame::User( _ ) => {
                 format!( "?" )
             },
             Frame::KernelSymbol( symbol_index ) => {
-                let symbol = decoder.get_kernel_symbol( symbol_index );
+                let symbol = data.collation.get_kernel_symbol( symbol_index );
                 if let Some( module ) = symbol.module.as_ref() {
                     format!( "{}:{}:linux", symbol.name, module )
                 } else {
@@ -828,11 +956,11 @@ mod test {
         }
     }
 
-    fn frames_to_str< 'a, I: IntoIterator< Item = &'a Frame > >( decoder: &mut Decoder, frames: I, highlighted: Option< usize > ) -> String
+    fn frames_to_str< 'a, I: IntoIterator< Item = &'a Frame > >( data: &Data, frames: I, highlighted: Option< usize > ) -> String
         where <I as IntoIterator>::IntoIter: DoubleEndedIterator
     {
         let frames: Vec< _ > = frames.into_iter().rev().enumerate().map( |(index, frame)| {
-            let frame = frame_to_str( decoder, frame );
+            let frame = frame_to_str( data, frame );
             if highlighted.map( |highlighted| index == highlighted ).unwrap_or( false ) {
                 format!( "    >>>{}<<<", frame )
             } else {
@@ -855,7 +983,7 @@ mod test {
         frames.join( "\n" )
     }
 
-    fn assert_backtrace( decoder: &mut Decoder, frames: &[Frame], expected_frames: &[&str] ) {
+    fn assert_backtrace( data: &Data, frames: &[Frame], expected_frames: &[&str] ) {
         let mut expected_iter = expected_frames.iter();
         let mut actual_iter = frames.iter().rev().enumerate();
 
@@ -869,13 +997,13 @@ mod test {
 
                     eprintln!( "" );
                     eprintln!( "Expected ({} frames)\n{}", expected_frames.len(), join( expected_frames, None ) );
-                    eprintln!( "Actual ({} frames)\n{}", frames.len(), frames_to_str( decoder, frames, None ) );
+                    eprintln!( "Actual ({} frames)\n{}", frames.len(), frames_to_str( data, frames, None ) );
                     panic!( "Expected a longer stack trace!" );
                 },
                 (None, Some( _ )) => {
                     eprintln!( "" );
                     eprintln!( "Expected ({} frames)\n{}", expected_frames.len(), join( expected_frames, None ) );
-                    eprintln!( "Actual ({} frames)\n{}", frames.len(), frames_to_str( decoder, frames, None ) );
+                    eprintln!( "Actual ({} frames)\n{}", frames.len(), frames_to_str( data, frames, None ) );
                     panic!( "Expected a shorter stack trace!" );
                 },
                 (Some( expected ), Some( (index, actual) )) => (expected, actual, index)
@@ -890,26 +1018,25 @@ mod test {
                 break;
             }
 
-            let actual = frame_to_str( decoder, actual );
+            let actual = frame_to_str( data, actual );
             if expected == actual {
                 continue;
             }
 
             eprintln!( "" );
             eprintln!( "Expected ({} frames)\n{}", expected_frames.len(), join( expected_frames, Some( index ) ) );
-            eprintln!( "Actual ({} frames)\n{}", frames.len(), frames_to_str( decoder, frames, Some( index ) ) );
+            eprintln!( "Actual ({} frames)\n{}", frames.len(), frames_to_str( data, frames, Some( index ) ) );
             panic!( "Unexpected stack trace!" );
         }
     }
 
     #[test]
     fn collate_arm_hot_spot_usleep_in_a_loop_no_fp() {
-        let collation = load( "arm-usleep_in_a_loop_no_fp.nperf" );
-        let mut decoder = Decoder::new( &collation );
+        let data = load( "arm-usleep_in_a_loop_no_fp.nperf" );
 
-        let (frames, count) = most_frequent_trace( &decoder );
+        let (frames, count) = most_frequent_trace( &data );
         assert!( count >= 100 );
-        assert_backtrace( &mut decoder, frames, &[
+        assert_backtrace( &data, frames, &[
             "[process:arm-usleep_in_a_loop_no_fp]",
             "[main_thread]",
             "?:arm-usleep_in_a_loop_no_fp",
@@ -926,11 +1053,10 @@ mod test {
 
     #[test]
     fn collate_arm_perfect_unwinding_usleep_in_a_loop_no_fp() {
-        let collation = load( "arm-usleep_in_a_loop_no_fp.nperf" );
-        let mut decoder = Decoder::new( &collation );
+        let data = load( "arm-usleep_in_a_loop_no_fp.nperf" );
 
-        for (ref frames, _) in &decoder.collation.stacks {
-            assert_backtrace( &mut decoder, &frames, &[
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
                 "[process:arm-usleep_in_a_loop_no_fp]",
                 "[main_thread]",
                 "?:arm-usleep_in_a_loop_no_fp",
@@ -943,12 +1069,11 @@ mod test {
 
     #[test]
     fn collate_arm_hot_spot_usleep_in_a_loop_fp() {
-        let collation = load( "arm-usleep_in_a_loop_fp.nperf" );
-        let mut decoder = Decoder::new( &collation );
+        let data = load( "arm-usleep_in_a_loop_fp.nperf" );
 
-        let (frames, count) = most_frequent_trace( &decoder );
+        let (frames, count) = most_frequent_trace( &data );
         assert!( count >= 100 );
-        assert_backtrace( &mut decoder, frames, &[
+        assert_backtrace( &data, frames, &[
             "[process:arm-usleep_in_a_loop_fp]",
             "[main_thread]",
             "?:arm-usleep_in_a_loop_fp",
@@ -965,11 +1090,10 @@ mod test {
 
     #[test]
     fn collate_arm_perfect_unwinding_usleep_in_a_loop_fp() {
-        let collation = load( "arm-usleep_in_a_loop_fp.nperf" );
-        let mut decoder = Decoder::new( &collation );
+        let data = load( "arm-usleep_in_a_loop_fp.nperf" );
 
-        for (ref frames, _) in &decoder.collation.stacks {
-            assert_backtrace( &mut decoder, &frames, &[
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
                 "[process:arm-usleep_in_a_loop_fp]",
                 "[main_thread]",
                 "?:arm-usleep_in_a_loop_fp",
@@ -982,12 +1106,11 @@ mod test {
 
     #[test]
     fn collate_amd64_hot_spot_usleep_in_a_loop_no_fp() {
-        let collation = load( "amd64-usleep_in_a_loop_no_fp.nperf" );
-        let mut decoder = Decoder::new( &collation );
+        let data = load( "amd64-usleep_in_a_loop_no_fp.nperf" );
 
-        let (frames, count) = most_frequent_trace( &decoder );
+        let (frames, count) = most_frequent_trace( &data );
         assert!( count >= 100 );
-        assert_backtrace( &mut decoder, frames, &[
+        assert_backtrace( &data, frames, &[
             "[process:amd64-usleep_in_a_loop_no_fp]",
             "[main_thread]",
             "_start:amd64-usleep_in_a_loop_no_fp",
@@ -1004,11 +1127,10 @@ mod test {
 
     #[test]
     fn collate_amd64_perfect_unwinding_usleep_in_a_loop_no_fp() {
-        let collation = load( "amd64-usleep_in_a_loop_no_fp.nperf" );
-        let mut decoder = Decoder::new( &collation );
+        let data = load( "amd64-usleep_in_a_loop_no_fp.nperf" );
 
-        for (ref frames, _) in &decoder.collation.stacks {
-            assert_backtrace( &mut decoder, &frames, &[
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
                 "[process:amd64-usleep_in_a_loop_no_fp]",
                 "[main_thread]",
                 "_start:amd64-usleep_in_a_loop_no_fp",
@@ -1021,12 +1143,11 @@ mod test {
 
     #[test]
     fn collate_amd64_hot_spot_usleep_in_a_loop_no_fp_online() {
-        let collation = load( "amd64-usleep_in_a_loop_no_fp_online.nperf" );
-        let mut decoder = Decoder::new( &collation );
+        let data = load( "amd64-usleep_in_a_loop_no_fp_online.nperf" );
 
-        let (frames, count) = most_frequent_trace( &decoder );
+        let (frames, count) = most_frequent_trace( &data );
         assert!( count >= 100 );
-        assert_backtrace( &mut decoder, frames, &[
+        assert_backtrace( &data, frames, &[
             "[process:amd64-usleep_in_a_loop_no_fp]",
             "[main_thread]",
             "_start:amd64-usleep_in_a_loop_no_fp",
@@ -1043,12 +1164,11 @@ mod test {
 
     #[test]
     fn collate_amd64_hot_spot_usleep_in_a_loop_fp() {
-        let collation = load( "amd64-usleep_in_a_loop_fp.nperf" );
-        let mut decoder = Decoder::new( &collation );
+        let data = load( "amd64-usleep_in_a_loop_fp.nperf" );
 
-        let (frames, count) = most_frequent_trace( &decoder );
+        let (frames, count) = most_frequent_trace( &data );
         assert!( count >= 100 );
-        assert_backtrace( &mut decoder, frames, &[
+        assert_backtrace( &data, frames, &[
             "[process:amd64-usleep_in_a_loop_fp]",
             "[main_thread]",
             "_start:amd64-usleep_in_a_loop_fp",
@@ -1065,11 +1185,10 @@ mod test {
 
     #[test]
     fn collate_amd64_perfect_unwinding_usleep_in_a_loop_fp() {
-        let collation = load( "amd64-usleep_in_a_loop_fp.nperf" );
-        let mut decoder = Decoder::new( &collation );
+        let data = load( "amd64-usleep_in_a_loop_fp.nperf" );
 
-        for (ref frames, _) in &decoder.collation.stacks {
-            assert_backtrace( &mut decoder, &frames, &[
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
                 "[process:amd64-usleep_in_a_loop_fp]",
                 "[main_thread]",
                 "_start:amd64-usleep_in_a_loop_fp",
@@ -1082,20 +1201,19 @@ mod test {
 
     #[test]
     fn collate_amd64_pthread_cond_wait() {
-        let collation = load( "amd64-pthread_cond_wait.nperf" );
-        let mut decoder = Decoder::new( &collation );
+        let data = load( "amd64-pthread_cond_wait.nperf" );
 
-        for (ref foo, _) in collation.stacks.iter() {
-            println!( "{:?}", frame_to_str( &mut decoder, &foo[ foo.len() - 2 ] ) );
+        for (ref foo, _) in data.stacks.iter() {
+            println!( "{:?}", frame_to_str( &data, &foo[ foo.len() - 2 ] ) );
         }
 
-        let main_stacks: Vec< _ > = collation.stacks.iter().filter( |&(ref frames, _)| frame_to_str( &mut decoder, &frames[ frames.len() - 2 ] ) == "[main_thread]" ).collect();
-        let thread_stacks: Vec< _ > = collation.stacks.iter().filter( |&(ref frames, _)| frame_to_str( &mut decoder, &frames[ frames.len() - 2 ] ) == "[thread:another thread]" ).collect();
+        let main_stacks: Vec< _ > = data.stacks.iter().filter( |&(ref frames, _)| frame_to_str( &data, &frames[ frames.len() - 2 ] ) == "[main_thread]" ).collect();
+        let thread_stacks: Vec< _ > = data.stacks.iter().filter( |&(ref frames, _)| frame_to_str( &data, &frames[ frames.len() - 2 ] ) == "[thread:another thread]" ).collect();
 
         let &(ref main_frames, _) = main_stacks.iter().max_by( |a, b| a.1.cmp( &b.1 ) ).unwrap();
         let &(ref thread_frames, _) = thread_stacks.iter().max_by( |a, b| a.1.cmp( &b.1 ) ).unwrap();
 
-        assert_backtrace( &mut decoder, &main_frames, &[
+        assert_backtrace( &data, &main_frames, &[
             "[process:amd64-pthread_cond_wait]",
             "[main_thread]",
             "_start:amd64-pthread_cond_wait",
@@ -1107,7 +1225,7 @@ mod test {
             "**"
         ]);
 
-        assert_backtrace( &mut decoder, &thread_frames, &[
+        assert_backtrace( &data, &thread_frames, &[
             "[process:amd64-pthread_cond_wait]",
             "[thread:another thread]",
             "clone:libc-2.26.so",
@@ -1122,12 +1240,11 @@ mod test {
 
     #[test]
     fn collate_mips64_hot_spot_usleep_in_a_loop_no_fp() {
-        let collation = load( "mips64-usleep_in_a_loop_no_fp.nperf" );
-        let mut decoder = Decoder::new( &collation );
+        let data = load( "mips64-usleep_in_a_loop_no_fp.nperf" );
 
-        let (frames, count) = most_frequent_trace( &decoder );
+        let (frames, count) = most_frequent_trace( &data );
         assert!( count >= 50 );
-        assert_backtrace( &mut decoder, frames, &[
+        assert_backtrace( &data, frames, &[
             "[process:mips64-usleep_in_a_loop_no_fp]",
             "[main_thread]",
             "?:mips64-usleep_in_a_loop_no_fp",
@@ -1144,11 +1261,10 @@ mod test {
 
     #[test]
     fn collate_mips64_perfect_unwinding_usleep_in_a_loop_no_fp() {
-        let collation = load( "mips64-usleep_in_a_loop_no_fp.nperf" );
-        let mut decoder = Decoder::new( &collation );
+        let data = load( "mips64-usleep_in_a_loop_no_fp.nperf" );
 
-        for (ref frames, _) in &decoder.collation.stacks {
-            assert_backtrace( &mut decoder, &frames, &[
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
                 "[process:mips64-usleep_in_a_loop_no_fp]",
                 "[main_thread]",
                 "?:mips64-usleep_in_a_loop_no_fp",
@@ -1161,12 +1277,11 @@ mod test {
 
     #[test]
     fn collate_mips64_hot_spot_usleep_in_a_loop_fp() {
-        let collation = load( "mips64-usleep_in_a_loop_fp.nperf" );
-        let mut decoder = Decoder::new( &collation );
+        let data = load( "mips64-usleep_in_a_loop_fp.nperf" );
 
-        let (frames, count) = most_frequent_trace( &decoder );
+        let (frames, count) = most_frequent_trace( &data );
         assert!( count >= 100 );
-        assert_backtrace( &mut decoder, frames, &[
+        assert_backtrace( &data, frames, &[
             "[process:mips64-usleep_in_a_loop_fp]",
             "[main_thread]",
             "?:mips64-usleep_in_a_loop_fp",
@@ -1183,11 +1298,10 @@ mod test {
 
     #[test]
     fn collate_mips64_perfect_unwinding_usleep_in_a_loop_fp() {
-        let collation = load( "mips64-usleep_in_a_loop_fp.nperf" );
-        let mut decoder = Decoder::new( &collation );
+        let data = load( "mips64-usleep_in_a_loop_fp.nperf" );
 
-        for (ref frames, _) in &decoder.collation.stacks {
-            assert_backtrace( &mut decoder, &frames, &[
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
                 "[process:mips64-usleep_in_a_loop_fp]",
                 "[main_thread]",
                 "?:mips64-usleep_in_a_loop_fp",
@@ -1200,20 +1314,19 @@ mod test {
 
     #[test]
     fn collate_mips64_pthread_cond_wait() {
-        let collation = load( "mips64-pthread_cond_wait.nperf" );
-        let mut decoder = Decoder::new( &collation );
+        let data = load( "mips64-pthread_cond_wait.nperf" );
 
-        for (ref foo, _) in collation.stacks.iter() {
-            println!( "{:?}", frame_to_str( &mut decoder, &foo[ foo.len() - 2 ] ) );
+        for (ref foo, _) in data.stacks.iter() {
+            println!( "{:?}", frame_to_str( &data, &foo[ foo.len() - 2 ] ) );
         }
 
-        let main_stacks: Vec< _ > = collation.stacks.iter().filter( |&(ref frames, _)| frame_to_str( &mut decoder, &frames[ frames.len() - 2 ] ) == "[main_thread]" ).collect();
-        let thread_stacks: Vec< _ > = collation.stacks.iter().filter( |&(ref frames, _)| frame_to_str( &mut decoder, &frames[ frames.len() - 2 ] ) == "[thread:another thread]" ).collect();
+        let main_stacks: Vec< _ > = data.stacks.iter().filter( |&(ref frames, _)| frame_to_str( &data, &frames[ frames.len() - 2 ] ) == "[main_thread]" ).collect();
+        let thread_stacks: Vec< _ > = data.stacks.iter().filter( |&(ref frames, _)| frame_to_str( &data, &frames[ frames.len() - 2 ] ) == "[thread:another thread]" ).collect();
 
         let &(ref main_frames, _) = main_stacks.iter().max_by( |a, b| a.1.cmp( &b.1 ) ).unwrap();
         let &(ref thread_frames, _) = thread_stacks.iter().max_by( |a, b| a.1.cmp( &b.1 ) ).unwrap();
 
-        assert_backtrace( &mut decoder, &main_frames, &[
+        assert_backtrace( &data, &main_frames, &[
             "[process:mips64-pthread_cond_wait]",
             "[main_thread]",
             "?:mips64-pthread_cond_wait",
@@ -1225,7 +1338,7 @@ mod test {
             "**"
         ]);
 
-        assert_backtrace( &mut decoder, &thread_frames, &[
+        assert_backtrace( &data, &thread_frames, &[
             "[process:mips64-pthread_cond_wait]",
             "[thread:another thread]",
             "__thread_start:libc-2.26.so",
