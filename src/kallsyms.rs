@@ -13,9 +13,14 @@ pub fn parse( kallsyms: &[u8] ) -> RangeMap< KernelSymbol > {
     let mut symbols = Vec::new();
     let mut max_address = 0;
     for line in kallsyms.lines() {
+        let line = line.trim();
         let mut iter = line.split_whitespace();
         let address = iter.next().unwrap();
-        let address: u64 = u64::from_str_radix( address, 16 ).unwrap();
+        let address: u64 = if address == "(null)" {
+            0
+        } else {
+            u64::from_str_radix( address, 16 ).unwrap()
+        };
         let kind = iter.next().unwrap().as_bytes()[0];
 
         if kind != b't' && kind != b'T' {
