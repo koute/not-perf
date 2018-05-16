@@ -36,7 +36,7 @@ Some of those are as follows:
 
 ## Building
 
-1. Install at least Rust 1.26 (currently this means that you need to use Rust nightly).
+1. Install current Rust nightly (the stable version won't work for now)
 2. Build it:
 
         $ cargo build --release
