@@ -1,4 +1,3 @@
-#![feature(conservative_impl_trait)]
 #![cfg_attr(feature = "benches", feature(test))]
 
 #[cfg(feature = "benches")]
