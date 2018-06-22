@@ -186,6 +186,10 @@ pub enum Packet< 'a > {
     },
     Lost {
         count: u64
+    },
+    BuildId {
+        id: BinaryId,
+        build_id: Vec< u8 >
     }
 }
 

@@ -433,6 +433,13 @@ impl PacketWriter {
             symbol_table_count: binary.symbol_tables().len() as u16
         })?;
 
+        if let Some( build_id ) = binary.build_id() {
+            self.write_packet( Packet::BuildId {
+                id: binary.id().clone(),
+                build_id: build_id.to_owned()
+            })?;
+        }
+
         if self.offline {
             debug!( "Writing binary '{}'...", binary.name() );
             self.write_packet( Packet::BinaryBlob {

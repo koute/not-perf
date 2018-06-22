@@ -68,7 +68,8 @@ pub struct BinaryData {
     load_headers: Vec< LoadHeader >,
     architecture: &'static str,
     endianness: Endianness,
-    bitness: Bitness
+    bitness: Bitness,
+    build_id: Option< Vec< u8 > >
 }
 
 impl BinaryData {
@@ -118,6 +119,8 @@ impl BinaryData {
         let mut gnu_debuglink_range = None;
         let mut arm_extab_range = None;
         let mut arm_exidx_range = None;
+        let mut build_id_range = None;
+        let mut build_id = None;
         let mut is_shared_object = false;
         let mut symbol_tables = Vec::new();
         let mut load_headers = Vec::new();
@@ -195,6 +198,7 @@ impl BinaryData {
                         Some( Ok( ".gnu_debuglink" ) ) => &mut gnu_debuglink_range,
                         Some( Ok( ".ARM.extab" ) ) => &mut arm_extab_range,
                         Some( Ok( ".ARM.exidx" ) ) => &mut arm_exidx_range,
+                        Some( Ok( ".note.gnu.build-id" ) ) => &mut build_id_range,
                         _ => continue
                     };
 
@@ -203,6 +207,18 @@ impl BinaryData {
                     let range = offset..offset + length;
                     if let Some( _ ) = blob.get( range.clone() ) {
                         *out_range = Some( range );
+                    }
+                }
+
+                if let Some( range ) = build_id_range {
+                    let data = blob.get( range.clone() ).unwrap();
+                    let note = match endianness {
+                        Endianness::LittleEndian => elf.parse_note( data ),
+                        Endianness::BigEndian => elf.parse_note( data )
+                    };
+
+                    if let Some( note ) = note {
+                        build_id = Some( note.desc.into() );
                     }
                 }
 
@@ -245,7 +261,8 @@ impl BinaryData {
             load_headers,
             architecture,
             endianness,
-            bitness
+            bitness,
+            build_id
         };
 
         Ok( binary )
@@ -329,6 +346,11 @@ impl BinaryData {
     #[inline]
     pub fn load_headers( &self ) -> &[LoadHeader] {
         &self.load_headers
+    }
+
+    #[inline]
+    pub fn build_id( &self ) -> Option< &[u8] > {
+        self.build_id.as_ref().map( |id| id.as_slice() )
     }
 }
 

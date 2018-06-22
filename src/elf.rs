@@ -18,6 +18,7 @@ pub use goblin::elf::header::Header;
 pub use goblin::elf::section_header::SectionHeader;
 pub use goblin::elf::program_header::ProgramHeader;
 pub use goblin::elf::sym::Sym;
+pub use goblin::elf::note::Note;
 pub use goblin::strtab::Strtab;
 
 pub trait Elf< 'a > {
@@ -33,6 +34,7 @@ pub trait Elf< 'a > {
     fn get_section_body( &self, section_header: &SectionHeader ) -> &'a [u8];
     fn get_section_body_range( &self, section_header: &SectionHeader ) -> Range< u64 >;
     fn get_strtab( &self, section_header: &SectionHeader ) -> Option< Strtab< 'a > >;
+    fn parse_note( &self, data: &'a [u8] ) -> Option< Note< 'a > >;
 }
 
 macro_rules! define_elf {
@@ -111,6 +113,20 @@ macro_rules! define_elf {
                 let strtab = Strtab::new( bytes, 0x0 );
 
                 Some( strtab )
+            }
+
+            #[inline]
+            fn parse_note( &self, data: &'a [u8] ) -> Option< Note< 'a > > {
+                use goblin::container::Ctx;
+                use goblin::container::Container;
+
+                let ctx = Ctx {
+                    container: if self.is_64_bit() { Container::Big } else { Container::Little },
+                    le: self.endianness
+                };
+
+                let (value, _) = TryFromCtx::try_from_ctx( data, (4, ctx) ).ok()?;
+                Some( value )
             }
         }
     }
