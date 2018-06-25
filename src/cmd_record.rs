@@ -168,7 +168,7 @@ mod tests {
         let mut binaries = HashMap::new();
 
         let id = BinaryId { inode: 1, dev_major: 0, dev_minor: 0 };
-        binaries.insert( id.clone(), BinarySource::StaticSlice( b"file_1", id, include_bytes!( "../test-data/bin/amd64-usleep_in_a_loop_no_fp" ) ) );
+        binaries.insert( id.clone(), BinarySource::Slice( (&b"file_1"[..]).into(), id, (&include_bytes!( "../test-data/bin/amd64-usleep_in_a_loop_no_fp" )[..]).into() ) );
 
         for ranges in all_ranges {
             for region in ranges {
@@ -268,7 +268,7 @@ fn process_maps( maps: &RangeMap< Region >, offline: bool, pid: u32, address_spa
                 region.major = VDSO_ID.dev_major;
                 region.minor = VDSO_ID.dev_minor;
 
-                binaries.insert( VDSO_ID, BinarySource::StaticSlice( b"[vdso]", VDSO_ID, vdso ) );
+                binaries.insert( VDSO_ID, BinarySource::Slice( (&b"[vdso]"[..]).into(), VDSO_ID, vdso.into() ) );
                 regions.push( region );
 
                 continue;
@@ -284,7 +284,7 @@ fn process_maps( maps: &RangeMap< Region >, offline: bool, pid: u32, address_spa
                 inode: region.inode
             };
 
-            binaries.insert( id.clone(), BinarySource::Filesystem( id, region.name.as_ref() ) );
+            binaries.insert( id.clone(), BinarySource::Filesystem( id, Path::new( &region.name ).into() ) );
             regions.push( region.clone() );
         }
 

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::fmt;
+use std::borrow::Cow;
 
 use byteorder::{self, ByteOrder};
 
@@ -217,10 +218,8 @@ impl Primitive for u64 {
 
 #[derive(Clone)]
 pub enum BinarySource< 'a > {
-    Filesystem( BinaryId, &'a Path ),
-    StaticSlice( &'a [u8], BinaryId, &'static [u8] ),
-    #[allow(dead_code)]
-    Owned( &'a [u8], BinaryId, Vec< u8 > ),
+    Filesystem( BinaryId, Cow< 'a, Path > ),
+    Slice( Cow< 'a, [u8] >, BinaryId, Cow< 'static, [u8] > ),
     Preloaded( Arc< BinaryData > )
 }
 
@@ -249,8 +248,8 @@ pub trait IAddressSpace {
 fn load_binary< A: Architecture >( source: BinarySource ) -> io::Result< Arc< BinaryData > > {
     let data = match source {
         BinarySource::Filesystem( id, path ) => Arc::new( BinaryData::load_from_fs( Some( id ), path )? ),
-        BinarySource::StaticSlice( name, id, data ) => Arc::new( BinaryData::load_from_static_slice( &String::from_utf8_lossy( name ), id, data )? ),
-        BinarySource::Owned( name, id, data ) => Arc::new( BinaryData::load_from_owned_bytes( &String::from_utf8_lossy( name ), id.clone(), data )? ),
+        BinarySource::Slice( name, id, Cow::Borrowed( data ) ) => Arc::new( BinaryData::load_from_static_slice( &String::from_utf8_lossy( &name ), id, data )? ),
+        BinarySource::Slice( name, id, Cow::Owned( data ) ) => Arc::new( BinaryData::load_from_owned_bytes( &String::from_utf8_lossy( &name ), id, data )? ),
         BinarySource::Preloaded( data ) => data
     };
 
@@ -567,7 +566,7 @@ fn test_reload() {
     {
         let mut add_binary = |inode: u64, name: &'static str| {
             let id = BinaryId { inode, dev_major: 0, dev_minor: 0 };
-            binaries.insert( id.clone(), BinarySource::Owned( name.as_bytes(), id, raw_data.clone() ) );
+            binaries.insert( id.clone(), BinarySource::Slice( name.as_bytes().into(), id, raw_data.clone().into() ) );
         };
 
         add_binary( 1, "file_1" );
