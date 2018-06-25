@@ -257,7 +257,6 @@ define_iter! {
     }
 }
 
-#[macro_export]
 macro_rules! parse_elf {
     ($elf:expr, $callback:expr) => {{
         use elf::{Elf, ElfKind, call_callback};

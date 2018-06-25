@@ -2,7 +2,7 @@ use std::mem;
 
 use archive::Endianness;
 use raw_data::RawData;
-use address_space::{Primitive, BufferReader};
+use nwind::{Primitive, BufferReader};
 
 pub struct StackReader< 'a > {
     pub stack: RawData< 'a >

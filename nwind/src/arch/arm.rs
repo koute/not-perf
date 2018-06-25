@@ -3,7 +3,7 @@ use dwarf_regs::DwarfRegs;
 use arch::Architecture;
 use address_space::MemoryReader;
 use unwind_context::UnwindFrame;
-use archive::{Endianness, Bitness};
+use types::{Endianness, Bitness};
 use arm_extab::VirtualMachine as EhVm;
 use arm_extab::Error as EhError;
 

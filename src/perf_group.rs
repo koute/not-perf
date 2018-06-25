@@ -10,9 +10,10 @@ use std::mem;
 use num_cpus;
 use libc;
 
+use nwind::maps;
+
 use utils::read_string_lossy;
 use perf::{Perf, EventRef, Event, CommEvent, Mmap2Event, EventSource};
-use maps;
 
 struct StoppedProcess( u32 );
 

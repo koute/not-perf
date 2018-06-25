@@ -17,7 +17,7 @@ use unwind_context::EmptyUnwindContext;
 use binary::BinaryData;
 use symbols::Symbols;
 use frame_descriptions::{FrameDescriptions, ContextCache, UnwindInfo, AddressMapping};
-use archive::{Bitness, BinaryId, UserFrame, Endianness};
+use types::{Bitness, BinaryId, UserFrame, Endianness};
 
 #[derive(Clone, PartialEq, Eq, Default, Debug, Hash)]
 struct BinaryAddresses {

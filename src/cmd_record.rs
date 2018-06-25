@@ -16,20 +16,25 @@ use speedy::{Writable, Endianness};
 use libc;
 use num_cpus;
 
-use maps::{self, Region};
-use arch::{self, Architecture};
+use nwind::maps::{self, Region};
+use nwind::arch::{self, Architecture};
+use nwind::{
+    IAddressSpace,
+    AddressSpace,
+    BinarySource,
+    BinaryData,
+    DwarfRegs,
+    RangeMap
+};
+
 use perf::{Event, CommEvent, Mmap2Event, EventSource};
 use perf_group::PerfGroup;
 use perf_arch::IntoDwarfRegs;
-use address_space::{IAddressSpace, AddressSpace, BinarySource};
 use utils::{SigintHandler, read_file, read_string_lossy, get_major, get_minor, get_ms};
 use archive::{FramedPacket, Packet, BinaryId, Bitness, DwarfReg, ARCHIVE_MAGIC, ARCHIVE_VERSION};
 use execution_queue::ExecutionQueue;
 use ps::{wait_for_process, find_process};
 use stack_reader::StackReader;
-use binary::BinaryData;
-use range_map::RangeMap;
-use dwarf_regs::DwarfRegs;
 
 pub enum TargetProcess {
     ByPid( u32 ),
@@ -105,11 +110,8 @@ mod tests {
 
     use env_logger;
 
-    use maps::Region;
-    use range_map::RangeMap;
-    use address_space::{IAddressSpace, AddressSpace, BinarySource};
-    use archive::BinaryId;
-    use arch;
+    use nwind::{arch, RangeMap, IAddressSpace, AddressSpace, BinarySource, BinaryId};
+    use nwind::maps::Region;
 
     use quickcheck::{Arbitrary, Gen};
 

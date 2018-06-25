@@ -12,7 +12,7 @@ use goblin::elf::program_header::PT_LOAD;
 
 use elf::{self, Endian};
 use utils::{StableIndex, get_major, get_minor};
-use archive::{BinaryId, Bitness, Endianness};
+use types::{BinaryId, Bitness, Endianness};
 
 enum Blob {
     Mmap( Mmap ),

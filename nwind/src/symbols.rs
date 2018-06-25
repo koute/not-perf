@@ -8,7 +8,7 @@ use std::time::Instant;
 use range_map::RangeMap;
 use elf::{self, Strtab, Endian};
 use utils::{StableIndex, get_ms};
-use archive::{Bitness, Endianness};
+use types::{Bitness, Endianness};
 use binary::{BinaryData, SymbolTable};
 
 pub struct Symbols< T > {

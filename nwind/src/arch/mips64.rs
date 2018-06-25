@@ -4,7 +4,7 @@ use arch::Architecture;
 use address_space::MemoryReader;
 use unwind_context::UnwindFrame;
 use frame_descriptions::ContextCache;
-use archive::{Endianness, Bitness};
+use types::{Endianness, Bitness};
 use dwarf::dwarf_unwind;
 
 pub mod dwarf {

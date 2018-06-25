@@ -9,7 +9,7 @@ use arch::arm;
 use arch::arm::dwarf;
 use address_space::MemoryReader;
 use dwarf_regs::DwarfRegs;
-use archive::{Endianness, Bitness};
+use types::{Endianness, Bitness};
 
 struct RegsIter {
     mask: u16,

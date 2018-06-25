@@ -7,7 +7,7 @@ use arch::Architecture;
 use address_space::MemoryReader;
 use unwind_context::UnwindFrame;
 use frame_descriptions::ContextCache;
-use archive::{Endianness, Bitness};
+use types::{Endianness, Bitness};
 use dwarf::dwarf_unwind;
 
 // Source: https://github.com/hjl-tools/x86-psABI/wiki/X86-psABI

@@ -15,16 +15,23 @@ use speedy::Endianness;
 use cpp_demangle;
 use regex::Regex;
 
+use nwind::arch::{self, Architecture};
+use nwind::maps::Region;
+use nwind::{
+    DwarfRegs,
+    RangeMap,
+    Symbols,
+    BinaryData,
+    BinarySource,
+    SymbolTable,
+    IAddressSpace,
+    AddressSpace
+};
+
 use archive::{Packet, BinaryId, Bitness, UserFrame, ArchiveReader};
-use binary::{BinaryData, SymbolTable};
-use symbols::Symbols;
 use utils::StableIndex;
-use range_map::RangeMap;
-use maps::Region;
 use kallsyms::{self, KernelSymbol};
-use address_space::{IAddressSpace, AddressSpace, BinarySource};
-use arch::{self, Architecture};
-use dwarf_regs::DwarfRegs;
+
 use stack_reader::StackReader;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]

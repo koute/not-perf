@@ -3,4 +3,5 @@ rust:
   - nightly
 
 script:
-  - cargo test --verbose
+  - cargo test -p nwind --verbose
+  - carto test -p nperf --verbose

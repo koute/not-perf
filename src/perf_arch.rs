@@ -1,4 +1,4 @@
-use dwarf_regs::DwarfRegs;
+use nwind::DwarfRegs;
 
 pub trait IntoDwarfRegs {
     fn copy_to_dwarf_regs( &self, regs: &mut DwarfRegs );
@@ -62,7 +62,7 @@ macro_rules! define_regs {
         impl $crate::perf_arch::IntoDwarfRegs for Regs {
             #[allow(unused_assignments)]
             #[inline]
-            fn copy_to_dwarf_regs( &self, regs: &mut $crate::dwarf_regs::DwarfRegs ) {
+            fn copy_to_dwarf_regs( &self, regs: &mut ::nwind::DwarfRegs ) {
                 let mut index = 0;
                 let mut last_reg = 0;
 
@@ -86,7 +86,7 @@ macro_rules! define_regs {
 
 pub mod amd64 {
     use perf_sys::*;
-    use arch::amd64::dwarf::*;
+    use nwind::arch::amd64::dwarf::*;
 
     fn validate( register: u16, value: u64 ) -> bool {
         // If the call chain goes through the kernel space -> user space
@@ -129,7 +129,7 @@ pub mod amd64 {
 
 pub mod mips64 {
     use perf_sys::*;
-    use arch::mips64::dwarf::*;
+    use nwind::arch::mips64::dwarf::*;
 
     fn validate( _register: u16, _value: u64 ) -> bool { return true; }
 
@@ -169,7 +169,7 @@ pub mod mips64 {
 
 pub mod arm {
     use perf_sys::*;
-    use arch::arm::dwarf::*;
+    use nwind::arch::arm::dwarf::*;
 
     fn validate( _register: u16, _value: u64 ) -> bool { return true; }
 

@@ -38,26 +38,15 @@ extern crate serde_derive;
 #[macro_use]
 extern crate quickcheck;
 
+extern crate nwind;
+
 mod utils;
 
-#[macro_use]
-mod elf;
 mod raw_data;
 mod perf;
 mod perf_group;
 mod perf_sys;
 mod perf_arch;
-mod arm_extab;
-mod address_space;
-mod unwind_context;
-mod maps;
-mod range_map;
-mod dwarf_regs;
-mod dwarf;
-mod arch;
-mod binary;
-mod symbols;
-mod frame_descriptions;
 mod archive;
 mod execution_queue;
 mod kallsyms;

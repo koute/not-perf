@@ -1,5 +1,5 @@
 use std::cmp::max;
-use range_map::RangeMap;
+use nwind::RangeMap;
 
 #[derive(Debug)]
 pub struct KernelSymbol {

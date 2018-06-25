@@ -3,7 +3,7 @@ use gimli;
 use dwarf_regs::DwarfRegs;
 use address_space::MemoryReader;
 use unwind_context::UnwindFrame;
-use archive::{Endianness, Bitness};
+use types::{Endianness, Bitness};
 
 pub mod amd64;
 pub mod mips64;
