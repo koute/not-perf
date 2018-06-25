@@ -1,6 +1,7 @@
 use std::fs;
 use std::ffi::OsStr;
 use std::error::Error;
+use std::collections::HashMap;
 
 use serde_json;
 
@@ -15,6 +16,7 @@ pub fn main( args: Args ) -> Result< (), Box< Error > > {
     let fp = fs::File::open( args.input_path ).map_err( |err| format!( "cannot open {:?}: {}", args.input_path, err ) )?;
     let mut reader = ArchiveReader::new( fp ).validate_header().unwrap().skip_unknown();
 
+    let mut binary_id_to_index = HashMap::new();
     let mut is_valid = false;
     let mut metadata = Metadata::default();
 
@@ -32,7 +34,7 @@ pub fn main( args: Args ) -> Result< (), Box< Error > > {
                     executable: String::from_utf8_lossy( &executable ).into()
                 });
             },
-            Packet::BinaryInfo { path, debuglink, .. } => {
+            Packet::BinaryInfo { id, path, debuglink, .. } => {
                 let path = String::from_utf8_lossy( &path ).into_owned();
 
                 let debuglink_length = debuglink.iter().position( |&byte| byte == 0 ).unwrap_or( debuglink.len() );
@@ -43,10 +45,19 @@ pub fn main( args: Args ) -> Result< (), Box< Error > > {
                     Some( String::from_utf8_lossy( &debuglink ).into_owned() )
                 };
 
+                binary_id_to_index.insert( id, metadata.binaries.len() );
                 metadata.binaries.push( metadata::Binary {
                     path,
-                    debuglink
+                    debuglink,
+                    build_id: None
                 });
+            },
+            Packet::BuildId { id, build_id } => {
+                if let Some( &index ) = binary_id_to_index.get( &id ) {
+                    let build_id: Vec< _ > = build_id.iter().map( |byte| format!( "{:02x}", byte ) ).collect();
+                    let build_id = build_id.join( "" );
+                    metadata.binaries[ index ].build_id = Some( build_id );
+                }
             },
             _ => {}
         }

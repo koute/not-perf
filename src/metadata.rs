@@ -12,7 +12,8 @@ pub struct Process {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Binary {
     pub path: String,
-    pub debuglink: Option< String >
+    pub debuglink: Option< String >,
+    pub build_id: Option< String >
 }
 
 #[derive(Debug, Deserialize, Serialize, Default)]
