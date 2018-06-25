@@ -109,7 +109,7 @@ impl< A: Architecture > BinaryRegion< A > {
     }
 }
 
-pub struct Memory< 'a, A: Architecture + 'a, T: ?Sized + BufferReader + 'a > {
+struct Memory< 'a, A: Architecture + 'a, T: ?Sized + BufferReader + 'a > {
     regions: &'a RangeMap< BinaryRegion< A > >,
     stack_address: u64,
     stack: &'a T
