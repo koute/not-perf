@@ -494,6 +494,12 @@ impl Perf {
         if fd < 0 {
             let err = io::Error::from_raw_os_error( -fd );
             error!( "The perf_event_open syscall failed for PID {}: {}", pid, err );
+            if let Some( errcode ) = err.raw_os_error() {
+                if errcode == libc::EINVAL {
+                    info!( "Your profiling frequency might be too high; try lowering it" );
+                }
+            }
+
             return Err( err );
         }
 
