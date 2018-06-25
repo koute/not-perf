@@ -83,7 +83,7 @@ fn main_impl() -> Result< (), Box< Error >  > {
                         .short( "F" )
                         .long( "frequency" )
                         .takes_value( true )
-                        .default_value( "1000" )
+                        .default_value( "900" )
                         .help( "The frequency with which the measurements will be gathered" )
                 )
                 .arg(
