@@ -1,7 +1,5 @@
 use std::ops::Range;
 use std::cmp::{Ordering, min, max};
-use std::iter;
-use std::slice;
 
 trait RangeExt< T: PartialOrd > {
     fn includes( &self, point: T ) -> bool;
@@ -132,7 +130,7 @@ impl< T > RangeMap< T > {
     }
 
     #[inline]
-    pub fn values( &self ) -> iter::Map< slice::Iter< (Range< u64 >, T) >, fn( &(Range< u64 >, T) ) -> &T > {
+    pub fn values( &self ) -> impl ExactSizeIterator< Item = &T > {
         self.values.iter().map( |&(_, ref value)| value )
     }
 
