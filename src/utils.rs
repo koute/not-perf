@@ -1,5 +1,5 @@
-use std::io::{self, Read};
-use std::fs::File;
+use std::io;
+use std::fs::read;
 use std::path::Path;
 use std::sync::atomic::{Ordering, AtomicBool};
 
@@ -7,15 +7,8 @@ use libc;
 
 pub use nwind::utils::*;
 
-pub fn read_file< P: AsRef< Path > >( path: P ) -> io::Result< Vec< u8 > > {
-    let mut fp = File::open( path )?;
-    let mut buffer = Vec::new();
-    fp.read_to_end( &mut buffer )?;
-    Ok( buffer )
-}
-
 pub fn read_string_lossy< P: AsRef< Path > >( path: P ) -> io::Result< String > {
-    let data = read_file( path )?;
+    let data = read( path )?;
     Ok( String::from_utf8_lossy( &data ).into_owned() )
 }
 

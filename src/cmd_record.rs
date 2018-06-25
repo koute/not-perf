@@ -30,7 +30,7 @@ use nwind::{
 use perf::{Event, CommEvent, Mmap2Event, EventSource};
 use perf_group::PerfGroup;
 use perf_arch::IntoDwarfRegs;
-use utils::{SigintHandler, read_file, read_string_lossy, get_major, get_minor, get_ms};
+use utils::{SigintHandler, read_string_lossy, get_major, get_minor, get_ms};
 use archive::{FramedPacket, Packet, BinaryId, Bitness, DwarfReg, ARCHIVE_MAGIC, ARCHIVE_VERSION};
 use execution_queue::ExecutionQueue;
 use ps::{wait_for_process, find_process};
@@ -555,7 +555,7 @@ fn initialize(
         fp.write_machine_info()?;
 
         debug!( "Writing kallsyms..." );
-        let kallsyms = read_file( "/proc/kallsyms" )?;
+        let kallsyms = fs::read( "/proc/kallsyms" )?;
         fp.write_packet( Packet::FileBlob {
             path: "/proc/kallsyms".as_bytes().into(),
             data: kallsyms.into()

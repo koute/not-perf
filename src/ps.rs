@@ -3,7 +3,7 @@ use std::fs;
 use std::time::{Duration, Instant};
 use std::thread::sleep;
 
-use utils::{SigintHandler, read_file};
+use utils::SigintHandler;
 
 struct ProcessName {
     from_cmdline: Option< String >,
@@ -11,7 +11,7 @@ struct ProcessName {
 }
 
 fn read_name( pid: u32 ) -> io::Result< ProcessName > {
-    let mut cmdline = read_file( format!( "/proc/{}/cmdline", pid ) )?;
+    let mut cmdline = fs::read( format!( "/proc/{}/cmdline", pid ) )?;
     let executable = match fs::read_link( format!( "/proc/{}/exe", pid ) ) {
         Ok( path ) => Some( path ),
         Err( ref err ) if err.kind() == io::ErrorKind::PermissionDenied => None,
