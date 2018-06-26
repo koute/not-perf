@@ -15,5 +15,12 @@ log = "0.4"
 speedy = "0.4"
 speedy-derive = "0.3"
 
+[build-dependencies]
+cc = { version = "1", optional = true }
+
 [dev-dependencies]
 env_logger = "0.5"
+
+[features]
+default = []
+local-unwinding = ["cc"]

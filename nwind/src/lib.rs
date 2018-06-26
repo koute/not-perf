@@ -31,6 +31,8 @@ mod symbols;
 mod types;
 pub mod utils;
 mod unwind_context;
+#[cfg(feature = "local-unwinding")]
+mod local_unwinding;
 
 pub use address_space::{
     BinarySource,
@@ -48,3 +50,6 @@ pub use types::{
     Bitness,
     UserFrame
 };
+
+#[cfg(feature = "local-unwinding")]
+pub use local_unwinding::LocalAddressSpace;

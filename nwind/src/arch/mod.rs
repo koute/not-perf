@@ -9,9 +9,15 @@ pub mod amd64;
 pub mod mips64;
 pub mod arm;
 
+#[cfg(all(target_arch = "x86_64", feature = "local-unwinding"))]
+mod amd64_local_unwinding;
+
 pub mod native {
     #[cfg(target_arch = "x86_64")]
     pub use arch::amd64::*;
+
+    #[cfg(all(target_arch = "x86_64", feature = "local-unwinding"))]
+    pub(crate) use arch::amd64_local_unwinding::*;
 
     #[cfg(target_arch = "mips64")]
     pub use arch::mips64::*;

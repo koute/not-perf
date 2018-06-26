@@ -240,6 +240,7 @@ fn calculate_virtual_addr( region: &Region, physical_section_offset: u64 ) -> Op
 pub trait IAddressSpace {
     fn reload( &mut self, binaries: HashMap< BinaryId, BinarySource >, regions: Vec< Region >, load: bool ) -> Reloaded;
     fn unwind( &mut self, regs: &mut DwarfRegs, stack: &BufferReader, output: &mut Vec< UserFrame > );
+    fn lookup_absolute_symbol( &self, address: u64 ) -> Option< &str >;
     fn lookup_absolute_symbol_index( &self, binary_id: &BinaryId, address: u64 ) -> Option< usize >;
     fn get_symbol_by_index< 'a >( &'a self, binary_id: &BinaryId, index: usize ) -> (Range< u64 >, &'a str);
     fn set_panic_on_partial_backtrace( &mut self, value: bool );
@@ -265,9 +266,9 @@ pub struct Reloaded {
 }
 
 pub struct AddressSpace< A: Architecture > {
-    empty_ctx: Option< EmptyUnwindContext< A > >,
+    pub(crate) empty_ctx: Option< EmptyUnwindContext< A > >,
+    pub(crate) regions: RangeMap< BinaryRegion< A > >,
     binary_map: HashMap< BinaryId, BinaryHandle< A > >,
-    regions: RangeMap< BinaryRegion< A > >,
     panic_on_partial_backtrace: bool
 }
 
@@ -503,6 +504,18 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
         }
     }
 
+    fn lookup_absolute_symbol( &self, address: u64 ) -> Option< &str > {
+        self.regions.get_value( address )
+            .and_then( |region| {
+                let index = region.binary.lookup_absolute_symbol_index( address );
+                if let Some( index ) = index {
+                    region.binary.get_symbol_by_index( index ).map( |(_, symbol)| symbol )
+                } else {
+                    None
+                }
+            })
+    }
+
     fn lookup_absolute_symbol_index( &self, binary_id: &BinaryId, address: u64 ) -> Option< usize > {
         self.binary_map.get( &binary_id ).and_then( |binary| {
             binary.lookup_absolute_symbol_index( address )
@@ -534,10 +547,9 @@ fn test_reload() {
     use std::env;
     use std::fs::File;
     use std::io::Read;
-    use env_logger;
     use arch;
 
-    env_logger::init();
+    let _ = ::env_logger::try_init();
 
     fn region( start: u64, inode: u64, name: &str ) -> Region {
         Region {
