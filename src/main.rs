@@ -1,8 +1,3 @@
-#![cfg_attr(feature = "benches", feature(test))]
-
-#[cfg(feature = "benches")]
-extern crate test;
-
 #[macro_use]
 extern crate sc;
 extern crate libc;

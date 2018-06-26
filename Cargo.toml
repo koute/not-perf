@@ -30,6 +30,7 @@ nwind = { version = "0.1", path = "nwind" }
 
 [dev-dependencies]
 quickcheck = "0.6"
+criterion = "0.2"
 
 [profile.release]
 lto = true
@@ -37,7 +38,10 @@ panic = "abort"
 
 [features]
 default = []
-benches = []
 
 [workspace]
 members = [".", "nwind"]
+
+[[bench]]
+name = "unwinding"
+harness = false
