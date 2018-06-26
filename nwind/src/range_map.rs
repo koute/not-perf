@@ -135,6 +135,11 @@ impl< T > RangeMap< T > {
     }
 
     #[inline]
+    pub fn iter( &self ) -> impl ExactSizeIterator< Item = (Range< u64 >, &T) > {
+        self.values.iter().map( |&(ref range, ref value)| (range.clone(), value) )
+    }
+
+    #[inline]
     pub fn is_empty( &self ) -> bool {
         self.values.is_empty()
     }

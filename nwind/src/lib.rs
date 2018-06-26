@@ -5,6 +5,7 @@ extern crate goblin;
 extern crate log;
 extern crate memmap;
 extern crate scroll;
+extern crate lru;
 extern crate speedy;
 #[macro_use]
 extern crate speedy_derive;

@@ -50,6 +50,34 @@ impl< A: Architecture > UnwindFrame< A > {
         self.regs.clear();
         self.cfa = None;
     }
+
+    pub fn assign_binary< M: MemoryReader< A > >( &mut self, nth_frame: usize, memory: &M ) -> bool {
+        if self.binary.is_some() {
+            return true;
+        }
+
+        let address = A::get_instruction_pointer( &self.regs ).unwrap();
+        let region = match memory.get_region_at_address( address ) {
+            Some( region ) => region,
+            None => {
+                debug!( "Cannot find a binary corresponding to address 0x{:016X}", address );
+                return false;
+            }
+        };
+
+        self.binary = Some( region.binary().clone() );
+
+        debug!(
+            "Frame #{}: '{}' at 0x{:016X} (0x{:X}): {:?}",
+            nth_frame,
+            region.binary().name(),
+            address,
+            address - region.binary().base_address(),
+            region.binary().lookup_absolute_symbol( address ).map( |(range, symbol)| (HexRange( range ), symbol) )
+        );
+
+        true
+    }
 }
 
 impl< A: Architecture > fmt::Debug for UnwindFrame< A > {
@@ -113,17 +141,11 @@ impl< A: Architecture > EmptyUnwindContext< A > {
             phantom: PhantomData
         };
 
-        ctx.assign_binary_to_current_address( memory );
-        if ctx.current_frame().binary.is_none() {
+        if !A::unwind( 0, memory, &mut ctx.state, &mut ctx.current_frame, &mut ctx.next_frame, ctx.panic_on_partial_backtrace ) {
             if ctx.should_panic_on_partial_backtrace() {
                 panic!( "Partial backtrace!" );
             }
 
-            ctx.is_done = true;
-            return ctx;
-        }
-
-        if !A::unwind( 0, memory, &mut ctx.state, &mut ctx.current_frame, &mut ctx.next_frame, ctx.panic_on_partial_backtrace ) {
             ctx.is_done = true;
         }
 
@@ -136,41 +158,6 @@ impl< A: Architecture > UnwindContext< A > {
         &self.current_frame
     }
 
-    fn current_frame_mut( &mut self ) -> &mut UnwindFrame< A > {
-        &mut self.current_frame
-    }
-
-    fn assign_binary_to_current_address< M: MemoryReader< A > >( &mut self, memory: &M ) {
-        if self.current_frame().binary.is_some() {
-            return;
-        }
-
-        let address = A::get_instruction_pointer( &self.current_frame().regs ).unwrap();
-        let region = match memory.get_region_at_address( address ) {
-            Some( region ) => region,
-            None => {
-                debug!( "Cannot find a binary corresponding to address 0x{:016X}", address );
-                if self.should_panic_on_partial_backtrace() {
-                    panic!( "Partial backtrace!" );
-                }
-
-                self.is_done = true;
-                return;
-            }
-        };
-
-        self.current_frame_mut().binary = Some( region.binary().clone() );
-
-        debug!(
-            "Frame #{}: '{}' at 0x{:016X} (0x{:X}): {:?}",
-            self.nth_frame,
-            region.binary().name(),
-            address,
-            address - region.binary().base_address(),
-            region.binary().lookup_absolute_symbol( address ).map( |(range, symbol)| (HexRange( range ), symbol) )
-        );
-    }
-
     pub fn unwind< M: MemoryReader< A > >( mut self, memory: &M ) -> Result< Self, EmptyUnwindContext< A > > {
         if self.is_done {
             return Err( self.end() );
@@ -181,11 +168,6 @@ impl< A: Architecture > UnwindContext< A > {
         mem::swap( &mut self.current_frame, &mut self.next_frame );
         self.next_frame.clear();
         self.nth_frame += 1;
-
-        self.assign_binary_to_current_address( memory );
-        if self.is_done {
-            return Err( self.end() );
-        }
 
         if !A::unwind( self.nth_frame, memory, &mut self.state, &mut self.current_frame, &mut self.next_frame, self.panic_on_partial_backtrace ) {
             self.is_done = true;

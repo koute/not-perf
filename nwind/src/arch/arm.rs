@@ -82,8 +82,11 @@ impl Architecture for Arch {
 
     #[inline]
     fn unwind< M: MemoryReader< Self > >( nth_frame: usize, memory: &M, _state: &mut Self::State, current_frame: &mut UnwindFrame< Self >, next_frame: &mut UnwindFrame< Self >, panic_on_partial_backtrace: bool ) -> bool {
-        let mut vm = EhVm::new();
+        if !current_frame.assign_binary( nth_frame, memory ) {
+            return false;
+        }
 
+        let mut vm = EhVm::new();
         let binary = current_frame.binary.as_ref().unwrap();
 
         let exidx_range = match binary.arm_exidx_range() {

@@ -6,7 +6,7 @@ use dwarf_regs::DwarfRegs;
 use arch::Architecture;
 use address_space::MemoryReader;
 use unwind_context::UnwindFrame;
-use frame_descriptions::ContextCache;
+use frame_descriptions::{ContextCache, UnwindInfoCache};
 use types::{Endianness, Bitness};
 use dwarf::dwarf_unwind;
 
@@ -49,7 +49,7 @@ fn guess_ebp< M: MemoryReader< Arch > >( nth_frame: usize, memory: &M, ctx_cache
     let unwind_info = binary.lookup_unwind_row( ctx_cache, rip )?;
 
     let cfa_offset = match unwind_info.cfa() {
-        &CfaRule::RegisterAndOffset { register: cfa_register, offset: cfa_offset } if cfa_register as u16 == dwarf::RBP => cfa_offset,
+        CfaRule::RegisterAndOffset { register: cfa_register, offset: cfa_offset } if cfa_register as u16 == dwarf::RBP => cfa_offset,
         _ => return None
     };
 
@@ -86,13 +86,19 @@ fn guess_ebp< M: MemoryReader< Arch > >( nth_frame: usize, memory: &M, ctx_cache
     None
 }
 
+#[doc(hidden)]
+pub struct State {
+    ctx_cache: ContextCache< LittleEndian >,
+    unwind_cache: UnwindInfoCache
+}
+
 impl Architecture for Arch {
     const NAME: &'static str = "amd64";
     const ENDIANNESS: Endianness = Endianness::LittleEndian;
     const BITNESS: Bitness = Bitness::B64;
 
     type Endianity = LittleEndian;
-    type State = ContextCache< LittleEndian >;
+    type State = State;
 
     fn register_name_str( register: u16 ) -> Option< &'static str > {
         use self::dwarf::*;
@@ -136,13 +142,20 @@ impl Architecture for Arch {
 
     #[inline]
     fn initial_state() -> Self::State {
-        ContextCache::new()
+        State {
+            ctx_cache: ContextCache::new(),
+            unwind_cache: UnwindInfoCache::new()
+        }
     }
 
     #[inline]
     fn unwind< M: MemoryReader< Self > >( nth_frame: usize, memory: &M, state: &mut Self::State, current_frame: &mut UnwindFrame< Self >, next_frame: &mut UnwindFrame< Self >, panic_on_partial_backtrace: bool ) -> bool {
         if current_frame.regs.get( dwarf::RBP ).is_none() {
-            if let Some( rbp ) = guess_ebp( nth_frame, memory, state, current_frame ) {
+            if !current_frame.assign_binary( nth_frame, memory ) {
+                return false;
+            }
+
+            if let Some( rbp ) = guess_ebp( nth_frame, memory, &mut state.ctx_cache, current_frame ) {
                 current_frame.regs.append( dwarf::RBP, rbp );
             }
         }
@@ -155,7 +168,7 @@ impl Architecture for Arch {
             }
         }
 
-        if !dwarf_unwind( nth_frame, memory, state, current_frame, next_frame ) {
+        if !dwarf_unwind( nth_frame, memory, &mut state.ctx_cache, &mut state.unwind_cache, current_frame, next_frame ) {
             if panic_on_partial_backtrace {
                 panic!( "Partial backtrace!" );
             }

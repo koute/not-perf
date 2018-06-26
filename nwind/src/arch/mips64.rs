@@ -3,7 +3,7 @@ use dwarf_regs::DwarfRegs;
 use arch::Architecture;
 use address_space::MemoryReader;
 use unwind_context::UnwindFrame;
-use frame_descriptions::ContextCache;
+use frame_descriptions::{ContextCache, UnwindInfoCache};
 use types::{Endianness, Bitness};
 use dwarf::dwarf_unwind;
 
@@ -47,13 +47,19 @@ pub mod dwarf {
 #[allow(dead_code)]
 pub struct Arch {}
 
+#[doc(hidden)]
+pub struct State {
+    ctx_cache: ContextCache< BigEndian >,
+    unwind_cache: UnwindInfoCache
+}
+
 impl Architecture for Arch {
     const NAME: &'static str = "mips64";
     const ENDIANNESS: Endianness = Endianness::BigEndian;
     const BITNESS: Bitness = Bitness::B64;
 
     type Endianity = BigEndian;
-    type State = ContextCache< BigEndian >;
+    type State = State;
 
     fn register_name_str( register: u16 ) -> Option< &'static str > {
         use self::dwarf::*;
@@ -110,7 +116,10 @@ impl Architecture for Arch {
 
     #[inline]
     fn initial_state() -> Self::State {
-        ContextCache::new()
+        State {
+            ctx_cache: ContextCache::new(),
+            unwind_cache: UnwindInfoCache::new()
+        }
     }
 
     #[inline]
@@ -124,7 +133,7 @@ impl Architecture for Arch {
             }
         }
 
-        if !dwarf_unwind( nth_frame, memory, state, current_frame, next_frame ) {
+        if !dwarf_unwind( nth_frame, memory, &mut state.ctx_cache, &mut state.unwind_cache, current_frame, next_frame ) {
             return false;
         }
 

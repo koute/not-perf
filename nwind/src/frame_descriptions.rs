@@ -1,9 +1,11 @@
-use std::ops::{Deref, Range};
+use std::ops::Range;
 use std::sync::Arc;
 use std::mem::{self, ManuallyDrop};
 use std::ptr;
 use std::cell::UnsafeCell;
 use std::time::Instant;
+
+use lru::LruCache;
 
 use gimli::{
     BaseAddresses,
@@ -13,11 +15,13 @@ use gimli::{
     UninitializedUnwindContext,
     UnwindSection,
     UnwindOffset,
+    CfaRule,
     CieOrFde,
     FrameDescriptionEntry,
     EndianBuf,
     UnwindTable,
-    UnwindTableRow
+    UnwindTableRow,
+    RegisterRule
 };
 
 use utils::get_ms;
@@ -107,6 +111,63 @@ impl< E: Endianity > Drop for FrameDescriptions< E > {
             ManuallyDrop::drop( &mut self.eh_descriptions );
             ManuallyDrop::drop( &mut self.debug_descriptions );
             ManuallyDrop::drop( &mut self.binary );
+        }
+    }
+}
+
+pub struct UnwindInfoCache {
+    cache: LruCache< u64, CachedUnwindInfo >
+}
+
+impl UnwindInfoCache {
+    pub fn new() -> Self {
+        UnwindInfoCache {
+            cache: LruCache::new( 2000 )
+        }
+    }
+
+    pub fn lookup< 'a, E: Endianity >( &'a mut self, absolute_address: u64 ) -> Option< UnwindInfo< 'a, E > > {
+        let info = match self.cache.get( &absolute_address ) {
+            Some( info ) => info,
+            None => return None
+        };
+
+        return Some( UnwindInfo {
+            initial_address: info.initial_address,
+            address: info.address,
+            absolute_address,
+            kind: UnwindInfoKind::Cached( info )
+        });
+    }
+}
+
+#[derive(Clone)]
+enum SimpleRegisterRule {
+    Undefined,
+    SameValue,
+    Offset( i64 ),
+    ValOffset( i64 ),
+    Register( u8 ),
+    Architectural
+}
+
+#[derive(Clone)]
+struct CachedUnwindInfo {
+    cfa: (u8, i64),
+    rules: Vec< (u8, SimpleRegisterRule) >,
+    initial_address: u64,
+    address: u64
+}
+
+impl< T: ::gimli::Reader > Into< RegisterRule< T > > for SimpleRegisterRule {
+    fn into( self ) -> RegisterRule< T > {
+        match self {
+            SimpleRegisterRule::Undefined => RegisterRule::Undefined,
+            SimpleRegisterRule::SameValue => RegisterRule::SameValue,
+            SimpleRegisterRule::Offset( arg ) => RegisterRule::Offset( arg ),
+            SimpleRegisterRule::ValOffset( arg ) => RegisterRule::ValOffset( arg ),
+            SimpleRegisterRule::Register( arg ) => RegisterRule::Register( arg ),
+            SimpleRegisterRule::Architectural => RegisterRule::Architectural
         }
     }
 }
@@ -238,27 +299,32 @@ impl< E: Endianity > FrameDescriptions< E > {
         RangeMap::from_vec( descriptions )
     }
 
-    pub fn find_unwind_info< 'a >( &'a self, ctx_cache: &'a mut ContextCache< E >, mappings: &[AddressMapping], address: u64 ) -> Option< UnwindInfo< 'a, E > > {
-        let address = if let Some( mapping ) = mappings.iter().find( |mapping| address >= mapping.actual_address && address < (mapping.actual_address + mapping.size) ) {
-            address - mapping.actual_address + mapping.declared_address
+    pub fn find_unwind_info< 'a >( &'a self, ctx_cache: &'a mut ContextCache< E >, mappings: &[AddressMapping], absolute_address: u64 ) -> Option< UnwindInfo< 'a, E > > {
+        let address = if let Some( mapping ) = mappings.iter().find( |mapping| absolute_address >= mapping.actual_address && absolute_address < (mapping.actual_address + mapping.size) ) {
+            absolute_address - mapping.actual_address + mapping.declared_address
         } else {
-            address
+            absolute_address
         };
 
         // HACK: Returning the first `info` invalidates the `ctx_cache` mutable reference,
         //       so we keep a raw pointer to use it again.
         let ctx_cache_ptr = ctx_cache as *mut _;
         {
-            let info = Self::find_unwind_info_impl( &self.debug_descriptions, ctx_cache, address );
+            let info = Self::find_unwind_info_impl( &self.debug_descriptions, ctx_cache, absolute_address, address );
             if info.is_some() {
                 return info;
             }
         }
 
-        Self::find_unwind_info_impl( &self.eh_descriptions, unsafe { &mut *ctx_cache_ptr }, address )
+        Self::find_unwind_info_impl( &self.eh_descriptions, unsafe { &mut *ctx_cache_ptr }, absolute_address, address )
     }
 
-    fn find_unwind_info_impl< 'a, U: CachableSection< 'a, E > >( descriptions: &RangeMap< FrameDescriptionEntry< U, EndianBuf< 'a, E > > >, ctx_cache: &'a mut ContextCache< E >, address: u64 ) -> Option< UnwindInfo< 'a, E > >
+    fn find_unwind_info_impl< 'a, U: CachableSection< 'a, E > >(
+        descriptions: &RangeMap< FrameDescriptionEntry< U, EndianBuf< 'a, E > > >,
+        ctx_cache: &'a mut ContextCache< E >,
+        absolute_address: u64,
+        address: u64
+    ) -> Option< UnwindInfo< 'a, E > >
         where <U as UnwindSection< EndianBuf< 'a, E > >>::Offset: UnwindOffset
     {
         if descriptions.is_empty() {
@@ -282,10 +348,14 @@ impl< E: Endianity > FrameDescriptions< E > {
             if row.contains( address ) {
                 let row = row.clone();
                 return Some( UnwindInfo {
-                    offset_to_initial_address: (initial_address as i64) - (address as i64),
-                    iuc: ManuallyDrop::new( U::wrap_context( ctx ) ),
-                    row: ManuallyDrop::new( row ),
-                    cache: ctx_cache
+                    initial_address,
+                    address,
+                    absolute_address,
+                    kind: UnwindInfoKind::Uncached {
+                        iuc: ManuallyDrop::new( U::wrap_context( ctx ) ),
+                        row: ManuallyDrop::new( row ),
+                        cache: ctx_cache
+                    }
                 });
             }
         }
@@ -302,45 +372,131 @@ enum IUC< 'a, E: Endianity > {
     DebugFrame( UnsafeCell< InitializedUnwindContext< DebugFrame< EndianBuf< 'a, E > >, EndianBuf< 'a, E > > > )
 }
 
+enum UnwindInfoKind< 'a, E: Endianity + 'a > {
+    Cached( &'a CachedUnwindInfo ),
+    Uncached {
+        iuc: ManuallyDrop< IUC< 'a, E > >,
+        row: ManuallyDrop< UnwindTableRow< EndianBuf< 'a, E > > >,
+        cache: &'a mut ContextCache< E >
+    }
+}
+
 pub struct UnwindInfo< 'a, E: Endianity + 'a > {
-    offset_to_initial_address: i64,
-    iuc: ManuallyDrop< IUC< 'a, E > >,
-    row: ManuallyDrop< UnwindTableRow< EndianBuf< 'a, E > > >,
-    cache: &'a mut ContextCache< E >
+    initial_address: u64,
+    address: u64,
+    absolute_address: u64,
+    kind: UnwindInfoKind< 'a, E >
 }
 
 impl< 'a, E: Endianity > UnwindInfo< 'a, E > {
     #[inline]
-    pub fn offset_to_initial_address( &self ) -> i64 {
-        self.offset_to_initial_address
+    pub fn initial_absolute_address( &self ) -> u64 {
+        ((self.absolute_address as i64) + ((self.initial_address as i64) - (self.address as i64))) as u64
+    }
+
+    #[inline]
+    pub fn cfa( &self ) -> CfaRule< EndianBuf< 'a, E > > {
+        match self.kind {
+            UnwindInfoKind::Cached( ref info ) => {
+                CfaRule::RegisterAndOffset {
+                    register: info.cfa.0,
+                    offset: info.cfa.1
+                }
+            },
+            UnwindInfoKind::Uncached { ref row, .. } => {
+                row.cfa().clone()
+            }
+        }
+    }
+
+    #[inline]
+    pub fn register( &self, register: u8 ) -> RegisterRule< EndianBuf< 'a, E > > {
+        match self.kind {
+            UnwindInfoKind::Cached( ref info ) => {
+                if let Some( &(_, ref rule) ) = info.rules.iter().find( |rule| rule.0 == register ) {
+                    rule.clone().into()
+                } else {
+                    RegisterRule::Undefined
+                }
+            },
+            UnwindInfoKind::Uncached { ref row, .. } => {
+                row.register( register )
+            }
+        }
+    }
+
+    #[inline]
+    pub fn each_register< F: FnMut( (u8, &RegisterRule< EndianBuf< 'a, E > >) ) >( &self, mut callback: F ) {
+        match self.kind {
+            UnwindInfoKind::Uncached { ref row, .. } => {
+                for &(register, ref rule) in row.registers() {
+                    callback( (register, rule) );
+                }
+            },
+            UnwindInfoKind::Cached( ref info ) => {
+                for &(register, ref rule) in &info.rules {
+                    let rule = rule.clone().into();
+                    callback( (register, &rule) );
+                }
+            }
+        }
+    }
+
+    pub fn cache_into( &self, unwind_cache: &mut UnwindInfoCache ) {
+        let row = match self.kind {
+            UnwindInfoKind::Uncached { ref row, .. } => row,
+            _ => return
+        };
+
+        let cfa = match row.cfa() {
+            &CfaRule::RegisterAndOffset { register, offset } => (register, offset),
+            _ => return
+        };
+
+        let mut rules = Vec::new();
+        for &(register, ref rule) in row.registers() {
+            let rule = match *rule {
+                RegisterRule::Undefined => SimpleRegisterRule::Undefined,
+                RegisterRule::SameValue => SimpleRegisterRule::SameValue,
+                RegisterRule::Offset( arg ) => SimpleRegisterRule::Offset( arg ),
+                RegisterRule::ValOffset( arg ) => SimpleRegisterRule::ValOffset( arg ),
+                RegisterRule::Register( arg ) => SimpleRegisterRule::Register( arg ),
+                RegisterRule::Architectural => SimpleRegisterRule::Architectural,
+                RegisterRule::Expression( _ ) |
+                RegisterRule::ValExpression( _ ) => {
+                    return;
+                }
+            };
+
+            rules.push( (register, rule) );
+        }
+
+        let info = CachedUnwindInfo { rules, cfa, initial_address: self.initial_address, address: self.address };
+        unwind_cache.cache.put( self.absolute_address, info );
     }
 }
 
 impl< 'a, E: Endianity > Drop for UnwindInfo< 'a, E > {
     #[inline]
     fn drop( &mut self ) {
-        unsafe {
-            ManuallyDrop::drop( &mut self.row );
+        match self.kind {
+            UnwindInfoKind::Uncached { ref mut iuc, ref mut row, ref mut cache } => {
+                unsafe {
+                    ManuallyDrop::drop( row );
 
-            match &mut *self.iuc {
-                &mut IUC::EhFrame( ref iuc ) => {
-                    let iuc = ptr::read( iuc.get() );
-                    self.cache.cache( iuc );
-                },
-                &mut IUC::DebugFrame( ref iuc ) => {
-                    let iuc = ptr::read( iuc.get() );
-                    self.cache.cache( iuc );
+                    match &mut **iuc {
+                        &mut IUC::EhFrame( ref iuc ) => {
+                            let iuc = ptr::read( iuc.get() );
+                            cache.cache( iuc );
+                        },
+                        &mut IUC::DebugFrame( ref iuc ) => {
+                            let iuc = ptr::read( iuc.get() );
+                            cache.cache( iuc );
+                        }
+                    }
                 }
-            }
+            },
+            _ => {}
         }
-    }
-}
-
-impl< 'a, E: Endianity > Deref for UnwindInfo< 'a, E > {
-    type Target = UnwindTableRow< EndianBuf< 'a, E > >;
-
-    #[inline]
-    fn deref( &self ) -> &Self::Target {
-        &self.row
     }
 }
