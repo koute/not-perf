@@ -1364,14 +1364,12 @@ mod test {
         use std::collections::HashMap;
         use std::sync::Arc;
 
-        use arch;
+        use nwind::arch;
+        use nwind::{AddressSpace, IAddressSpace, BinaryData, BinarySource, DwarfRegs, RangeMap};
+        use nwind::maps::Region;
+
         use archive::{Packet, ArchiveReader};
-        use address_space::{AddressSpace, IAddressSpace, BinarySource};
         use stack_reader::StackReader;
-        use dwarf_regs::DwarfRegs;
-        use range_map::RangeMap;
-        use binary::BinaryData;
-        use maps::Region;
 
         let path = Path::new( env!( "CARGO_MANIFEST_DIR" ) ).join( "test-data" ).join( "artifacts" ).join( filename );
         let fp = fs::File::open( path ).unwrap();
