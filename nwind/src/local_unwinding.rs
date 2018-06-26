@@ -47,13 +47,15 @@ impl< 'a > MemoryReader< arch::native::Arch > for LocalMemory< 'a > {
 }
 
 pub struct LocalAddressSpace {
-    inner: AddressSpace< arch::native::Arch >
+    inner: AddressSpace< arch::native::Arch >,
+    dwarf_regs: DwarfRegs
 }
 
 impl LocalAddressSpace {
     pub fn new() -> Result< Self, io::Error > {
         let mut address_space = LocalAddressSpace {
-            inner: AddressSpace::new()
+            inner: AddressSpace::new(),
+            dwarf_regs: DwarfRegs::new()
         };
 
         address_space.reload()?;
@@ -82,15 +84,16 @@ impl LocalAddressSpace {
 
     pub fn unwind( &mut self, output: &mut Vec< UserFrame > ) {
         let regs = arch::native::Regs::get();
-        let mut dwarf_regs = DwarfRegs::new(); // TODO: Reuse.
-        regs.into_dwarf_regs( &mut dwarf_regs );
+
+        self.dwarf_regs.clear();
+        regs.into_dwarf_regs( &mut self.dwarf_regs );
 
         let memory = LocalMemory {
             regions: &self.inner.regions
         };
 
         let empty_ctx = self.inner.empty_ctx.take().unwrap();
-        let mut ctx = empty_ctx.start( &memory, &mut dwarf_regs );
+        let mut ctx = empty_ctx.start( &memory, &mut self.dwarf_regs );
         loop {
             let frame = UserFrame {
                 address: ctx.current_address(),
