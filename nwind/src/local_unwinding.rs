@@ -53,6 +53,7 @@ pub struct LocalAddressSpace {
 
 impl LocalAddressSpace {
     pub fn new() -> Result< Self, io::Error > {
+        debug!( "Initializing local address space..." );
         let mut address_space = LocalAddressSpace {
             inner: AddressSpace::new(),
             dwarf_regs: DwarfRegs::new()
@@ -63,7 +64,12 @@ impl LocalAddressSpace {
     }
 
     pub fn reload( &mut self ) -> Result< (), io::Error > {
-        let regions = maps::parse( &String::from_utf8_lossy( &fs::read( "/proc/self/maps" )? ) );
+        trace!( "Loading maps..." );
+        let data = fs::read( "/proc/self/maps" )?;
+        let data = String::from_utf8_lossy( &data );
+        trace!( "Parsing maps..." );
+        let regions = maps::parse( &data );
+        trace!( "Processing maps..." );
         let mut binaries = HashMap::new();
         for region in &regions {
             if region.is_executable && region.inode != 0 {
