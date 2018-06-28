@@ -1,5 +1,3 @@
-use regex::Regex;
-
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Region {
     pub start: u64,
@@ -15,8 +13,40 @@ pub struct Region {
     pub name: String
 }
 
-lazy_static! {
-    static ref MAPS_REGEX: Regex = Regex::new( r"^([0-9a-f]+)-([0-9a-f]+) (.)(.)(.)(.) ([0-9a-f]+) (\S+):(\S+) (\d+)\s*(.*)" ).unwrap();
+fn get_until< 'a >( p: &mut &'a str, delimiter: char ) -> &'a str {
+    let mut found = None;
+    for (index, ch) in p.char_indices() {
+        if ch == delimiter {
+            found = Some( index );
+            break;
+        }
+    }
+
+    if let Some( index ) = found {
+        let (before, after) = p.split_at( index );
+        *p = &after[ delimiter.len_utf8().. ];
+        before
+    } else {
+        let before = *p;
+        *p = "";
+        before
+    }
+}
+
+fn get_char( p: &mut &str ) -> Option< char > {
+    let ch = p.chars().next()?;
+    *p = &p[ ch.len_utf8().. ];
+    Some( ch )
+}
+
+fn skip_whitespace( p: &mut &str ) {
+    while let Some( ch ) = p.chars().next() {
+        if ch == ' ' {
+            *p = &p[ ch.len_utf8().. ];
+        } else {
+            break;
+        }
+    }
 }
 
 pub fn parse( maps: &str ) -> Vec< Region > {
@@ -25,26 +55,21 @@ pub fn parse( maps: &str ) -> Vec< Region > {
     }
 
     let mut output = Vec::new();
-    let regex = &*MAPS_REGEX;
-    for line in maps.trim().split( '\n' ) {
-        let caps = match regex.captures( line ) {
-            Some( caps ) => caps,
-            None => {
-                panic!( "Maps regex match failed for: {:?}", line );
-            }
-        };
+    for mut line in maps.trim().split( '\n' ) {
+        let start = u64::from_str_radix( get_until( &mut line, '-' ), 16 ).unwrap();
+        let end = u64::from_str_radix( get_until( &mut line, ' ' ), 16 ).unwrap();
+        let is_read = get_char( &mut line ).unwrap() == 'r';
+        let is_write = get_char( &mut line ).unwrap() == 'w';
+        let is_executable = get_char( &mut line ).unwrap() == 'x';
+        let is_shared = get_char( &mut line ).unwrap() == 's';
+        get_char( &mut line );
 
-        let start = u64::from_str_radix( caps.get(1).unwrap().as_str(), 16 ).unwrap();
-        let end = u64::from_str_radix( caps.get(2).unwrap().as_str(), 16 ).unwrap();
-        let is_read = caps.get(3).unwrap().as_str() == "r";
-        let is_write = caps.get(4).unwrap().as_str() == "w";
-        let is_executable = caps.get(5).unwrap().as_str() == "x";
-        let is_shared = caps.get(6).unwrap().as_str() == "s";
-        let file_offset = u64::from_str_radix( caps.get(7).unwrap().as_str(), 16 ).unwrap();
-        let major = u32::from_str_radix( caps.get(8).unwrap().as_str(), 16 ).unwrap();
-        let minor = u32::from_str_radix( caps.get(9).unwrap().as_str(), 16 ).unwrap();
-        let inode = caps.get(10).unwrap().as_str().parse().unwrap();
-        let name = caps.get(11).unwrap().as_str().to_owned();
+        let file_offset = u64::from_str_radix( get_until( &mut line, ' ' ), 16 ).unwrap();
+        let major = u32::from_str_radix( get_until( &mut line, ':' ), 16 ).unwrap();
+        let minor = u32::from_str_radix( get_until( &mut line, ' ' ), 16 ).unwrap();
+        let inode = get_until( &mut line, ' ' ).parse().unwrap();
+        skip_whitespace( &mut line );
+        let name = line.to_owned();
 
         output.push( Region {
             start,
@@ -62,6 +87,18 @@ pub fn parse( maps: &str ) -> Vec< Region > {
     }
 
     output
+}
+
+#[test]
+fn test_get_until() {
+    let mut p = "1234 5678";
+    assert_eq!( get_until( &mut p, ' ' ), "1234" );
+    assert_eq!( p, "5678" );
+
+    assert_eq!( get_until( &mut p, ' ' ), "5678" );
+    assert_eq!( p, "" );
+
+    assert_eq!( get_until( &mut p, ' ' ), "" );
 }
 
 #[test]

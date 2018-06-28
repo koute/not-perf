@@ -2,11 +2,8 @@ extern crate byteorder;
 extern crate gimli;
 extern crate goblin;
 #[macro_use]
-extern crate lazy_static;
-#[macro_use]
 extern crate log;
 extern crate memmap;
-extern crate regex;
 extern crate scroll;
 extern crate speedy;
 #[macro_use]
