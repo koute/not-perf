@@ -6,18 +6,10 @@ use dwarf_regs::DwarfRegs;
 use utils::{HexValue, HexRange};
 use address_space::{MemoryReader, BinaryHandle};
 
-pub struct EmptyUnwindContext< A: Architecture > {
-    state: A::State,
-    panic_on_partial_backtrace: bool,
-    regs_buffer_1: DwarfRegs,
-    regs_buffer_2: DwarfRegs,
-    phantom: PhantomData< A >
-}
-
 pub struct UnwindContext< A: Architecture > {
     nth_frame: usize,
-    current_frame: UnwindFrame< A >,
-    next_frame: UnwindFrame< A >,
+    frame_a: UnwindFrame< A >,
+    frame_b: UnwindFrame< A >,
     state: A::State,
     is_done: bool,
     panic_on_partial_backtrace: bool,
@@ -33,12 +25,11 @@ pub struct UnwindFrame< A: Architecture > {
 }
 
 impl< A: Architecture > UnwindFrame< A > {
-    #[inline]
-    pub fn new_with_regs( regs: DwarfRegs ) -> Self {
+    fn new() -> Self {
         UnwindFrame {
             initial_address: None,
             binary: None,
-            regs,
+            regs: DwarfRegs::new(),
             cfa: None
         }
     }
@@ -111,13 +102,19 @@ impl< A: Architecture > AsMut< DwarfRegs > for UnwindFrame< A > {
     }
 }
 
-impl< A: Architecture > EmptyUnwindContext< A > {
+pub struct UnwindHandle< 'a, A: Architecture + 'a > {
+    ctx: &'a mut UnwindContext< A >
+}
+
+impl< A: Architecture > UnwindContext< A > {
     pub fn new() -> Self {
-        EmptyUnwindContext {
+        UnwindContext {
+            nth_frame: 0,
+            frame_a: UnwindFrame::new(),
+            frame_b: UnwindFrame::new(),
             state: A::initial_state(),
             panic_on_partial_backtrace: false,
-            regs_buffer_1: DwarfRegs::new(),
-            regs_buffer_2: DwarfRegs::new(),
+            is_done: true,
             phantom: PhantomData
         }
     }
@@ -126,66 +123,60 @@ impl< A: Architecture > EmptyUnwindContext< A > {
         self.panic_on_partial_backtrace = value;
     }
 
-    pub fn start< M: MemoryReader< A > >( mut self, memory: &M, regs: &mut DwarfRegs ) -> UnwindContext< A > {
+    pub fn start< 'a, M: MemoryReader< A > >( &'a mut self, memory: &M, regs: &mut DwarfRegs ) -> UnwindHandle< 'a, A > {
         debug!( "Starting unwinding at: 0x{:016X}", A::get_instruction_pointer( &regs ).unwrap() );
 
-        mem::swap( &mut self.regs_buffer_1, regs );
-        self.regs_buffer_2.clear();
-        let mut ctx = UnwindContext {
-            nth_frame: 0,
-            current_frame: UnwindFrame::new_with_regs( self.regs_buffer_1 ),
-            next_frame: UnwindFrame::new_with_regs( self.regs_buffer_2 ),
-            state: self.state,
-            panic_on_partial_backtrace: self.panic_on_partial_backtrace,
-            is_done: false,
-            phantom: PhantomData
-        };
+        self.is_done = false;
+        self.nth_frame = 0;
+        self.frame_a.clear();
+        self.frame_b.clear();
 
-        if !A::unwind( 0, memory, &mut ctx.state, &mut ctx.current_frame, &mut ctx.next_frame, ctx.panic_on_partial_backtrace ) {
-            if ctx.should_panic_on_partial_backtrace() {
+        mem::swap( &mut self.frame_a.regs, regs );
+        if !A::unwind( 0, memory, &mut self.state, &mut self.frame_a, &mut self.frame_b, self.panic_on_partial_backtrace ) {
+            if self.panic_on_partial_backtrace {
                 panic!( "Partial backtrace!" );
             }
 
-            ctx.is_done = true;
+            self.is_done = true;
         }
 
-        ctx
+        UnwindHandle {
+            ctx: self
+        }
     }
 }
 
-impl< A: Architecture > UnwindContext< A > {
+impl< 'a, A: Architecture > UnwindHandle< 'a, A > {
     fn current_frame( &self ) -> &UnwindFrame< A > {
-        &self.current_frame
-    }
-
-    pub fn unwind< M: MemoryReader< A > >( mut self, memory: &M ) -> Result< Self, EmptyUnwindContext< A > > {
-        if self.is_done {
-            return Err( self.end() );
-        }
-
-        debug!( "Unwinding #{} -> #{} at: 0x{:016X}", self.nth_frame, self.nth_frame + 1, A::get_instruction_pointer( &self.current_frame.regs ).unwrap() );
-
-        mem::swap( &mut self.current_frame, &mut self.next_frame );
-        self.next_frame.clear();
-        self.nth_frame += 1;
-
-        if !A::unwind( self.nth_frame, memory, &mut self.state, &mut self.current_frame, &mut self.next_frame, self.panic_on_partial_backtrace ) {
-            self.is_done = true;
+        if self.ctx.nth_frame & 1 == 0 {
+            &self.ctx.frame_a
         } else {
-            debug!( "Current address on frame #{}: 0x{:016X}", self.nth_frame, A::get_instruction_pointer( &self.current_frame().regs ).unwrap() );
+            &self.ctx.frame_b
         }
-
-        Ok( self )
     }
 
-    fn end( self ) -> EmptyUnwindContext< A > {
-        EmptyUnwindContext {
-            state: self.state,
-            panic_on_partial_backtrace: self.panic_on_partial_backtrace,
-            regs_buffer_1: self.current_frame.regs,
-            regs_buffer_2: self.next_frame.regs,
-            phantom: PhantomData
+    pub fn unwind< M: MemoryReader< A > >( &mut self, memory: &M ) -> bool {
+        if self.ctx.is_done {
+            return false;
         }
+
+        self.ctx.nth_frame += 1;
+        let (current_frame, next_frame) = if self.ctx.nth_frame & 1 == 0 {
+            (&mut self.ctx.frame_a, &mut self.ctx.frame_b)
+        } else {
+            (&mut self.ctx.frame_b, &mut self.ctx.frame_a)
+        };
+
+        debug!( "Unwinding #{} -> #{} at: 0x{:016X}", self.ctx.nth_frame - 1, self.ctx.nth_frame, A::get_instruction_pointer( &current_frame.regs ).unwrap() );
+        next_frame.clear();
+
+        if !A::unwind( self.ctx.nth_frame, memory, &mut self.ctx.state, current_frame, next_frame, self.ctx.panic_on_partial_backtrace ) {
+            self.ctx.is_done = true;
+        } else {
+            debug!( "Current address on frame #{}: 0x{:016X}", self.ctx.nth_frame, A::get_instruction_pointer( &current_frame.regs ).unwrap() );
+        }
+
+        true
     }
 
     pub fn current_initial_address( &mut self ) -> Option< u64 > {
@@ -194,9 +185,5 @@ impl< A: Architecture > UnwindContext< A > {
 
     pub fn current_address( &self ) -> u64 {
         A::get_instruction_pointer( &self.current_frame().regs ).unwrap()
-    }
-
-    pub fn should_panic_on_partial_backtrace( &self ) -> bool {
-        self.panic_on_partial_backtrace
     }
 }

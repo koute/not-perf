@@ -14,7 +14,7 @@ use arch::{Architecture, Endianity};
 use dwarf_regs::DwarfRegs;
 use maps::Region;
 use range_map::RangeMap;
-use unwind_context::EmptyUnwindContext;
+use unwind_context::UnwindContext;
 use binary::BinaryData;
 use symbols::Symbols;
 use frame_descriptions::{FrameDescriptions, ContextCache, UnwindInfo, AddressMapping};
@@ -266,7 +266,7 @@ pub struct Reloaded {
 }
 
 pub struct AddressSpace< A: Architecture > {
-    pub(crate) empty_ctx: Option< EmptyUnwindContext< A > >,
+    pub(crate) ctx: UnwindContext< A >,
     pub(crate) regions: RangeMap< BinaryRegion< A > >,
     binary_map: HashMap< BinaryId, BinaryHandle< A > >,
     panic_on_partial_backtrace: bool
@@ -484,22 +484,17 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
             stack_address
         };
 
-        let mut empty_ctx = self.empty_ctx.take().unwrap();
-        empty_ctx.set_panic_on_partial_backtrace( self.panic_on_partial_backtrace );
+        self.ctx.set_panic_on_partial_backtrace( self.panic_on_partial_backtrace );
 
-        let mut ctx = empty_ctx.start( &memory, regs );
+        let mut ctx = self.ctx.start( &memory, regs );
         loop {
             let frame = UserFrame {
                 address: ctx.current_address(),
                 initial_address: ctx.current_initial_address()
             };
             output.push( frame );
-            match ctx.unwind( &memory ) {
-                Ok( next_ctx ) => ctx = next_ctx,
-                Err( empty_ctx ) => {
-                    self.empty_ctx = Some( empty_ctx );
-                    return;
-                }
+            if !ctx.unwind( &memory ) {
+                break;
             }
         }
     }
@@ -534,7 +529,7 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
 impl< A: Architecture > AddressSpace< A > {
     pub fn new() -> Self {
         AddressSpace {
-            empty_ctx: Some( EmptyUnwindContext::< A >::new() ),
+            ctx: UnwindContext::< A >::new(),
             binary_map: HashMap::new(),
             regions: RangeMap::new(),
             panic_on_partial_backtrace: false

@@ -98,20 +98,15 @@ impl LocalAddressSpace {
             regions: &self.inner.regions
         };
 
-        let empty_ctx = self.inner.empty_ctx.take().unwrap();
-        let mut ctx = empty_ctx.start( &memory, &mut self.dwarf_regs );
+        let mut ctx = self.inner.ctx.start( &memory, &mut self.dwarf_regs );
         loop {
             let frame = UserFrame {
                 address: ctx.current_address(),
                 initial_address: ctx.current_initial_address()
             };
             output.push( frame );
-            match ctx.unwind( &memory ) {
-                Ok( next_ctx ) => ctx = next_ctx,
-                Err( empty_ctx ) => {
-                    self.inner.empty_ctx = Some( empty_ctx );
-                    return;
-                }
+            if ctx.unwind( &memory ) == false {
+                return;
             }
         }
     }
