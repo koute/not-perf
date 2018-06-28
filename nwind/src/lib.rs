@@ -1,6 +1,7 @@
 extern crate byteorder;
 extern crate gimli;
 extern crate goblin;
+#[cfg(feature = "logging")]
 #[macro_use]
 extern crate log;
 extern crate memmap;
@@ -12,6 +13,21 @@ extern crate speedy_derive;
 
 #[cfg(test)]
 extern crate env_logger;
+
+#[cfg(not(feature = "logging"))]
+macro_rules! trace { ($($token:tt)*) => {} }
+
+#[cfg(not(feature = "logging"))]
+macro_rules! debug { ($($token:tt)*) => {} }
+
+#[cfg(not(feature = "logging"))]
+macro_rules! warn { ($($token:tt)*) => {} }
+
+#[cfg(not(feature = "logging"))]
+macro_rules! info { ($($token:tt)*) => {} }
+
+#[cfg(not(feature = "logging"))]
+macro_rules! error { ($($token:tt)*) => {} }
 
 #[macro_use]
 mod elf;

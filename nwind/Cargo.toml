@@ -9,7 +9,7 @@ gimli = "0.15"
 goblin = "0.0.14"
 scroll = "0.8"
 memmap = "0.6"
-log = "0.4"
+log = { version = "0.4", optional = true }
 speedy = "0.4"
 speedy-derive = "0.3"
 lru = "0.1"
@@ -21,5 +21,6 @@ cc = { version = "1", optional = true }
 env_logger = "0.5"
 
 [features]
-default = []
+default = ["logging"]
 local-unwinding = ["cc"]
+logging = ["log"]
