@@ -10,7 +10,7 @@ use std::borrow::Cow;
 
 use byteorder::{self, ByteOrder};
 
-use arch::{Architecture, Endianity};
+use arch::{Architecture, Registers, Endianity};
 use dwarf_regs::DwarfRegs;
 use maps::Region;
 use range_map::RangeMap;
@@ -19,6 +19,7 @@ use binary::BinaryData;
 use symbols::Symbols;
 use frame_descriptions::{FrameDescriptions, ContextCache, UnwindInfo, AddressMapping};
 use types::{Bitness, BinaryId, UserFrame, Endianness};
+use utils::HexRange;
 
 #[derive(Clone, PartialEq, Eq, Default, Debug, Hash)]
 struct BinaryAddresses {
@@ -36,6 +37,28 @@ pub struct Binary< A: Architecture > {
 }
 
 pub type BinaryHandle< A > = Arc< Binary< A > >;
+
+pub fn lookup_binary< 'a, A: Architecture, M: MemoryReader< A > >( nth_frame: usize, memory: &'a M, regs: &A::Regs ) -> Option< &'a BinaryHandle< A > > {
+    let address = A::get_instruction_pointer( regs ).unwrap();
+    let region = match memory.get_region_at_address( address ) {
+        Some( region ) => region,
+        None => {
+            debug!( "Cannot find a binary corresponding to address 0x{:016X}", address );
+            return None;
+        }
+    };
+
+    debug!(
+        "Frame #{}: '{}' at 0x{:016X} (0x{:X}): {:?}",
+        nth_frame,
+        region.binary().name(),
+        address,
+        address - region.binary().base_address(),
+        region.binary().lookup_absolute_symbol( address ).map( |(range, symbol)| (HexRange( range ), symbol) )
+    );
+
+    Some( &region.binary() )
+}
 
 impl< A: Architecture > Binary< A > {
     pub fn lookup_unwind_row< 'a >( &'a self, ctx_cache: &'a mut ContextCache< A::Endianity >, address: u64 ) -> Option< UnwindInfo< 'a, A::Endianity > > {
@@ -470,10 +493,10 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
         reloaded
     }
 
-    fn unwind( &mut self, regs: &mut DwarfRegs, stack: &BufferReader, output: &mut Vec< UserFrame > ) {
+    fn unwind( &mut self, dwarf_regs: &mut DwarfRegs, stack: &BufferReader, output: &mut Vec< UserFrame > ) {
         output.clear();
 
-        let stack_address = match A::get_stack_pointer( regs ) {
+        let stack_address = match A::get_stack_pointer( dwarf_regs ) {
             Some( address ) => address,
             None => return
         };
@@ -486,7 +509,10 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
 
         self.ctx.set_panic_on_partial_backtrace( self.panic_on_partial_backtrace );
 
-        let mut ctx = self.ctx.start( &memory, regs );
+        let mut ctx = self.ctx.start( &memory, |regs| {
+            regs.from_dwarf_regs( dwarf_regs );
+        });
+
         loop {
             let frame = UserFrame {
                 address: ctx.current_address(),

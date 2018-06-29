@@ -2,10 +2,8 @@ use std::mem;
 
 use gimli::{RegisterRule, CfaRule, LittleEndian};
 
-use dwarf_regs::DwarfRegs;
-use arch::Architecture;
-use address_space::MemoryReader;
-use unwind_context::UnwindFrame;
+use arch::{Architecture, Registers, UnwindStatus};
+use address_space::{MemoryReader, BinaryHandle, lookup_binary};
 use frame_descriptions::{ContextCache, UnwindInfoCache};
 use types::{Endianness, Bitness};
 use dwarf::dwarf_unwind;
@@ -34,18 +32,72 @@ pub mod dwarf {
     pub const SS: u16 = 52;
 }
 
+static REGS: &'static [u16] = &[
+    dwarf::RAX,
+    dwarf::RDX,
+    dwarf::RCX,
+    dwarf::RBX,
+    dwarf::RSI,
+    dwarf::RDI,
+    dwarf::RBP,
+    dwarf::RSP,
+    dwarf::R8,
+    dwarf::R9,
+    dwarf::R10,
+    dwarf::R11,
+    dwarf::R12,
+    dwarf::R13,
+    dwarf::R14,
+    dwarf::R15,
+    dwarf::RETURN_ADDRESS,
+    dwarf::FLAGS,
+    dwarf::CS,
+    dwarf::SS
+];
+
+#[repr(C)]
+#[derive(Clone, Default)]
+pub struct Regs {
+    rax: u64,
+    rdx: u64,
+    rcx: u64,
+    rbx: u64,
+    rsi: u64,
+    rdi: u64,
+    rbp: u64,
+    rsp: u64,
+    r8: u64,
+    r9: u64,
+    r10: u64,
+    r11: u64,
+    r12: u64,
+    r13: u64,
+    r14: u64,
+    r15: u64,
+    rip: u64,
+    _padding_1: [u64; 32],
+    flags: u64,
+    _padding_2: u64,
+    cs: u64,
+    ss: u64,
+
+    mask: u64
+}
+
+unsafe_impl_registers!( Regs, REGS );
+impl_local_regs!( Regs, "x86_64", get_regs_amd64 );
+
 #[allow(dead_code)]
 pub struct Arch {}
 
-fn guess_ebp< M: MemoryReader< Arch > >( nth_frame: usize, memory: &M, ctx_cache: &mut ContextCache< LittleEndian >, current_frame: &mut UnwindFrame< Arch > ) -> Option< u64 > {
+fn guess_ebp< M: MemoryReader< Arch > >( nth_frame: usize, memory: &M, ctx_cache: &mut ContextCache< LittleEndian >, regs: &<Arch as Architecture>::Regs, binary: &BinaryHandle< Arch > ) -> Option< u64 > {
     // This is a hacky workaround for the fact that Linux's perf events tend to return us
     // invalid RBP values (all FFs) if the call chain goes through the kernel space -> user space
     // boundary, so we try to figure it out some other way.
 
     debug!( "Trying to guess RBP for frame #{}...", nth_frame );
 
-    let rip = current_frame.regs.get( dwarf::RETURN_ADDRESS )?;
-    let binary = current_frame.binary.as_ref()?.clone();
+    let rip = regs.get( dwarf::RETURN_ADDRESS )?;
     let unwind_info = binary.lookup_unwind_row( ctx_cache, rip )?;
 
     let cfa_offset = match unwind_info.cfa() {
@@ -67,7 +119,7 @@ fn guess_ebp< M: MemoryReader< Arch > >( nth_frame: usize, memory: &M, ctx_cache
 
     mem::drop( unwind_info );
 
-    let rsp = current_frame.regs.get( dwarf::RSP )?;
+    let rsp = regs.get( dwarf::RSP )?;
 
     let mut rbp = rsp;
     for _ in 0..32 {
@@ -89,7 +141,8 @@ fn guess_ebp< M: MemoryReader< Arch > >( nth_frame: usize, memory: &M, ctx_cache
 #[doc(hidden)]
 pub struct State {
     ctx_cache: ContextCache< LittleEndian >,
-    unwind_cache: UnwindInfoCache
+    unwind_cache: UnwindInfoCache,
+    new_regs: Vec< (u16, u64) >
 }
 
 impl Architecture for Arch {
@@ -99,6 +152,7 @@ impl Architecture for Arch {
 
     type Endianity = LittleEndian;
     type State = State;
+    type Regs = Regs;
 
     fn register_name_str( register: u16 ) -> Option< &'static str > {
         use self::dwarf::*;
@@ -131,12 +185,12 @@ impl Architecture for Arch {
     }
 
     #[inline]
-    fn get_stack_pointer( regs: &DwarfRegs ) -> Option< u64 > {
+    fn get_stack_pointer< R: Registers >( regs: &R ) -> Option< u64 > {
         regs.get( dwarf::RSP )
     }
 
     #[inline]
-    fn get_instruction_pointer( regs: &DwarfRegs ) -> Option< u64 > {
+    fn get_instruction_pointer( regs: &Self::Regs ) -> Option< u64 > {
         regs.get( dwarf::RETURN_ADDRESS )
     }
 
@@ -144,46 +198,49 @@ impl Architecture for Arch {
     fn initial_state() -> Self::State {
         State {
             ctx_cache: ContextCache::new(),
-            unwind_cache: UnwindInfoCache::new()
+            unwind_cache: UnwindInfoCache::new(),
+            new_regs: Vec::with_capacity( 32 )
         }
     }
 
-    #[inline]
-    fn unwind< M: MemoryReader< Self > >( nth_frame: usize, memory: &M, state: &mut Self::State, current_frame: &mut UnwindFrame< Self >, next_frame: &mut UnwindFrame< Self >, panic_on_partial_backtrace: bool ) -> bool {
-        if current_frame.regs.get( dwarf::RBP ).is_none() {
-            if !current_frame.assign_binary( nth_frame, memory ) {
-                return false;
-            }
-
-            if let Some( rbp ) = guess_ebp( nth_frame, memory, &mut state.ctx_cache, current_frame ) {
-                current_frame.regs.append( dwarf::RBP, rbp );
-            }
-        }
-
-        for (register, value) in current_frame.regs.iter() {
-            match register {
-                dwarf::RSP |
-                dwarf::RETURN_ADDRESS => continue,
-                _ => next_frame.regs.append( register, value )
+    fn unwind< M: MemoryReader< Self > >(
+        nth_frame: usize,
+        memory: &M,
+        state: &mut Self::State,
+        regs: &mut Self::Regs,
+        regs_next: &mut Self::Regs,
+        initial_address: &mut Option< u64 >
+    ) -> Option< UnwindStatus > {
+        if !regs.contains( dwarf::RBP ) {
+            let binary = lookup_binary( nth_frame, memory, regs )?;
+            if let Some( rbp ) = guess_ebp( nth_frame, memory, &mut state.ctx_cache, regs, binary ) {
+                regs.append( dwarf::RBP, rbp );
+                regs_next.append( dwarf::RBP, rbp );
             }
         }
 
-        if !dwarf_unwind( nth_frame, memory, &mut state.ctx_cache, &mut state.unwind_cache, current_frame, next_frame ) {
-            if panic_on_partial_backtrace {
-                panic!( "Partial backtrace!" );
-            }
-            return false;
+        let result = dwarf_unwind( nth_frame, memory, &mut state.ctx_cache, &mut state.unwind_cache, regs, &mut state.new_regs )?;
+        *initial_address = Some( result.initial_address );
+        let cfa = result.cfa?;
+
+        let mut recovered_return_address = false;
+        for &(register, value) in &state.new_regs {
+            regs.append( register, value );
+            regs_next.append( register, value );
+
+            recovered_return_address = recovered_return_address || register == dwarf::RETURN_ADDRESS;
         }
 
-        let rsp = current_frame.cfa.unwrap();
-        next_frame.regs.append( dwarf::RSP, rsp );
-        debug!( "Register {:?} at frame #{} is equal to 0x{:016X}", Self::register_name( dwarf::RSP ), nth_frame + 1, rsp );
+        regs.append( dwarf::RSP, cfa );
+        regs_next.append( dwarf::RSP, cfa );
 
-        if let Some( _ ) = next_frame.regs.get( dwarf::RETURN_ADDRESS ) {
-            true
-        } else {
+        debug!( "Register {:?} at frame #{} is equal to 0x{:016X}", Self::register_name( dwarf::RSP ), nth_frame + 1, cfa );
+
+        if !recovered_return_address {
             debug!( "Previous frame not found: failed to determine the return address of frame #{}", nth_frame + 1 );
-            false
+            return Some( UnwindStatus::Finished );
         }
+
+        Some( UnwindStatus::InProgress )
     }
 }

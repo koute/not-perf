@@ -17,7 +17,7 @@ use libc;
 use num_cpus;
 
 use nwind::maps::{self, Region};
-use nwind::arch::{self, Architecture};
+use nwind::arch::{self, Architecture, Registers};
 use nwind::{
     IAddressSpace,
     AddressSpace,

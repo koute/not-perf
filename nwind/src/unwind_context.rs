@@ -1,105 +1,17 @@
-use std::fmt;
 use std::marker::PhantomData;
-use std::mem;
-use arch::Architecture;
-use dwarf_regs::DwarfRegs;
-use utils::{HexValue, HexRange};
-use address_space::{MemoryReader, BinaryHandle};
+use arch::{Architecture, UnwindStatus};
+use address_space::MemoryReader;
 
 pub struct UnwindContext< A: Architecture > {
     nth_frame: usize,
-    frame_a: UnwindFrame< A >,
-    frame_b: UnwindFrame< A >,
+    initial_address: Option< u64 >,
+    regs_1: A::Regs,
+    regs_2: A::Regs,
     state: A::State,
     is_done: bool,
     panic_on_partial_backtrace: bool,
 
     phantom: PhantomData< A >
-}
-
-pub struct UnwindFrame< A: Architecture > {
-    pub initial_address: Option< u64 >,
-    pub binary: Option< BinaryHandle< A > >,
-    pub regs: DwarfRegs,
-    pub cfa: Option< u64 >
-}
-
-impl< A: Architecture > UnwindFrame< A > {
-    fn new() -> Self {
-        UnwindFrame {
-            initial_address: None,
-            binary: None,
-            regs: DwarfRegs::new(),
-            cfa: None
-        }
-    }
-
-    #[inline]
-    pub fn clear( &mut self ) {
-        self.initial_address = None;
-        self.binary = None;
-        self.regs.clear();
-        self.cfa = None;
-    }
-
-    pub fn assign_binary< M: MemoryReader< A > >( &mut self, nth_frame: usize, memory: &M ) -> bool {
-        if self.binary.is_some() {
-            return true;
-        }
-
-        let address = A::get_instruction_pointer( &self.regs ).unwrap();
-        let region = match memory.get_region_at_address( address ) {
-            Some( region ) => region,
-            None => {
-                debug!( "Cannot find a binary corresponding to address 0x{:016X}", address );
-                return false;
-            }
-        };
-
-        self.binary = Some( region.binary().clone() );
-
-        debug!(
-            "Frame #{}: '{}' at 0x{:016X} (0x{:X}): {:?}",
-            nth_frame,
-            region.binary().name(),
-            address,
-            address - region.binary().base_address(),
-            region.binary().lookup_absolute_symbol( address ).map( |(range, symbol)| (HexRange( range ), symbol) )
-        );
-
-        true
-    }
-}
-
-impl< A: Architecture > fmt::Debug for UnwindFrame< A > {
-    fn fmt( &self, fmt: &mut fmt::Formatter ) -> Result< (), fmt::Error > {
-        let mut map = fmt.debug_map();
-        if let Some( cfa ) = self.cfa {
-            map.entry( &"CFA", &HexValue( cfa ) );
-        } else {
-            map.entry( &"CFA", &"None" );
-        }
-
-        for (index, value) in self.regs.iter() {
-            map.entry( &index, &HexValue( value ) );
-        }
-
-        map.finish()
-    }
-}
-
-impl< A: Architecture > AsRef< DwarfRegs > for UnwindFrame< A > {
-    #[inline]
-    fn as_ref( &self ) -> &DwarfRegs {
-        &self.regs
-    }
-}
-
-impl< A: Architecture > AsMut< DwarfRegs > for UnwindFrame< A > {
-    #[inline]
-    fn as_mut( &mut self ) -> &mut DwarfRegs {
-        &mut self.regs
-    }
 }
 
 pub struct UnwindHandle< 'a, A: Architecture + 'a > {
@@ -110,8 +22,9 @@ impl< A: Architecture > UnwindContext< A > {
     pub fn new() -> Self {
         UnwindContext {
             nth_frame: 0,
-            frame_a: UnwindFrame::new(),
-            frame_b: UnwindFrame::new(),
+            initial_address: None,
+            regs_1: Default::default(),
+            regs_2: Default::default(),
             state: A::initial_state(),
             panic_on_partial_backtrace: false,
             is_done: true,
@@ -123,22 +36,26 @@ impl< A: Architecture > UnwindContext< A > {
         self.panic_on_partial_backtrace = value;
     }
 
-    pub fn start< 'a, M: MemoryReader< A > >( &'a mut self, memory: &M, regs: &mut DwarfRegs ) -> UnwindHandle< 'a, A > {
-        debug!( "Starting unwinding at: 0x{:016X}", A::get_instruction_pointer( &regs ).unwrap() );
-
+    pub fn start< 'a, M: MemoryReader< A >, F: FnOnce( &mut A::Regs ) >( &'a mut self, memory: &M, initialize_regs: F ) -> UnwindHandle< 'a, A > {
         self.is_done = false;
         self.nth_frame = 0;
-        self.frame_a.clear();
-        self.frame_b.clear();
+        initialize_regs( &mut self.regs_1 );
+        self.regs_2 = self.regs_1.clone();
 
-        mem::swap( &mut self.frame_a.regs, regs );
-        if !A::unwind( 0, memory, &mut self.state, &mut self.frame_a, &mut self.frame_b, self.panic_on_partial_backtrace ) {
-            if self.panic_on_partial_backtrace {
-                panic!( "Partial backtrace!" );
-            }
+        debug!( "Starting unwinding at: 0x{:016X}", A::get_instruction_pointer( &self.regs_1 ).unwrap() );
 
-            self.is_done = true;
-        }
+        let result = A::unwind( 0, memory, &mut self.state, &mut self.regs_1, &mut self.regs_2, &mut self.initial_address );
+        match result {
+            None => {
+                if self.panic_on_partial_backtrace {
+                    panic!( "Partial backtrace!" );
+                }
+
+                self.is_done = true;
+            },
+            Some( UnwindStatus::Finished ) => self.is_done = true,
+            Some( UnwindStatus::InProgress ) => {}
+        };
 
         UnwindHandle {
             ctx: self
@@ -147,43 +64,51 @@ impl< A: Architecture > UnwindContext< A > {
 }
 
 impl< 'a, A: Architecture > UnwindHandle< 'a, A > {
-    fn current_frame( &self ) -> &UnwindFrame< A > {
-        if self.ctx.nth_frame & 1 == 0 {
-            &self.ctx.frame_a
-        } else {
-            &self.ctx.frame_b
-        }
-    }
-
     pub fn unwind< M: MemoryReader< A > >( &mut self, memory: &M ) -> bool {
         if self.ctx.is_done {
             return false;
         }
 
         self.ctx.nth_frame += 1;
-        let (current_frame, next_frame) = if self.ctx.nth_frame & 1 == 0 {
-            (&mut self.ctx.frame_a, &mut self.ctx.frame_b)
+        self.ctx.initial_address = None;
+        let (regs, next_regs) = if self.ctx.nth_frame & 1 == 0 {
+            (&mut self.ctx.regs_1, &mut self.ctx.regs_2)
         } else {
-            (&mut self.ctx.frame_b, &mut self.ctx.frame_a)
+            (&mut self.ctx.regs_2, &mut self.ctx.regs_1)
         };
 
-        debug!( "Unwinding #{} -> #{} at: 0x{:016X}", self.ctx.nth_frame - 1, self.ctx.nth_frame, A::get_instruction_pointer( &current_frame.regs ).unwrap() );
-        next_frame.clear();
+        debug!( "Unwinding #{} -> #{} at: 0x{:016X}", self.ctx.nth_frame - 1, self.ctx.nth_frame, A::get_instruction_pointer( &regs ).unwrap() );
 
-        if !A::unwind( self.ctx.nth_frame, memory, &mut self.ctx.state, current_frame, next_frame, self.ctx.panic_on_partial_backtrace ) {
-            self.ctx.is_done = true;
-        } else {
-            debug!( "Current address on frame #{}: 0x{:016X}", self.ctx.nth_frame, A::get_instruction_pointer( &current_frame.regs ).unwrap() );
-        }
+        self.ctx.initial_address = None;
+        let result = A::unwind( self.ctx.nth_frame, memory, &mut self.ctx.state, regs, next_regs, &mut self.ctx.initial_address );
+        match result {
+            None => {
+                if self.ctx.panic_on_partial_backtrace {
+                    panic!( "Partial backtrace!" );
+                }
+
+                self.ctx.is_done = true;
+            },
+            Some( UnwindStatus::Finished ) => self.ctx.is_done = true,
+            Some( UnwindStatus::InProgress ) => {
+                debug!( "Current address on frame #{}: 0x{:016X}", self.ctx.nth_frame, A::get_instruction_pointer( regs ).unwrap() );
+            }
+        };
 
         true
     }
 
     pub fn current_initial_address( &mut self ) -> Option< u64 > {
-        self.current_frame().initial_address
+        self.ctx.initial_address
     }
 
     pub fn current_address( &self ) -> u64 {
-        A::get_instruction_pointer( &self.current_frame().regs ).unwrap()
+        let regs = if self.ctx.nth_frame & 1 == 0 {
+            &self.ctx.regs_1
+        } else {
+            &self.ctx.regs_2
+        };
+
+        A::get_instruction_pointer( regs ).unwrap()
     }
 }

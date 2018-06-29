@@ -7,6 +7,7 @@ use byteorder::{ByteOrder, LittleEndian, BigEndian};
 
 use arch::arm;
 use arch::arm::dwarf;
+use arch::Registers;
 use address_space::MemoryReader;
 use dwarf_regs::DwarfRegs;
 use types::{Endianness, Bitness};

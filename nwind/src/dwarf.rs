@@ -4,10 +4,14 @@ use gimli::{
     CfaRule
 };
 
-use arch::Architecture;
-use address_space::MemoryReader;
+use arch::{Architecture, Registers};
+use address_space::{MemoryReader, lookup_binary};
 use frame_descriptions::{UnwindInfo, ContextCache, UnwindInfoCache};
-use unwind_context::UnwindFrame;
+
+pub struct DwarfResult {
+    pub initial_address: u64,
+    pub cfa: Option< u64 >
+}
 
 fn dwarf_get_reg< A: Architecture, M: MemoryReader< A >, R: gimli::Reader >( nth_frame: usize, register: u16, memory: &M, cfa_value: u64, rule: &RegisterRule< R > ) -> Option< u64 > {
     let value = match *rule {
@@ -36,9 +40,9 @@ pub fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
     nth_frame: usize,
     memory: &M,
     unwind_cache: Option< &mut UnwindInfoCache >,
-    frame: &UnwindFrame< A >,
-    next_frame: &mut UnwindFrame< A >,
-    unwind_info: &UnwindInfo< A::Endianity >
+    regs: &A::Regs,
+    unwind_info: &UnwindInfo< A::Endianity >,
+    next_regs: &mut Vec< (u16, u64) >
 ) -> Option< u64 > {
     debug!( "Initial address for frame #{}: 0x{:016X}", nth_frame, unwind_info.initial_absolute_address() );
 
@@ -47,7 +51,7 @@ pub fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
 
     let cfa_value = match cfa {
         CfaRule::RegisterAndOffset { register: cfa_register, offset: cfa_offset } => {
-            let cfa_register_value = match frame.regs.get( cfa_register as _ ) {
+            let cfa_register_value = match regs.get( cfa_register as _ ) {
                 Some( cfa_register_value ) => cfa_register_value,
                 None => {
                     debug!( "Failed to fetch CFA for frame #{}: failed to fetch register {:?}", nth_frame, A::register_name( cfa_register as _ ) );
@@ -70,7 +74,7 @@ pub fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
         debug!( "  Register {:?}: {:?}", A::register_name( register as _ ), rule );
 
         if let Some( value ) = dwarf_get_reg( nth_frame + 1, register as u16, memory, cfa_value, rule ) {
-            next_frame.regs.append( register as u16, value );
+            next_regs.push( (register as _, value) );
         } else {
             cacheable = false;
         }
@@ -90,48 +94,48 @@ pub fn dwarf_unwind< A: Architecture, M: MemoryReader< A > >(
     memory: &M,
     ctx_cache: &mut ContextCache< A::Endianity >,
     unwind_cache: &mut UnwindInfoCache,
-    frame: &mut UnwindFrame< A >,
-    next_frame: &mut UnwindFrame< A >
-) -> bool {
-    let address = A::get_instruction_pointer( &frame.regs ).expect( "DWARF unwind: no instruction pointer" );
+    regs: &A::Regs,
+    next_regs: &mut Vec< (u16, u64) >
+) -> Option< DwarfResult > {
+    next_regs.clear();
+
+    let address = A::get_instruction_pointer( regs ).expect( "DWARF unwind: no instruction pointer" );
     if let Some( unwind_info ) = unwind_cache.lookup( address ) {
-        frame.initial_address = Some( unwind_info.initial_absolute_address() );
         let cfa = dwarf_unwind_impl(
             nth_frame,
             memory,
             None,
-            frame,
-            next_frame,
-            &unwind_info
+            regs,
+            &unwind_info,
+            next_regs
         );
 
-        frame.cfa = cfa;
-        return cfa.is_some();
+        return Some( DwarfResult {
+            initial_address: unwind_info.initial_absolute_address(),
+            cfa
+        });
     }
 
-    if !frame.assign_binary( nth_frame, memory ) {
-        return false;
-    }
-
-    let binary = frame.binary.as_ref().expect( "DWARF unwind: no associated binary" );
+    let binary = lookup_binary( nth_frame, memory, regs )?;
     let unwind_info = match binary.lookup_unwind_row( ctx_cache, address ) {
         Some( unwind_info ) => unwind_info,
         None => {
             debug!( "No unwind info for address 0x{:016X}", address );
-            return false;
+            return None;
         }
     };
 
-    frame.initial_address = Some( unwind_info.initial_absolute_address() );
     let cfa = dwarf_unwind_impl(
         nth_frame,
         memory,
         Some( unwind_cache ),
-        frame,
-        next_frame,
-        &unwind_info
+        regs,
+        &unwind_info,
+        next_regs
     );
 
-    frame.cfa = cfa;
-    return cfa.is_some();
+    return Some( DwarfResult {
+        initial_address: unwind_info.initial_absolute_address(),
+        cfa
+    });
 }

@@ -12,7 +12,7 @@ use std::path::Path;
 use criterion::{Criterion, Bencher};
 
 use nperf::{Packet, ArchiveReader, StackReader};
-use nwind::arch;
+use nwind::arch::{self, Registers};
 use nwind::{AddressSpace, IAddressSpace, BinaryData, BinarySource, DwarfRegs, RangeMap};
 use nwind::maps::Region;
 

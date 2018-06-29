@@ -1,8 +1,6 @@
 use gimli::BigEndian;
-use dwarf_regs::DwarfRegs;
-use arch::Architecture;
+use arch::{Architecture, Registers, UnwindStatus};
 use address_space::MemoryReader;
-use unwind_context::UnwindFrame;
 use frame_descriptions::{ContextCache, UnwindInfoCache};
 use types::{Endianness, Bitness};
 use dwarf::dwarf_unwind;
@@ -44,13 +42,94 @@ pub mod dwarf {
     pub const PC: u16 = 34;
 }
 
+static REGS: &'static [u16] = &[
+    dwarf::R0,
+    dwarf::R1,
+    dwarf::R2,
+    dwarf::R3,
+    dwarf::R4,
+    dwarf::R5,
+    dwarf::R6,
+    dwarf::R7,
+    dwarf::R8,
+    dwarf::R9,
+    dwarf::R10,
+    dwarf::R11,
+    dwarf::R12,
+    dwarf::R13,
+    dwarf::R14,
+    dwarf::R15,
+    dwarf::R16,
+    dwarf::R17,
+    dwarf::R18,
+    dwarf::R19,
+    dwarf::R20,
+    dwarf::R21,
+    dwarf::R22,
+    dwarf::R23,
+    dwarf::R24,
+    dwarf::R25,
+    dwarf::R26,
+    dwarf::R27,
+    dwarf::R28,
+    dwarf::R29,
+    dwarf::R30,
+    dwarf::R31,
+    dwarf::PC
+];
+
+#[repr(C)]
+#[derive(Clone, Default)]
+pub struct Regs {
+    r0: u64,
+    r1: u64,
+    r2: u64,
+    r3: u64,
+    r4: u64,
+    r5: u64,
+    r6: u64,
+    r7: u64,
+    r8: u64,
+    r9: u64,
+    r10: u64,
+    r11: u64,
+    r12: u64,
+    r13: u64,
+    r14: u64,
+    r15: u64,
+    r16: u64,
+    r17: u64,
+    r18: u64,
+    r19: u64,
+    r20: u64,
+    r21: u64,
+    r22: u64,
+    r23: u64,
+    r24: u64,
+    r25: u64,
+    r26: u64,
+    r27: u64,
+    r28: u64,
+    r29: u64,
+    r30: u64,
+    r31: u64,
+    _padding: [u64; 2],
+    pc: u64,
+
+    mask: u64
+}
+
+unsafe_impl_registers!( Regs, REGS );
+impl_local_regs!( Regs, "mips64", get_regs_mips64 );
+
 #[allow(dead_code)]
 pub struct Arch {}
 
 #[doc(hidden)]
 pub struct State {
     ctx_cache: ContextCache< BigEndian >,
-    unwind_cache: UnwindInfoCache
+    unwind_cache: UnwindInfoCache,
+    new_regs: Vec< (u16, u64) >
 }
 
 impl Architecture for Arch {
@@ -60,6 +139,7 @@ impl Architecture for Arch {
 
     type Endianity = BigEndian;
     type State = State;
+    type Regs = Regs;
 
     fn register_name_str( register: u16 ) -> Option< &'static str > {
         use self::dwarf::*;
@@ -105,12 +185,12 @@ impl Architecture for Arch {
     }
 
     #[inline]
-    fn get_stack_pointer( regs: &DwarfRegs ) -> Option< u64 > {
+    fn get_stack_pointer< R: Registers >( regs: &R ) -> Option< u64 > {
         regs.get( dwarf::R29 )
     }
 
     #[inline]
-    fn get_instruction_pointer( regs: &DwarfRegs ) -> Option< u64 > {
+    fn get_instruction_pointer( regs: &Self::Regs ) -> Option< u64 > {
         regs.get( dwarf::PC )
     }
 
@@ -118,40 +198,47 @@ impl Architecture for Arch {
     fn initial_state() -> Self::State {
         State {
             ctx_cache: ContextCache::new(),
-            unwind_cache: UnwindInfoCache::new()
+            unwind_cache: UnwindInfoCache::new(),
+            new_regs: Vec::with_capacity( 32 )
         }
     }
 
     #[inline]
-    fn unwind< M: MemoryReader< Self > >( nth_frame: usize, memory: &M, state: &mut Self::State, current_frame: &mut UnwindFrame< Self >, next_frame: &mut UnwindFrame< Self >, _panic_on_partial_backtrace: bool ) -> bool {
-        for (register, value) in current_frame.regs.iter() {
-            match register {
-                dwarf::PC |
-                dwarf::R31 |
-                dwarf::R29 => continue,
-                _ => next_frame.regs.append( register ,value )
-            }
+    fn unwind< M: MemoryReader< Self > >(
+        nth_frame: usize,
+        memory: &M,
+        state: &mut Self::State,
+        regs: &mut Self::Regs,
+        regs_next: &mut Self::Regs,
+        initial_address: &mut Option< u64 >
+    ) -> Option< UnwindStatus > {
+        let result = dwarf_unwind( nth_frame, memory, &mut state.ctx_cache, &mut state.unwind_cache, regs, &mut state.new_regs )?;
+        *initial_address = Some( result.initial_address );
+        let cfa = result.cfa?;
+
+        let mut recovered_return_address = false;
+        for &(register, value) in &state.new_regs {
+            regs.append( register, value );
+            regs_next.append( register, value );
+
+            recovered_return_address = recovered_return_address || register == dwarf::R31;
         }
 
-        if !dwarf_unwind( nth_frame, memory, &mut state.ctx_cache, &mut state.unwind_cache, current_frame, next_frame ) {
-            return false;
-        }
+        regs.append( dwarf::R29, cfa );
+        regs_next.append( dwarf::R29, cfa );
+        regs.append( dwarf::R30, cfa );
+        regs_next.append( dwarf::R30, cfa );
 
-        let sp = current_frame.cfa.unwrap();
-        next_frame.regs.append( dwarf::R29, sp );
-        next_frame.regs.append( dwarf::R30, sp );
-        debug!( "Register {:?} at frame #{} is equal to 0x{:016X}", Self::register_name( dwarf::R29 ), nth_frame + 1, sp );
+        debug!( "Register {:?} at frame #{} is equal to 0x{:016X}", Self::register_name( dwarf::R29 ), nth_frame + 1, cfa );
+        debug!( "Register {:?} at frame #{} is equal to 0x{:016X}", Self::register_name( dwarf::R30 ), nth_frame + 1, cfa );
 
-        if let Some( return_address ) = next_frame.regs.get( dwarf::R31 ) {
-            next_frame.regs.append( dwarf::PC, return_address );
-            true
-        } else if nth_frame == 0 {
-            let return_address = current_frame.regs.get( dwarf::R31 ).unwrap();
-            next_frame.regs.append( dwarf::PC, return_address );
-            true
+        if recovered_return_address || nth_frame == 0 {
+            regs.pc = regs.r31;
+            regs_next.pc = regs.r31;
+            Some( UnwindStatus::InProgress )
         } else {
             debug!( "Previous frame not found: failed to determine the return address of frame #{}", nth_frame + 1 );
-            false
+            Some( UnwindStatus::Finished )
         }
     }
 }

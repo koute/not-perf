@@ -15,7 +15,7 @@ use speedy::Endianness;
 use cpp_demangle;
 use regex::Regex;
 
-use nwind::arch::{self, Architecture};
+use nwind::arch::{self, Architecture, Registers};
 use nwind::maps::Region;
 use nwind::{
     DwarfRegs,

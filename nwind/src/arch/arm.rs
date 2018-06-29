@@ -1,8 +1,7 @@
 use gimli::LittleEndian;
 use dwarf_regs::DwarfRegs;
-use arch::Architecture;
-use address_space::MemoryReader;
-use unwind_context::UnwindFrame;
+use arch::{Architecture, Registers, UnwindStatus};
+use address_space::{MemoryReader, lookup_binary};
 use types::{Endianness, Bitness};
 use arm_extab::VirtualMachine as EhVm;
 use arm_extab::Error as EhError;
@@ -38,6 +37,7 @@ impl Architecture for Arch {
 
     type Endianity = LittleEndian;
     type State = ();
+    type Regs = DwarfRegs;
 
     fn register_name_str( register: u16 ) -> Option< &'static str > {
         use self::dwarf::*;
@@ -66,12 +66,12 @@ impl Architecture for Arch {
     }
 
     #[inline]
-    fn get_stack_pointer( regs: &DwarfRegs ) -> Option< u64 > {
+    fn get_stack_pointer< R: Registers >( regs: &R ) -> Option< u64 > {
         regs.get( dwarf::R13 )
     }
 
     #[inline]
-    fn get_instruction_pointer( regs: &DwarfRegs ) -> Option< u64 > {
+    fn get_instruction_pointer( regs: &Self::Regs ) -> Option< u64 > {
         regs.get( dwarf::R15 )
     }
 
@@ -80,20 +80,21 @@ impl Architecture for Arch {
         ()
     }
 
-    #[inline]
-    fn unwind< M: MemoryReader< Self > >( nth_frame: usize, memory: &M, _state: &mut Self::State, current_frame: &mut UnwindFrame< Self >, next_frame: &mut UnwindFrame< Self >, panic_on_partial_backtrace: bool ) -> bool {
-        if !current_frame.assign_binary( nth_frame, memory ) {
-            return false;
-        }
-
-        let mut vm = EhVm::new();
-        let binary = current_frame.binary.as_ref().unwrap();
+    fn unwind< M: MemoryReader< Self > >(
+        nth_frame: usize,
+        memory: &M,
+        _state: &mut Self::State,
+        regs: &mut Self::Regs,
+        regs_next: &mut Self::Regs,
+        initial_address: &mut Option< u64 >
+    ) -> Option< UnwindStatus > {
+        let binary = lookup_binary( nth_frame, memory, regs )?;
 
         let exidx_range = match binary.arm_exidx_range() {
             Some( exidx_range ) => exidx_range,
             None => {
                 debug!( "Previous frame not found: binary '{}' is missing .ARM.exidx section", binary.name() );
-                return false
+                return None;
             }
         };
 
@@ -101,7 +102,7 @@ impl Architecture for Arch {
             Some( exidx_address ) => exidx_address,
             None => {
                 debug!( "Previous frame not found: binary '{}' .ARM.exidx address is not known", binary.name() );
-                return false
+                return None;
             }
         };
 
@@ -112,12 +113,12 @@ impl Architecture for Arch {
                     0
                 } else {
                     debug!( "Previous frame not found: binary '{}' .ARM.extab address is not known", binary.name() );
-                    return false
+                    return None;
                 }
             }
         };
 
-        let address = current_frame.regs.get( dwarf::R15 ).unwrap() as u32;
+        let address = regs.get( dwarf::R15 ).unwrap() as u32;
         let exidx = &binary.as_bytes()[ exidx_range ];
         let extab = if let Some( extab_range ) = binary.arm_extab_range() {
             &binary.as_bytes()[ extab_range ]
@@ -125,20 +126,21 @@ impl Architecture for Arch {
             b""
         };
 
-        for (register, value) in current_frame.regs.iter() {
+        for (register, value) in regs.iter() {
             match register {
                 dwarf::R15 |
                 dwarf::R13 => continue,
-                _ => next_frame.regs.append( register ,value )
+                _ => regs_next.append( register ,value )
             }
         }
 
-        let mut initial_address = None;
+        let mut initial_address_u32 = None;
+        let mut vm = EhVm::new();
         let result = vm.unwind(
             memory,
-            &current_frame.regs,
-            &mut initial_address,
-            &mut next_frame.regs,
+            &regs,
+            &mut initial_address_u32,
+            regs_next,
             exidx,
             extab,
             exidx_base as u32,
@@ -147,23 +149,20 @@ impl Architecture for Arch {
             nth_frame == 0
         );
 
-        if let Some( initial_address ) = initial_address {
-            debug!( "Initial address for frame #{}: 0x{:08X}", nth_frame, initial_address );
-            current_frame.initial_address = Some( initial_address as u64 );
+        if let Some( initial_address_u32 ) = initial_address_u32 {
+            debug!( "Initial address for frame #{}: 0x{:08X}", nth_frame, initial_address_u32 );
+            *initial_address = Some( initial_address_u32 as _ )
         }
 
         match result {
-            Ok( () ) => return true,
+            Ok( () ) => return Some( UnwindStatus::InProgress ),
             Err( EhError::EndOfStack ) => {
                 debug!( "Previous frame not found: EndOfStack" );
-                return false;
+                Some( UnwindStatus::Finished )
             },
             Err( error ) => {
                 debug!( "Previous frame not found: {:?}", error );
-                if panic_on_partial_backtrace {
-                    panic!( "Partial backtrace!" );
-                }
-                return false;
+                None
             }
         }
     }

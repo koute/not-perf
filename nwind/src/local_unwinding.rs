@@ -6,8 +6,7 @@ use std::fs;
 use address_space::{IAddressSpace, AddressSpace, BinaryRegion, BinarySource, MemoryReader};
 use range_map::RangeMap;
 use types::{Endianness, UserFrame, BinaryId};
-use dwarf_regs::DwarfRegs;
-use arch;
+use arch::{self, LocalRegs};
 use maps;
 
 struct LocalMemory< 'a > {
@@ -47,16 +46,14 @@ impl< 'a > MemoryReader< arch::native::Arch > for LocalMemory< 'a > {
 }
 
 pub struct LocalAddressSpace {
-    inner: AddressSpace< arch::native::Arch >,
-    dwarf_regs: DwarfRegs
+    inner: AddressSpace< arch::native::Arch >
 }
 
 impl LocalAddressSpace {
     pub fn new() -> Result< Self, io::Error > {
         debug!( "Initializing local address space..." );
         let mut address_space = LocalAddressSpace {
-            inner: AddressSpace::new(),
-            dwarf_regs: DwarfRegs::new()
+            inner: AddressSpace::new()
         };
 
         address_space.reload()?;
@@ -89,16 +86,14 @@ impl LocalAddressSpace {
     }
 
     pub fn unwind( &mut self, output: &mut Vec< UserFrame > ) {
-        let regs = arch::native::Regs::get();
-
-        self.dwarf_regs.clear();
-        regs.into_dwarf_regs( &mut self.dwarf_regs );
-
         let memory = LocalMemory {
             regions: &self.inner.regions
         };
 
-        let mut ctx = self.inner.ctx.start( &memory, &mut self.dwarf_regs );
+        let mut ctx = self.inner.ctx.start( &memory, |regs| {
+            regs.get_local_regs();
+        });
+
         loop {
             let frame = UserFrame {
                 address: ctx.current_address(),
@@ -132,5 +127,5 @@ fn test_self_unwind() {
         }
     }
 
-    assert!( symbols[ 0 ].contains( "LocalAddressSpace" ) && symbols[ 0 ].contains( "unwind" ) );
+    assert!( symbols.iter().find( |symbol| symbol.contains( "LocalAddressSpace" ) && symbol.contains( "unwind" ) ).is_some() );
 }

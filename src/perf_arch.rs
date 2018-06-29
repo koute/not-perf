@@ -1,4 +1,5 @@
 use nwind::DwarfRegs;
+use nwind::arch::Registers;
 
 pub trait IntoDwarfRegs {
     fn copy_to_dwarf_regs( &self, regs: &mut DwarfRegs );
@@ -63,6 +64,8 @@ macro_rules! define_regs {
             #[allow(unused_assignments)]
             #[inline]
             fn copy_to_dwarf_regs( &self, regs: &mut ::nwind::DwarfRegs ) {
+                use nwind::arch::Registers;
+
                 let mut index = 0;
                 let mut last_reg = 0;
 
