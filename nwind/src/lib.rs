@@ -66,4 +66,4 @@ pub use types::{
 };
 
 #[cfg(feature = "local-unwinding")]
-pub use local_unwinding::LocalAddressSpace;
+pub use local_unwinding::{LocalAddressSpace, UnwindControl};

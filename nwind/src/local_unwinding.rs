@@ -9,6 +9,12 @@ use types::{Endianness, UserFrame, BinaryId};
 use arch::{self, LocalRegs};
 use maps;
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum UnwindControl {
+    Continue,
+    Stop
+}
+
 struct LocalMemory< 'a > {
     regions: &'a RangeMap< BinaryRegion< arch::native::Arch > >
 }
@@ -85,7 +91,7 @@ impl LocalAddressSpace {
         Ok(())
     }
 
-    pub fn unwind( &mut self, output: &mut Vec< UserFrame > ) {
+    pub fn unwind< F: FnMut( &UserFrame ) -> UnwindControl >( &mut self, mut callback: F ) {
         let memory = LocalMemory {
             regions: &self.inner.regions
         };
@@ -99,7 +105,12 @@ impl LocalAddressSpace {
                 address: ctx.current_address(),
                 initial_address: ctx.current_initial_address()
             };
-            output.push( frame );
+
+            match callback( &frame ).into() {
+                UnwindControl::Continue => {},
+                UnwindControl::Stop => break
+            }
+
             if ctx.unwind( &memory ) == false {
                 return;
             }
@@ -117,7 +128,10 @@ fn test_self_unwind() {
 
     let mut address_space = LocalAddressSpace::new().unwrap();
     let mut frames = Vec::new();
-    address_space.unwind( &mut frames );
+    address_space.unwind( |frame| {
+        frames.push( frame.clone() );
+        UnwindControl::Continue
+    });
     assert!( frames.len() > 3 );
 
     let mut symbols = Vec::new();
