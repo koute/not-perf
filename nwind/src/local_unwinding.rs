@@ -134,12 +134,16 @@ fn test_self_unwind() {
     });
     assert!( frames.len() > 3 );
 
+    let mut addresses = Vec::new();
     let mut symbols = Vec::new();
     for frame in frames.iter() {
         if let Some( symbol ) = address_space.lookup_symbol( frame.address ) {
             symbols.push( symbol.to_owned() );
         }
+
+        addresses.push( frame.address );
     }
 
     assert!( symbols.iter().find( |symbol| symbol.contains( "LocalAddressSpace" ) && symbol.contains( "unwind" ) ).is_some() );
+    assert_ne!( addresses[ addresses.len() - 1 ], addresses[ addresses.len() - 2 ] );
 }
