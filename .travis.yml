@@ -3,5 +3,7 @@ rust:
   - nightly
 
 script:
-  - cargo test -p nwind --verbose
+  - cd nwind
+  - cargo test --features local-unwinding --verbose
+  - cd ..
   - cargo test -p nperf --verbose
