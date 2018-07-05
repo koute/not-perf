@@ -45,6 +45,7 @@ impl Endianity for gimli::BigEndian {
     }
 }
 
+#[derive(Debug)]
 pub enum UnwindStatus {
     InProgress,
     Finished
