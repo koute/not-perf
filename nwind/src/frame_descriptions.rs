@@ -8,6 +8,7 @@ use std::time::Instant;
 use lru::LruCache;
 
 use gimli::{
+    self,
     BaseAddresses,
     EhFrame,
     DebugFrame,
@@ -18,54 +19,56 @@ use gimli::{
     CfaRule,
     CieOrFde,
     FrameDescriptionEntry,
-    EndianBuf,
     UnwindTable,
     UnwindTableRow,
-    RegisterRule
+    RegisterRule,
+    EndianSlice
 };
 
 use utils::get_ms;
-use binary::BinaryData;
+use binary::{BinaryData};
 use arch::Endianity;
 use range_map::RangeMap;
 
+type DataReader< E > = EndianSlice< 'static, E >;
+
 pub struct ContextCache< E: Endianity > {
-    cached_eh_frame: Vec< UninitializedUnwindContext< EhFrame< EndianBuf< 'static, E > >, EndianBuf< 'static, E > > >,
-    cached_debug_frame: Vec< UninitializedUnwindContext< DebugFrame< EndianBuf< 'static, E > >, EndianBuf< 'static, E > > >
+    cached_eh_frame: Vec< UninitializedUnwindContext< EhFrame< DataReader< E > >, DataReader< E > > >,
+    cached_debug_frame: Vec< UninitializedUnwindContext< DebugFrame< DataReader< E > >, DataReader< E > > >
 }
 
-trait CachableSection< 'a, E: Endianity >: UnwindSection< EndianBuf< 'a, E > > where <Self as UnwindSection< EndianBuf< 'a, E > >>::Offset: UnwindOffset {
-    fn get( ctx_cache: &mut ContextCache< E > ) -> UninitializedUnwindContext< Self, EndianBuf< 'a, E > >;
-    fn cache( ctx_cache: &mut ContextCache< E >, uuc: UninitializedUnwindContext< Self, EndianBuf< 'a, E > > );
-    fn wrap_context( iuc: UnsafeCell< InitializedUnwindContext< Self, EndianBuf< 'a, E > > > ) -> IUC< 'a, E >;
+trait CachableSection< 'a, E: Endianity >: UnwindSection< DataReader< E > > where <Self as UnwindSection< DataReader< E > >>::Offset: UnwindOffset {
+    fn get( ctx_cache: &mut ContextCache< E > ) -> UninitializedUnwindContext< Self, DataReader< E > >;
+    fn cache( ctx_cache: &mut ContextCache< E >, uuc: UninitializedUnwindContext< Self, DataReader< E > > );
+    fn wrap_context( iuc: UnsafeCell< InitializedUnwindContext< Self, DataReader< E > > > ) -> IUC< E >;
 }
 
-impl< 'a, E: Endianity > CachableSection< 'a, E > for EhFrame< EndianBuf< 'a, E > > {
-    fn get( ctx_cache: &mut ContextCache< E > ) -> UninitializedUnwindContext< Self, EndianBuf< 'a, E > > {
+impl< 'a, E: Endianity > CachableSection< 'a, E > for EhFrame< DataReader< E > > {
+    fn get( ctx_cache: &mut ContextCache< E > ) -> UninitializedUnwindContext< Self, DataReader< E > > {
         let uuc = ctx_cache.cached_eh_frame.pop().unwrap_or_else( || Default::default() );
         unsafe { mem::transmute( uuc ) }
     }
 
-    fn wrap_context( iuc: UnsafeCell< InitializedUnwindContext< Self, EndianBuf< 'a, E > > > ) -> IUC< 'a, E > {
+    fn wrap_context( iuc: UnsafeCell< InitializedUnwindContext< Self, DataReader< E > > > ) -> IUC< E > {
         IUC::EhFrame( iuc )
     }
 
-    fn cache( ctx_cache: &mut ContextCache< E >, uuc: UninitializedUnwindContext< Self, EndianBuf< 'a, E > > ) {
+    fn cache( ctx_cache: &mut ContextCache< E >, uuc: UninitializedUnwindContext< Self, DataReader< E > > ) {
         ctx_cache.cached_eh_frame.push( unsafe { mem::transmute( uuc ) } );
     }
 }
 
-impl< 'a, E: Endianity > CachableSection< 'a, E > for DebugFrame< EndianBuf< 'a, E > > {
-    fn get( ctx_cache: &mut ContextCache< E > ) -> UninitializedUnwindContext< Self, EndianBuf< 'a, E > > {
+impl< 'a, E: Endianity > CachableSection< 'a, E > for DebugFrame< DataReader< E > > {
+    fn get( ctx_cache: &mut ContextCache< E > ) -> UninitializedUnwindContext< Self, DataReader< E > > {
         let uuc = ctx_cache.cached_debug_frame.pop().unwrap_or_else( || Default::default() );
         unsafe { mem::transmute( uuc ) }
     }
 
-    fn wrap_context( iuc: UnsafeCell< InitializedUnwindContext< Self, EndianBuf< 'a, E > > > ) -> IUC< 'a, E > {
+    fn wrap_context( iuc: UnsafeCell< InitializedUnwindContext< Self, DataReader< E > > > ) -> IUC< E > {
         IUC::DebugFrame( iuc )
     }
 
-    fn cache( ctx_cache: &mut ContextCache< E >, uuc: UninitializedUnwindContext< Self, EndianBuf< 'a, E > > ) {
+    fn cache( ctx_cache: &mut ContextCache< E >, uuc: UninitializedUnwindContext< Self, DataReader< E > > ) {
         ctx_cache.cached_debug_frame.push( unsafe { mem::transmute( uuc ) } );
     }
 }
@@ -80,8 +83,8 @@ impl< E: Endianity > ContextCache< E > {
     }
 
     #[inline]
-    fn cache< 'a, U: CachableSection< 'a, E > >( &mut self, iuc: InitializedUnwindContext< U, EndianBuf< 'a, E > > )
-        where <U as UnwindSection< EndianBuf< 'a, E > >>::Offset: UnwindOffset
+    fn cache< 'a, U: CachableSection< 'a, E > >( &mut self, iuc: InitializedUnwindContext< U, DataReader< E > > )
+        where <U as UnwindSection< DataReader< E > >>::Offset: UnwindOffset
     {
         U::cache( self, iuc.reset() );
     }
@@ -95,8 +98,8 @@ pub struct AddressMapping {
     pub size: u64
 }
 
-type EhFrameDescription< 'a, E > = FrameDescriptionEntry< EhFrame< EndianBuf< 'a, E > >, EndianBuf< 'a, E > >;
-type DebugFrameDescription< 'a, E > = FrameDescriptionEntry< DebugFrame< EndianBuf< 'a, E > >, EndianBuf< 'a, E > >;
+type EhFrameDescription< 'a, E > = FrameDescriptionEntry< EhFrame< DataReader< E > >, DataReader< E > >;
+type DebugFrameDescription< 'a, E > = FrameDescriptionEntry< DebugFrame< DataReader< E > >, DataReader< E > >;
 
 pub struct FrameDescriptions< E: Endianity > {
     binary: ManuallyDrop< Arc< BinaryData > >,
@@ -199,7 +202,7 @@ impl< E: Endianity > FrameDescriptions< E > {
         None
     }
 
-    fn load_debug_frame< 'a >( binary: &'a Arc< BinaryData > ) -> RangeMap< FrameDescriptionEntry< DebugFrame< EndianBuf< 'a, E > >, EndianBuf< 'a, E > > > {
+    fn load_debug_frame< 'a >( binary: &'a Arc< BinaryData > ) -> RangeMap< FrameDescriptionEntry< DebugFrame< DataReader< E > >, DataReader< E > > > {
         let debug_frame_range = match binary.debug_frame_range() {
             Some( range ) => range,
             None => return RangeMap::new()
@@ -233,7 +236,7 @@ impl< E: Endianity > FrameDescriptions< E > {
         descriptions
     }
 
-    fn load_eh_frame< 'a >( binary: &'a Arc< BinaryData > ) -> RangeMap< FrameDescriptionEntry< EhFrame< EndianBuf< 'a, E > >, EndianBuf< 'a, E > > > {
+    fn load_eh_frame< 'a >( binary: &'a Arc< BinaryData > ) -> RangeMap< FrameDescriptionEntry< EhFrame< DataReader< E > >, DataReader< E > > > {
         let eh_frame_range = match binary.eh_frame_range() {
             Some( range ) => range,
             None => {
@@ -270,8 +273,8 @@ impl< E: Endianity > FrameDescriptions< E > {
         descriptions
     }
 
-    fn load_section< 'a, U: UnwindSection< EndianBuf< 'a, E > > >( bases: BaseAddresses, binary: &Arc< BinaryData >, section: U ) -> RangeMap< FrameDescriptionEntry< U, EndianBuf< 'a, E > > >
-        where <U as UnwindSection< EndianBuf< 'a, E > >>::Offset: UnwindOffset
+    fn load_section< R: gimli::Reader< Offset = usize >, U: UnwindSection< R > >( bases: BaseAddresses, binary: &Arc< BinaryData >, section: U ) -> RangeMap< FrameDescriptionEntry< U, R > >
+        where <U as UnwindSection< R >>::Offset: UnwindOffset
     {
         let mut entries = section.entries( &bases );
         let mut descriptions = Vec::new();
@@ -320,12 +323,12 @@ impl< E: Endianity > FrameDescriptions< E > {
     }
 
     fn find_unwind_info_impl< 'a, U: CachableSection< 'a, E > >(
-        descriptions: &RangeMap< FrameDescriptionEntry< U, EndianBuf< 'a, E > > >,
+        descriptions: &RangeMap< FrameDescriptionEntry< U, DataReader< E > > >,
         ctx_cache: &'a mut ContextCache< E >,
         absolute_address: u64,
         address: u64
     ) -> Option< UnwindInfo< 'a, E > >
-        where <U as UnwindSection< EndianBuf< 'a, E > >>::Offset: UnwindOffset
+        where <U as UnwindSection< DataReader< E > >>::Offset: UnwindOffset
     {
         if descriptions.is_empty() {
             return None;
@@ -367,16 +370,16 @@ impl< E: Endianity > FrameDescriptions< E > {
     }
 }
 
-enum IUC< 'a, E: Endianity > {
-    EhFrame( UnsafeCell< InitializedUnwindContext< EhFrame< EndianBuf< 'a, E > >, EndianBuf< 'a, E > > > ),
-    DebugFrame( UnsafeCell< InitializedUnwindContext< DebugFrame< EndianBuf< 'a, E > >, EndianBuf< 'a, E > > > )
+enum IUC< E: Endianity > {
+    EhFrame( UnsafeCell< InitializedUnwindContext< EhFrame< DataReader< E > >, DataReader< E > > > ),
+    DebugFrame( UnsafeCell< InitializedUnwindContext< DebugFrame< DataReader< E > >, DataReader< E > > > )
 }
 
 enum UnwindInfoKind< 'a, E: Endianity + 'a > {
     Cached( &'a CachedUnwindInfo ),
     Uncached {
-        iuc: ManuallyDrop< IUC< 'a, E > >,
-        row: ManuallyDrop< UnwindTableRow< EndianBuf< 'a, E > > >,
+        iuc: ManuallyDrop< IUC< E > >,
+        row: ManuallyDrop< UnwindTableRow< DataReader< E > > >,
         cache: &'a mut ContextCache< E >
     }
 }
@@ -395,7 +398,7 @@ impl< 'a, E: Endianity > UnwindInfo< 'a, E > {
     }
 
     #[inline]
-    pub fn cfa( &self ) -> CfaRule< EndianBuf< 'a, E > > {
+    pub fn cfa( &self ) -> CfaRule< DataReader< E > > {
         match self.kind {
             UnwindInfoKind::Cached( ref info ) => {
                 CfaRule::RegisterAndOffset {
@@ -410,7 +413,7 @@ impl< 'a, E: Endianity > UnwindInfo< 'a, E > {
     }
 
     #[inline]
-    pub fn register( &self, register: u8 ) -> RegisterRule< EndianBuf< 'a, E > > {
+    pub fn register( &self, register: u8 ) -> RegisterRule< DataReader< E > > {
         match self.kind {
             UnwindInfoKind::Cached( ref info ) => {
                 if let Some( &(_, ref rule) ) = info.rules.iter().find( |rule| rule.0 == register ) {
@@ -426,7 +429,7 @@ impl< 'a, E: Endianity > UnwindInfo< 'a, E > {
     }
 
     #[inline]
-    pub fn each_register< F: FnMut( (u8, &RegisterRule< EndianBuf< 'a, E > >) ) >( &self, mut callback: F ) {
+    pub fn each_register< F: FnMut( (u8, &RegisterRule< DataReader< E > >) ) >( &self, mut callback: F ) {
         match self.kind {
             UnwindInfoKind::Uncached { ref row, .. } => {
                 for &(register, ref rule) in row.registers() {

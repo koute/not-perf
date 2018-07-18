@@ -5,7 +5,7 @@ authors = ["Jan Bujak <jan.bujak@nokia.com>"]
 
 [dependencies]
 byteorder = "1"
-gimli = "0.15"
+gimli = "0.16"
 goblin = "0.0.14"
 scroll = "0.8"
 memmap = "0.6"
