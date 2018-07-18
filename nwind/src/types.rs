@@ -4,8 +4,8 @@ use speedy::{Readable, Writable, Context, Reader, Writer};
 
 pub use speedy::Endianness;
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Readable, Writable)]
-pub struct BinaryId {
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Readable, Writable)]
+pub struct Inode {
     pub inode: u64,
     pub dev_major: u32,
     pub dev_minor: u32

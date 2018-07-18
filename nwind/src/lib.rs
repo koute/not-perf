@@ -60,7 +60,7 @@ pub use range_map::RangeMap;
 pub use binary::{BinaryData, SymbolTable};
 pub use symbols::Symbols;
 pub use types::{
-    BinaryId,
+    Inode,
     Bitness,
     UserFrame
 };

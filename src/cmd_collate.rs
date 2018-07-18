@@ -28,7 +28,7 @@ use nwind::{
     AddressSpace
 };
 
-use archive::{Packet, BinaryId, Bitness, UserFrame, ArchiveReader};
+use archive::{Packet, Inode, Bitness, UserFrame, ArchiveReader};
 use utils::StableIndex;
 use kallsyms::{self, KernelSymbol};
 
@@ -47,8 +47,8 @@ enum Frame {
     Thread( u32 ),
     MainThread,
     User( u64 ),
-    UserBinary( BinaryId, u64 ),
-    UserSymbol( BinaryId, u64, usize, Table ),
+    UserBinary( Inode, u64 ),
+    UserSymbol( Inode, u64, usize, Table ),
     Kernel( u64 ),
     KernelSymbol( usize )
 }
@@ -57,7 +57,7 @@ struct Process {
     pid: u32,
     executable: String,
     memory_regions: RangeMap< Region >,
-    base_address_for_binary: HashMap< BinaryId, u64 >,
+    base_address_for_binary: HashMap< Inode, u64 >,
     address_space_needs_reload: bool
 }
 
@@ -123,12 +123,12 @@ fn decode_user_frame(
     omit_regex: &Option< Regex >,
     address_space: Option< &Box< IAddressSpace > >,
     process: &Process,
-    binary_by_id: &HashMap< BinaryId, Binary >,
+    binary_by_id: &HashMap< Inode, Binary >,
     user_frame: &UserFrame
 ) -> Option< Frame > {
     let address = user_frame.initial_address.unwrap_or( user_frame.address );
     if let Some( region ) = process.memory_regions.get_value( address ) {
-        let binary_id = BinaryId {
+        let binary_id = Inode {
             inode: region.inode,
             dev_major: region.major,
             dev_minor: region.minor
@@ -224,7 +224,7 @@ impl DemangleCache {
 
 fn look_through_debug_symbols( debug_symbols: &[&OsStr] ) -> HashMap< String, Symbols< BinaryData > > {
     fn check( path: &Path, results: &mut HashMap< String, Symbols< BinaryData > > ) {
-        match BinaryData::load_from_fs( None, path ) {
+        match BinaryData::load_from_fs( path ) {
             Ok( binary ) => {
                 let filename = path.file_name().unwrap();
                 let filename = filename.to_string_lossy().into_owned();
@@ -296,12 +296,12 @@ struct Collation {
     process_index_by_pid: HashMap< u32, usize >,
     processes: Vec< Process >,
     thread_names: HashMap< u32, String >,
-    binary_by_id: HashMap< BinaryId, Binary >,
+    binary_by_id: HashMap< Inode, Binary >,
     address_space: Option< Box< IAddressSpace > >
 }
 
 impl Collation {
-    fn get_user_symbol< 'a >( &'a self, demangle_cache: &'a mut DemangleCache, binary_id: &BinaryId, symbol_index: usize, table: Table ) -> (&'a str, &'a Binary) {
+    fn get_user_symbol< 'a >( &'a self, demangle_cache: &'a mut DemangleCache, binary_id: &Inode, symbol_index: usize, table: Table ) -> (&'a str, &'a Binary) {
         let binary = self.binary_by_id.get( &binary_id ).unwrap();
         let symbol = match table {
             Table::Original => binary.symbols.as_ref().unwrap().get_symbol_by_index( symbol_index ).unwrap().1,
@@ -316,7 +316,7 @@ impl Collation {
         self.kallsyms.get_value_by_index( symbol_index ).unwrap()
     }
 
-    fn get_binary( &self, binary_id: &BinaryId ) -> &Binary {
+    fn get_binary( &self, binary_id: &Inode ) -> &Binary {
         self.binary_by_id.get( binary_id ).unwrap()
     }
 
@@ -600,7 +600,9 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                 sample_counter += 1;
             },
             Packet::BinaryBlob { id, path, data } => {
-                let data = BinaryData::load_from_owned_bytes( &String::from_utf8_lossy( &path ), id.clone(), data.into_owned() ).unwrap();
+                let mut data = BinaryData::load_from_owned_bytes( &String::from_utf8_lossy( &path ), data.into_owned() ).unwrap();
+                data.set_inode( id );
+
                 let source = BinarySource::Preloaded( Arc::new( data ) );
                 binary_source_map.insert( id, source );
             },

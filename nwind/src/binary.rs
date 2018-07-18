@@ -12,7 +12,7 @@ use goblin::elf::program_header::PT_LOAD;
 
 use elf::{self, Endian};
 use utils::{StableIndex, get_major, get_minor};
-use types::{BinaryId, Bitness, Endianness};
+use types::{Inode, Bitness, Endianness};
 
 enum Blob {
     Mmap( Mmap ),
@@ -53,7 +53,7 @@ pub struct LoadHeader {
 }
 
 pub struct BinaryData {
-    id: BinaryId,
+    inode: Option< Inode >,
     name: String,
     blob: Blob,
     data_range: Option< Range< usize > >,
@@ -73,7 +73,7 @@ pub struct BinaryData {
 }
 
 impl BinaryData {
-    pub fn load_from_fs< P: AsRef< Path > >( expected_id: Option< BinaryId >, path: P ) -> io::Result< Self > {
+    pub fn load_from_fs< P: AsRef< Path > >( path: P ) -> io::Result< Self > {
         let path = path.as_ref();
         debug!( "Loading binary {:?}...", path );
 
@@ -86,32 +86,37 @@ impl BinaryData {
         let dev = metadata.dev();
         let dev_major = get_major( dev );
         let dev_minor = get_minor( dev );
-        let loaded_id = BinaryId { inode, dev_major, dev_minor };
+        let inode = Inode { inode, dev_major, dev_minor };
 
-        if let Some( expected_id ) = expected_id {
-            if loaded_id != expected_id {
-                return Err( io::Error::new( io::ErrorKind::Other, format!( "major/minor/inode of {:?} doesn't match the expected value: {:?} != {:?}", path, loaded_id, expected_id ) ) );
-            }
-        }
+        let mut data = BinaryData::load( &path.to_string_lossy(), blob )?;
+        data.set_inode( inode );
 
-        BinaryData::load( &path.to_string_lossy(), loaded_id, blob )
+        Ok( data )
     }
 
-    pub fn load_from_static_slice( name: &str, id: BinaryId, slice: &'static [u8] ) -> io::Result< Self > {
+    pub fn load_from_static_slice( name: &str, slice: &'static [u8] ) -> io::Result< Self > {
         debug!( "Loading binary '{}'...", name );
 
         let blob = Blob::StaticSlice( slice );
-        BinaryData::load( name, id, blob )
+        BinaryData::load( name, blob )
     }
 
-    pub fn load_from_owned_bytes( name: &str, id: BinaryId, bytes: Vec< u8 > ) -> io::Result< Self > {
+    pub fn load_from_owned_bytes( name: &str, bytes: Vec< u8 > ) -> io::Result< Self > {
         debug!( "Loading binary '{}'...", name );
 
         let blob = Blob::Owned( bytes );
-        BinaryData::load( name, id, blob )
+        BinaryData::load( name, blob )
     }
 
-    fn load( path: &str, id: BinaryId, blob: Blob ) -> io::Result< Self > {
+    pub fn check_inode( &self, expected_inode: Inode ) -> io::Result< () > {
+        if self.inode != Some( expected_inode ) {
+            return Err( io::Error::new( io::ErrorKind::Other, format!( "major/minor/inode of {:?} doesn't match the expected value: {:?} != {:?}", self.name, self.inode, expected_inode ) ) );
+        }
+
+        Ok(())
+    }
+
+    fn load( path: &str, blob: Blob ) -> io::Result< Self > {
         let mut data_range = None;
         let mut text_range = None;
         let mut eh_frame_range = None;
@@ -246,7 +251,7 @@ impl BinaryData {
         }
 
         let binary = BinaryData {
-            id,
+            inode: None,
             name: path.to_string(),
             blob,
             data_range,
@@ -269,8 +274,13 @@ impl BinaryData {
     }
 
     #[inline]
-    pub fn id( &self ) -> &BinaryId {
-        &self.id
+    pub fn inode( &self ) -> Option< Inode > {
+        self.inode
+    }
+
+    #[inline]
+    pub fn set_inode( &mut self, inode: Inode ) {
+        self.inode = Some( inode );
     }
 
     #[inline]

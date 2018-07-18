@@ -31,7 +31,7 @@ use perf::{Event, CommEvent, Mmap2Event, EventSource};
 use perf_group::PerfGroup;
 use perf_arch::IntoDwarfRegs;
 use utils::{SigintHandler, read_string_lossy, get_major, get_minor, get_ms};
-use archive::{FramedPacket, Packet, BinaryId, Bitness, DwarfReg, ARCHIVE_MAGIC, ARCHIVE_VERSION};
+use archive::{FramedPacket, Packet, Inode, Bitness, DwarfReg, ARCHIVE_MAGIC, ARCHIVE_VERSION};
 use execution_queue::ExecutionQueue;
 use ps::{wait_for_process, find_process};
 use stack_reader::StackReader;
@@ -110,7 +110,7 @@ mod tests {
 
     use env_logger;
 
-    use nwind::{arch, RangeMap, IAddressSpace, AddressSpace, BinarySource, BinaryId};
+    use nwind::{arch, RangeMap, IAddressSpace, AddressSpace, BinarySource, Inode};
     use nwind::maps::Region;
 
     use quickcheck::{Arbitrary, Gen};
@@ -167,7 +167,7 @@ mod tests {
 
         let mut binaries = HashMap::new();
 
-        let id = BinaryId { inode: 1, dev_major: 0, dev_minor: 0 };
+        let id = Inode { inode: 1, dev_major: 0, dev_minor: 0 };
         binaries.insert( id.clone(), BinarySource::Slice( (&b"file_1"[..]).into(), id, (&include_bytes!( "../test-data/bin/amd64-usleep_in_a_loop_no_fp" )[..]).into() ) );
 
         for ranges in all_ranges {
@@ -255,7 +255,7 @@ fn process_maps( maps: &RangeMap< Region >, offline: bool, pid: u32, address_spa
                     None => continue
                 };
 
-                const VDSO_ID: BinaryId = BinaryId {
+                const VDSO_ID: Inode = Inode {
                     // Since real major/minor numbers are not full 32-bit numbers
                     // we can safely do this and not risk any collisions.
                     dev_major: 0xFFFFFFFF,
@@ -278,13 +278,13 @@ fn process_maps( maps: &RangeMap< Region >, offline: bool, pid: u32, address_spa
                 continue;
             }
 
-            let id = BinaryId {
+            let inode = Inode {
                 dev_major: region.major,
                 dev_minor: region.minor,
                 inode: region.inode
             };
 
-            binaries.insert( id.clone(), BinarySource::Filesystem( id, Path::new( &region.name ).into() ) );
+            binaries.insert( inode, BinarySource::Filesystem( Some( inode ), Path::new( &region.name ).into() ) );
             regions.push( region.clone() );
         }
 
@@ -297,15 +297,16 @@ fn process_maps( maps: &RangeMap< Region >, offline: bool, pid: u32, address_spa
 
     writer.spawn( move |fp| {
         debug!( "Writing binaries and maps..." );
-        for (id, base_address) in reloaded.binaries_unmapped {
-            debug!( "Binary unmapped: PID={}, ID={:?}, base_address=0x{:016X}", pid, id, base_address );
-            fp.write_binary_unmap( pid, id, base_address )?;
+        for (binary, base_address) in reloaded.binaries_unmapped {
+            let inode = binary.inode().unwrap();
+            debug!( "Binary unmapped: PID={}, ID={:?}, base_address=0x{:016X}", pid, inode, base_address );
+            fp.write_binary_unmap( pid, inode, base_address )?;
         }
 
         for (binary, base_address) in reloaded.binaries_mapped {
-            debug!( "Binary mapped: PID={}, ID={:?}, base_address=0x{:016X}", pid, binary.id(), base_address );
+            debug!( "Binary mapped: PID={}, ID={:?}, base_address=0x{:016X}", pid, binary.inode(), base_address );
             fp.write_binary( &binary )?;
-            fp.write_binary_map( pid, binary.id().clone(), base_address )?;
+            fp.write_binary_map( pid, binary.inode().unwrap(), base_address )?;
         }
 
         for range in reloaded.regions_unmapped {
@@ -323,7 +324,7 @@ fn process_maps( maps: &RangeMap< Region >, offline: bool, pid: u32, address_spa
 struct PacketWriter {
     offline: bool,
     fp: BufWriter< File >,
-    binaries_written: HashSet< BinaryId >
+    binaries_written: HashSet< Inode >
 }
 
 impl Deref for PacketWriter {
@@ -398,7 +399,7 @@ impl PacketWriter {
         })
     }
 
-    fn write_binary_map( &mut self, pid: u32, id: BinaryId, base_address: u64 ) -> io::Result< () > {
+    fn write_binary_map( &mut self, pid: u32, id: Inode, base_address: u64 ) -> io::Result< () > {
         self.write_packet( Packet::BinaryMap {
             pid,
             id,
@@ -406,7 +407,7 @@ impl PacketWriter {
         })
     }
 
-    fn write_binary_unmap( &mut self, pid: u32, id: BinaryId, base_address: u64 ) -> io::Result< () > {
+    fn write_binary_unmap( &mut self, pid: u32, id: Inode, base_address: u64 ) -> io::Result< () > {
         self.write_packet( Packet::BinaryUnmap {
             pid,
             id,
@@ -415,11 +416,11 @@ impl PacketWriter {
     }
 
     fn write_binary( &mut self, binary: &BinaryData ) -> io::Result< () > {
-        if self.binaries_written.contains( binary.id() ) {
+        if self.binaries_written.contains( &binary.inode().unwrap() ) {
             return Ok(());
         }
 
-        self.binaries_written.insert( binary.id().clone() );
+        self.binaries_written.insert( binary.inode().unwrap() );
 
         let debuglink = if let Some( range ) = binary.gnu_debuglink_range() {
             &binary.as_bytes()[ range.start as usize..range.end as usize ]
@@ -428,7 +429,7 @@ impl PacketWriter {
         };
 
         self.write_packet( Packet::BinaryInfo {
-            id: binary.id().clone(),
+            id: binary.inode().unwrap(),
             path: binary.name().as_bytes().into(),
             is_shared_object: binary.is_shared_object(),
             debuglink: debuglink.into(),
@@ -437,7 +438,7 @@ impl PacketWriter {
 
         if let Some( build_id ) = binary.build_id() {
             self.write_packet( Packet::BuildId {
-                id: binary.id().clone(),
+                id: binary.inode().unwrap(),
                 build_id: build_id.to_owned()
             })?;
         }
@@ -445,7 +446,7 @@ impl PacketWriter {
         if self.offline {
             debug!( "Writing binary '{}'...", binary.name() );
             self.write_packet( Packet::BinaryBlob {
-                id: binary.id().clone(),
+                id: binary.inode().unwrap(),
                 path: binary.name().as_bytes().into(),
                 data: binary.as_bytes().into(),
             })?;
@@ -460,14 +461,14 @@ impl PacketWriter {
 
                     let strtab_range = symbol_table.strtab_range.start as usize..symbol_table.strtab_range.end as usize;
                     self.write_packet( Packet::StringTable {
-                        binary_id: binary.id().clone(),
+                        binary_id: binary.inode().unwrap(),
                         offset: symbol_table.strtab_range.start,
                         data: binary.as_bytes()[ strtab_range ].into()
                     })?;
                 }
 
                 self.write_packet( Packet::SymbolTable {
-                    binary_id: binary.id().clone(),
+                    binary_id: binary.inode().unwrap(),
                     offset: symbol_table.range.start,
                     string_table_offset: symbol_table.strtab_range.start,
                     is_dynamic: symbol_table.is_dynamic,
@@ -518,7 +519,7 @@ fn initialize(
 
     let executable = fs::read_link( format!( "/proc/{}/exe", pid ) ).map_err( |err| format!( "cannot read /proc/{}/exe: {}", pid, err ) )?;
     let exec_metadata = fs::metadata( &executable ).map_err( |err| format!( "cannot read the metadata of /proc/{}/exe: {}", pid, err ) )?;
-    let exec_ident = BinaryId {
+    let exec_ident = Inode {
         inode: exec_metadata.ino(),
         dev_major: get_major( exec_metadata.dev() ),
         dev_minor: get_minor( exec_metadata.dev() )

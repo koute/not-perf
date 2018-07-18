@@ -6,7 +6,7 @@ use std::iter;
 use speedy::{Readable, Writable, Context, Reader, Writer};
 
 pub use nwind::{
-    BinaryId,
+    Inode,
     Bitness,
     UserFrame
 };
@@ -62,7 +62,7 @@ pub enum Packet< 'a > {
     ProcessInfo {
         pid: u32,
         executable: Cow< 'a, [u8] >,
-        binary_id: BinaryId
+        binary_id: Inode
     },
     Sample {
         timestamp: u64,
@@ -73,19 +73,19 @@ pub enum Packet< 'a > {
         user_backtrace: Cow< 'a, [UserFrame] >
     },
     BinaryInfo {
-        id: BinaryId,
+        id: Inode,
         is_shared_object: bool,
         symbol_table_count: u16,
         path: Cow< 'a, [u8] >,
         debuglink: Cow< 'a, [u8] >
     },
     StringTable {
-        binary_id: BinaryId,
+        binary_id: Inode,
         offset: u64,
         data: Cow< 'a, [u8] >
     },
     SymbolTable {
-        binary_id: BinaryId,
+        binary_id: Inode,
         offset: u64,
         string_table_offset: u64,
         is_dynamic: bool,
@@ -105,7 +105,7 @@ pub enum Packet< 'a > {
         regs: Cow< 'a, [DwarfReg] >
     },
     BinaryBlob {
-        id: BinaryId,
+        id: Inode,
         path: Cow< 'a, [u8] >,
         data: Cow< 'a, [u8] >
     },
@@ -133,19 +133,19 @@ pub enum Packet< 'a > {
     },
     BinaryMap {
         pid: u32,
-        id: BinaryId,
+        id: Inode,
         base_address: u64
     },
     BinaryUnmap {
         pid: u32,
-        id: BinaryId,
+        id: Inode,
         base_address: u64
     },
     Lost {
         count: u64
     },
     BuildId {
-        id: BinaryId,
+        id: Inode,
         build_id: Vec< u8 >
     }
 }

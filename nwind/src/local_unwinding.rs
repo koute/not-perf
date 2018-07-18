@@ -5,7 +5,7 @@ use std::fs;
 
 use address_space::{IAddressSpace, AddressSpace, BinaryRegion, BinarySource, MemoryReader};
 use range_map::RangeMap;
-use types::{Endianness, UserFrame, BinaryId};
+use types::{Endianness, UserFrame, Inode};
 use arch::{self, LocalRegs};
 use maps;
 
@@ -76,14 +76,14 @@ impl LocalAddressSpace {
         let mut binaries = HashMap::new();
         for region in &regions {
             if region.is_executable && region.inode != 0 {
-                let id = BinaryId {
+                let inode = Inode {
                     inode: region.inode,
                     dev_major: region.major,
                     dev_minor: region.minor
                 };
 
                 // TODO: Use already loaded binaries?
-                binaries.insert( id.clone(), BinarySource::Filesystem( id, Path::new( &region.name ).into() ) );
+                binaries.insert( inode, BinarySource::Filesystem( Some( inode ), Path::new( &region.name ).into() ) );
             }
         }
 
