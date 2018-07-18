@@ -57,7 +57,7 @@ pub use address_space::{
 };
 pub use dwarf_regs::DwarfRegs;
 pub use range_map::RangeMap;
-pub use binary::{BinaryData, SymbolTable};
+pub use binary::{BinaryData, BinaryDataReader, SymbolTable};
 pub use symbols::Symbols;
 pub use types::{
     Inode,

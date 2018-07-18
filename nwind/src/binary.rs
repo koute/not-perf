@@ -4,11 +4,15 @@ use std::fs::File;
 use std::ops::{Range, Deref, Index};
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
+use std::sync::Arc;
+use std::fmt;
+use std::collections::HashMap;
 
 use memmap::Mmap;
 use goblin::elf::header as elf_header;
 use goblin::elf::section_header::{SHT_SYMTAB, SHT_DYNSYM, SHT_STRTAB};
 use goblin::elf::program_header::PT_LOAD;
+use gimli;
 
 use elf::{self, Endian};
 use utils::{StableIndex, get_major, get_minor};
@@ -63,6 +67,7 @@ pub struct BinaryData {
     gnu_debuglink_range: Option< Range< usize > >,
     arm_extab_range: Option< Range< usize > >,
     arm_exidx_range: Option< Range< usize > >,
+    sections: HashMap< String, Range< usize > >,
     is_shared_object: bool,
     symbol_tables: Vec< SymbolTable >,
     load_headers: Vec< LoadHeader >,
@@ -126,6 +131,7 @@ impl BinaryData {
         let mut arm_exidx_range = None;
         let mut build_id_range = None;
         let mut build_id = None;
+        let mut sections = HashMap::new();
         let mut is_shared_object = false;
         let mut symbol_tables = Vec::new();
         let mut load_headers = Vec::new();
@@ -195,23 +201,32 @@ impl BinaryData {
                         }
                     }
 
-                    let out_range = match name_strtab.get( header.sh_name ) {
-                        Some( Ok( ".data" ) ) => &mut data_range,
-                        Some( Ok( ".text" ) ) => &mut text_range,
-                        Some( Ok( ".eh_frame" ) ) => &mut eh_frame_range,
-                        Some( Ok( ".debug_frame" ) ) => &mut debug_frame_range,
-                        Some( Ok( ".gnu_debuglink" ) ) => &mut gnu_debuglink_range,
-                        Some( Ok( ".ARM.extab" ) ) => &mut arm_extab_range,
-                        Some( Ok( ".ARM.exidx" ) ) => &mut arm_exidx_range,
-                        Some( Ok( ".note.gnu.build-id" ) ) => &mut build_id_range,
+                    let section_name = match name_strtab.get( header.sh_name ) {
+                        Some( Ok( name ) ) => name,
                         _ => continue
+                    };
+
+                    let out_range = match section_name {
+                        ".data" => Some( &mut data_range ),
+                        ".text" => Some( &mut text_range ),
+                        ".eh_frame" => Some( &mut eh_frame_range ),
+                        ".debug_frame" => Some( &mut debug_frame_range ),
+                        ".gnu_debuglink" => Some( &mut gnu_debuglink_range ),
+                        ".ARM.extab" => Some( &mut arm_extab_range ),
+                        ".ARM.exidx" => Some( &mut arm_exidx_range ),
+                        ".note.gnu.build-id" => Some( &mut build_id_range ),
+                        _ => None
                     };
 
                     let offset = header.sh_offset as usize;
                     let length = header.sh_size as usize;
                     let range = offset..offset + length;
                     if let Some( _ ) = blob.get( range.clone() ) {
-                        *out_range = Some( range );
+                        if let Some( out_range ) = out_range {
+                            *out_range = Some( range.clone() );
+                        }
+
+                        sections.insert( section_name.to_owned(), range );
                     }
                 }
 
@@ -261,6 +276,7 @@ impl BinaryData {
             gnu_debuglink_range,
             arm_extab_range,
             arm_exidx_range,
+            sections,
             is_shared_object,
             symbol_tables,
             load_headers,
@@ -354,6 +370,25 @@ impl BinaryData {
     }
 
     #[inline]
+    pub fn get_section_or_empty< S >( data: &Arc< BinaryData > ) -> S
+        where S: From< gimli::EndianReader< gimli::RunTimeEndian, BinaryDataSlice > > +
+                 gimli::Section< gimli::EndianReader< gimli::RunTimeEndian, BinaryDataSlice > >
+
+    {
+        let range = match data.sections.get( S::section_name() ) {
+            Some( range ) => range.clone(),
+            None => 0..0
+        };
+
+        let endianness = match data.endianness() {
+            Endianness::LittleEndian => gimli::RunTimeEndian::Little,
+            Endianness::BigEndian => gimli::RunTimeEndian::Big
+        };
+
+        gimli::EndianReader::new( Self::subslice( data.clone(), range ), endianness ).into()
+    }
+
+    #[inline]
     pub fn load_headers( &self ) -> &[LoadHeader] {
         &self.load_headers
     }
@@ -361,6 +396,14 @@ impl BinaryData {
     #[inline]
     pub fn build_id( &self ) -> Option< &[u8] > {
         self.build_id.as_ref().map( |id| id.as_slice() )
+    }
+
+    #[inline]
+    fn subslice( data: Arc< BinaryData >, range: Range< usize > ) -> BinaryDataSlice {
+        BinaryDataSlice {
+            data,
+            range
+        }
     }
 }
 
@@ -383,3 +426,29 @@ impl Index< Range< u64 > > for BinaryData {
         &self.as_bytes()[ index.start as usize..index.end as usize ]
     }
 }
+
+#[derive(Clone)]
+pub struct BinaryDataSlice {
+    data: Arc< BinaryData >,
+    range: Range< usize >
+}
+
+impl fmt::Debug for BinaryDataSlice {
+    fn fmt( &self, fmt: &mut fmt::Formatter ) -> Result< (), fmt::Error > {
+        write!( fmt, "BinaryData[{:?}]", self.range )
+    }
+}
+
+impl Deref for BinaryDataSlice {
+    type Target = [u8];
+
+    #[inline]
+    fn deref( &self ) -> &Self::Target {
+        &self.data.as_bytes()[ self.range.clone() ]
+    }
+}
+
+unsafe impl gimli::StableDeref for BinaryDataSlice {}
+unsafe impl gimli::CloneStableDeref for BinaryDataSlice {}
+
+pub type BinaryDataReader = gimli::EndianReader< gimli::RunTimeEndian, BinaryDataSlice >;
