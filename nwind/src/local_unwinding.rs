@@ -1,11 +1,10 @@
-use std::path::Path;
-use std::collections::HashMap;
 use std::io;
 use std::fs;
 
-use address_space::{IAddressSpace, AddressSpace, BinaryRegion, BinarySource, MemoryReader};
+use address_space::{IAddressSpace, AddressSpace, BinaryRegion, MemoryReader};
+use binary::BinaryData;
 use range_map::RangeMap;
-use types::{Endianness, UserFrame, Inode};
+use types::{Endianness, UserFrame};
 use arch::{self, LocalRegs};
 use maps;
 
@@ -72,22 +71,16 @@ impl LocalAddressSpace {
         let data = String::from_utf8_lossy( &data );
         trace!( "Parsing maps..." );
         let regions = maps::parse( &data );
-        trace!( "Processing maps..." );
-        let mut binaries = HashMap::new();
-        for region in &regions {
-            if region.is_executable && region.inode != 0 {
-                let inode = Inode {
-                    inode: region.inode,
-                    dev_major: region.major,
-                    dev_minor: region.minor
-                };
 
-                // TODO: Use already loaded binaries?
-                binaries.insert( inode, BinarySource::Filesystem( Some( inode ), Path::new( &region.name ).into() ) );
+        self.inner.reload( regions, &|region, handle| {
+            if region.name == "[vdso]" {
+                return;
             }
-        }
 
-        self.inner.reload( binaries, regions.clone(), true );
+            if let Ok( data ) = BinaryData::load_from_fs( &region.name ) {
+                handle.set_binary( data.into() );
+            }
+        });
         Ok(())
     }
 

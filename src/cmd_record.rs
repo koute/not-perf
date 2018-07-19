@@ -1,4 +1,4 @@
-use std::collections::{HashSet, HashMap};
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
@@ -21,7 +21,6 @@ use nwind::arch::{self, Architecture, Registers};
 use nwind::{
     IAddressSpace,
     AddressSpace,
-    BinarySource,
     BinaryData,
     DwarfRegs,
     RangeMap
@@ -106,11 +105,9 @@ fn update_maps( maps: &mut RangeMap< Region >, new_maps: &mut Vec< Region > ) {
 mod tests {
     use super::update_maps;
 
-    use std::collections::HashMap;
-
     use env_logger;
 
-    use nwind::{arch, RangeMap, IAddressSpace, AddressSpace, BinarySource, Inode};
+    use nwind::{arch, RangeMap, IAddressSpace, AddressSpace, Inode, BinaryData};
     use nwind::maps::Region;
 
     use quickcheck::{Arbitrary, Gen};
@@ -165,10 +162,7 @@ mod tests {
         let mut address_space = AddressSpace::< arch::amd64::Arch >::new();
         let mut region_map = RangeMap::new();
 
-        let mut binaries = HashMap::new();
-
         let id = Inode { inode: 1, dev_major: 0, dev_minor: 0 };
-        binaries.insert( id.clone(), BinarySource::Slice( (&b"file_1"[..]).into(), id, (&include_bytes!( "../test-data/bin/amd64-usleep_in_a_loop_no_fp" )[..]).into() ) );
 
         for ranges in all_ranges {
             for region in ranges {
@@ -176,7 +170,19 @@ mod tests {
             }
 
             update_maps( &mut maps, &mut new_maps );
-            let res = address_space.reload( binaries.clone(), maps.values().cloned().collect(), false );
+            let res = address_space.reload( maps.values().cloned().collect(), &|region, handle| {
+                handle.should_load_frame_descriptions( false );
+                handle.should_load_symbols( false );
+
+                if region.name != "file_1" {
+                    return;
+                }
+
+                let mut data = BinaryData::load_from_static_slice( &region.name, &include_bytes!( "../test-data/bin/amd64-usleep_in_a_loop_no_fp" )[..] ).unwrap();
+                data.set_inode( id );
+
+                handle.set_binary( data.into() );
+            });
 
             for range in res.regions_unmapped {
                 region_map.remove_by_exact_range( range ).expect( "unknown region unmapped" );
@@ -246,53 +252,49 @@ fn process_maps( maps: &RangeMap< Region >, offline: bool, pid: u32, address_spa
     debug!( "Processing maps..." );
 
     let reloaded = {
-        let mut binaries = HashMap::new();
         let mut regions = Vec::new();
         for region in maps.values() {
-            if region.is_executable && region.name == "[vdso]" {
-                let vdso = match get_vdso() {
-                    Some( vdso ) => vdso,
-                    None => continue
-                };
-
-                const VDSO_ID: Inode = Inode {
-                    // Since real major/minor numbers are not full 32-bit numbers
-                    // we can safely do this and not risk any collisions.
-                    dev_major: 0xFFFFFFFF,
-                    dev_minor: 0xFFFFFFFF,
-                    inode: 1
-                };
-
-                let mut region = region.clone();
-                region.inode = VDSO_ID.inode;
-                region.major = VDSO_ID.dev_major;
-                region.minor = VDSO_ID.dev_minor;
-
-                binaries.insert( VDSO_ID, BinarySource::Slice( (&b"[vdso]"[..]).into(), VDSO_ID, vdso.into() ) );
-                regions.push( region );
-
-                continue;
-            }
-
-            if region.is_shared || region.name.is_empty() || region.inode == 0 {
-                continue;
-            }
-
-            let inode = Inode {
-                dev_major: region.major,
-                dev_minor: region.minor,
-                inode: region.inode
-            };
-
-            binaries.insert( inode, BinarySource::Filesystem( Some( inode ), Path::new( &region.name ).into() ) );
+            trace!( "Map: 0x{:016X}-0x{:016X} '{}'", region.start, region.end, region.name );
             regions.push( region.clone() );
         }
 
-        for region in &regions {
-            trace!( "Map: 0x{:016X}-0x{:016X} '{}'", region.start, region.end, region.name );
-        }
+        address_space.reload( regions, &move |region, handle| {
+            handle.should_load_frame_descriptions( !offline );
+            handle.should_load_symbols( !offline );
 
-        address_space.reload( binaries, regions, !offline )
+            if region.name == "[vdso]" {
+                if let Some( vdso ) = get_vdso() {
+                    let mut data = match BinaryData::load_from_static_slice( &region.name, vdso ) {
+                        Ok( data ) => data,
+                        Err( _ ) => return
+                    };
+
+                    data.set_inode( Inode {
+                        // Since real major/minor numbers are not full 32-bit numbers
+                        // we can safely do this and not risk any collisions.
+                        dev_major: 0xFFFFFFFF,
+                        dev_minor: 0xFFFFFFFF,
+                        inode: 1
+                    });
+
+                    handle.set_binary( data.into() );
+                    return;
+                }
+                return;
+            }
+
+            let data = match BinaryData::load_from_fs( &region.name ) {
+                Ok( data ) => data,
+                Err( _ ) => return
+            };
+
+            if let Err( error ) = data.check_inode( Inode { inode: region.inode, dev_major: region.major, dev_minor: region.minor } ) {
+                error!( "{}", error );
+                return;
+            }
+
+            handle.set_binary( data.into() );
+        })
     };
 
     writer.spawn( move |fp| {

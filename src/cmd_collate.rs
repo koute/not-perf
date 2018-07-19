@@ -22,7 +22,6 @@ use nwind::{
     RangeMap,
     Symbols,
     BinaryData,
-    BinarySource,
     SymbolTable,
     IAddressSpace,
     AddressSpace
@@ -68,8 +67,8 @@ struct Binary {
     symbol_table_count: u16,
     symbol_tables_chunks: BinaryChunks,
     symbol_tables: Vec< SymbolTable >,
-    symbols: Option< Symbols< BinaryChunks > >,
-    debug_symbols: Option< Symbols< BinaryData > >
+    symbols: Option< Symbols >,
+    debug_symbols: Option< Symbols >
 }
 
 struct BinaryChunks {
@@ -222,8 +221,8 @@ impl DemangleCache {
     }
 }
 
-fn look_through_debug_symbols( debug_symbols: &[&OsStr] ) -> HashMap< String, Symbols< BinaryData > > {
-    fn check( path: &Path, results: &mut HashMap< String, Symbols< BinaryData > > ) {
+fn look_through_debug_symbols( debug_symbols: &[&OsStr] ) -> HashMap< String, Symbols > {
+    fn check( path: &Path, results: &mut HashMap< String, Symbols > ) {
         match BinaryData::load_from_fs( path ) {
             Ok( binary ) => {
                 let filename = path.file_name().unwrap();
@@ -348,7 +347,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
     let mut machine_endianness = Endianness::LittleEndian;
     let mut machine_bitness = Bitness::B64;
     let mut sample_counter = 0;
-    let mut binary_source_map = HashMap::new();
+    let mut binaries: HashMap< String, Arc< BinaryData > > = HashMap::new();
 
     let mut debug_symbols = look_through_debug_symbols( &args.debug_symbols );
 
@@ -570,9 +569,15 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                     let mut process = &mut collation.processes[ 0 ];
                     if process.address_space_needs_reload {
                         process.address_space_needs_reload = false;
-                        let binaries = binary_source_map.clone();
                         let regions = process.memory_regions.values().cloned().collect();
-                        address_space.reload( binaries, regions, true );
+                        address_space.reload( regions, &|region, handle| {
+                            let data = match binaries.get( &region.name ) {
+                                Some( data ) => data.clone(),
+                                None => return
+                            };
+
+                            handle.set_binary( data.into() );
+                        });
                     }
 
                     let mut dwarf_regs = DwarfRegs::new();
@@ -600,11 +605,11 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                 sample_counter += 1;
             },
             Packet::BinaryBlob { id, path, data } => {
-                let mut data = BinaryData::load_from_owned_bytes( &String::from_utf8_lossy( &path ), data.into_owned() ).unwrap();
+                let name = String::from_utf8_lossy( &path );
+                let mut data = BinaryData::load_from_owned_bytes( &name, data.into_owned() ).unwrap();
                 data.set_inode( id );
 
-                let source = BinarySource::Preloaded( Arc::new( data ) );
-                binary_source_map.insert( id, source );
+                binaries.insert( name.into_owned(), Arc::new( data ) );
             },
             Packet::FileBlob { ref path, ref data } if path.as_ref() == b"/proc/kallsyms" => {
                 collation.kallsyms = kallsyms::parse( data.as_ref() );

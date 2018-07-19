@@ -1,4 +1,3 @@
-use std::slice;
 use std::str;
 use std::ops::{Range, Index};
 use std::sync::Arc;
@@ -11,12 +10,15 @@ use utils::{StableIndex, get_ms};
 use types::{Bitness, Endianness};
 use binary::{BinaryData, SymbolTable};
 
-pub struct Symbols< T > {
-    strtab_owner: ManuallyDrop< Arc< T > >,
+trait ByteContainer: StableIndex + Index< Range< u64 >, Output = [u8] > + 'static {}
+impl< T > ByteContainer for T where T: StableIndex + Index< Range< u64 >, Output = [u8] > + 'static {}
+
+pub struct Symbols {
+    strtab_owner: ManuallyDrop< Arc< ByteContainer< Output = [u8] > > >,
     symbols: ManuallyDrop< RangeMap< &'static str > >
 }
 
-impl< T > Drop for Symbols< T > {
+impl Drop for Symbols {
     #[inline]
     fn drop( &mut self ) {
         unsafe {
@@ -75,7 +77,7 @@ fn load_symbols< 'a >( architecture: &str, bitness: Bitness, endianness: Endiann
     }
 }
 
-impl Symbols< BinaryData > {
+impl Symbols {
     pub fn load_from_binary_data( data: &Arc< BinaryData > ) -> Self {
         Symbols::load(
             &data.name(),
@@ -87,10 +89,8 @@ impl Symbols< BinaryData > {
             data
         )
     }
-}
 
-impl< T: StableIndex + Index< Range< u64 >, Output = [u8] > > Symbols< T > {
-    pub fn load< S >(
+    pub fn load< T, S >(
         name: &str,
         architecture: &str,
         bitness: Bitness,
@@ -98,7 +98,10 @@ impl< T: StableIndex + Index< Range< u64 >, Output = [u8] > > Symbols< T > {
         symbol_tables: &[SymbolTable],
         symbol_tables_bytes: &S,
         strtab_owner: &Arc< T >
-    ) -> Self where S: ?Sized + Index< Range< u64 >, Output = [u8] > {
+    ) -> Self
+        where S: ?Sized + Index< Range< u64 >, Output = [u8] >,
+              T: StableIndex + Index< Range< u64 >, Output = [u8] > + 'static
+    {
         let start_timestamp = Instant::now();
 
         let mut symbols: Vec< (Range< u64 >, &str) > = Vec::new();
@@ -142,19 +145,5 @@ impl< T: StableIndex + Index< Range< u64 >, Output = [u8] > > Symbols< T > {
     #[inline]
     pub fn get_symbol_by_index( &self, index: usize ) -> Option< (Range< u64 >, &str) > {
         self.as_range_map().get_by_index( index ).map( |(range, name)| (range, *name) )
-    }
-
-    #[inline]
-    pub fn get_symbol_with_lifetime_by_index< 'a >( &self, strtab_owner: &'a T, index: usize ) -> Option< (Range< u64 >, &'a str) > {
-        if strtab_owner as *const T == &*self.strtab_owner as &T as *const T {
-            self.get_symbol_by_index( index ).map( |(range, name)| {
-                let name = unsafe {
-                    str::from_utf8_unchecked( slice::from_raw_parts( name.as_ptr(), name.len() ) )
-                };
-                (range, name)
-            })
-        } else {
-            None
-        }
     }
 }

@@ -49,7 +49,6 @@ mod unwind_context;
 mod local_unwinding;
 
 pub use address_space::{
-    BinarySource,
     BufferReader,
     Primitive,
     IAddressSpace,
@@ -57,7 +56,7 @@ pub use address_space::{
 };
 pub use dwarf_regs::DwarfRegs;
 pub use range_map::RangeMap;
-pub use binary::{BinaryData, BinaryDataReader, SymbolTable};
+pub use binary::{BinaryData, BinaryDataReader, SymbolTable, LoadHeader};
 pub use symbols::Symbols;
 pub use types::{
     Inode,

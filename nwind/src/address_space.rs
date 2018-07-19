@@ -1,12 +1,9 @@
-use std::path::Path;
-use std::io;
 use std::mem;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::fmt;
-use std::borrow::Cow;
 
 use byteorder::{self, ByteOrder};
 
@@ -15,7 +12,7 @@ use dwarf_regs::DwarfRegs;
 use maps::Region;
 use range_map::RangeMap;
 use unwind_context::UnwindContext;
-use binary::BinaryData;
+use binary::{BinaryData, LoadHeader};
 use symbols::Symbols;
 use frame_descriptions::{FrameDescriptions, ContextCache, UnwindInfo, AddressMapping};
 use types::{Bitness, Inode, UserFrame, Endianness};
@@ -32,7 +29,7 @@ pub struct Binary< A: Architecture > {
     virtual_addresses: BinaryAddresses,
     mappings: Vec< AddressMapping >,
     data: Arc< BinaryData >,
-    symbols: Option< Arc< Symbols< BinaryData > > >,
+    symbols: Option< Arc< Symbols > >,
     frame_descriptions: Option< FrameDescriptions< A::Endianity > >
 }
 
@@ -86,7 +83,7 @@ impl< A: Architecture > Binary< A > {
     }
 
     pub fn get_symbol_by_index( &self, index: usize ) -> Option< (Range< u64 >, &str) > {
-        self.symbols.as_ref().and_then( |symbols| symbols.get_symbol_with_lifetime_by_index( &self.data, index ) )
+        self.symbols.as_ref().and_then( |symbols| symbols.get_symbol_by_index( index ) )
     }
 
     pub fn lookup_absolute_symbol( &self, address: u64 ) -> Option< (Range< u64 >, &str) > {
@@ -239,13 +236,6 @@ impl Primitive for u64 {
     }
 }
 
-#[derive(Clone)]
-pub enum BinarySource< 'a > {
-    Filesystem( Option< Inode >, Cow< 'a, Path > ),
-    Slice( Cow< 'a, [u8] >, Inode, Cow< 'static, [u8] > ),
-    Preloaded( Arc< BinaryData > )
-}
-
 fn contains( range: Range< u64 >, value: u64 ) -> bool {
     (range.start <= value) && (value < range.end)
 }
@@ -260,41 +250,48 @@ fn calculate_virtual_addr( region: &Region, physical_section_offset: u64 ) -> Op
     }
 }
 
+pub struct LoadHandle {
+    binary: Option< Arc< BinaryData > >,
+    debug_binary: Option< Arc< BinaryData > >,
+    symbols: Vec< Symbols >,
+    mappings: Vec< LoadHeader >,
+    load_frame_descriptions: bool,
+    load_symbols: bool
+}
+
+impl LoadHandle {
+    pub fn set_binary( &mut self, data: Arc< BinaryData > ) {
+        self.binary = Some( data );
+    }
+
+    pub fn set_debug_binary( &mut self, data: Arc< BinaryData > ) {
+        self.debug_binary = Some( data );
+    }
+
+    pub fn add_symbols( &mut self, symbols: Symbols ) {
+        self.symbols.push( symbols );
+    }
+
+    pub fn add_region_mapping( &mut self, mapping: LoadHeader ) {
+        self.mappings.push( mapping );
+    }
+
+    pub fn should_load_frame_descriptions( &mut self, value: bool ) {
+        self.load_frame_descriptions = value;
+    }
+
+    pub fn should_load_symbols( &mut self, value: bool ) {
+        self.load_symbols = value;
+    }
+}
+
 pub trait IAddressSpace {
-    fn reload( &mut self, binaries: HashMap< Inode, BinarySource >, regions: Vec< Region >, load: bool ) -> Reloaded;
+    fn reload( &mut self, regions: Vec< Region >, try_load: &Fn( &Region, &mut LoadHandle ) ) -> Reloaded;
     fn unwind( &mut self, regs: &mut DwarfRegs, stack: &BufferReader, output: &mut Vec< UserFrame > );
     fn lookup_absolute_symbol( &self, address: u64 ) -> Option< &str >;
     fn lookup_absolute_symbol_index( &self, binary_id: &Inode, address: u64 ) -> Option< usize >;
     fn get_symbol_by_index< 'a >( &'a self, binary_id: &Inode, index: usize ) -> (Range< u64 >, &'a str);
     fn set_panic_on_partial_backtrace( &mut self, value: bool );
-}
-
-fn load_binary< A: Architecture >( source: BinarySource ) -> io::Result< Arc< BinaryData > > {
-    let data = match source {
-        BinarySource::Filesystem( inode, path ) => {
-            let mut data = BinaryData::load_from_fs( path )?;
-            if let Some( inode ) = inode {
-                data.check_inode( inode )?;
-            }
-
-            Arc::new( data )
-        },
-        BinarySource::Slice( name, inode, Cow::Borrowed( data ) ) => {
-            let mut data = BinaryData::load_from_static_slice( &String::from_utf8_lossy( &name ), data )?;
-            data.set_inode( inode );
-
-            Arc::new( data )
-        },
-        BinarySource::Slice( name, inode, Cow::Owned( data ) ) => {
-            let mut data = BinaryData::load_from_owned_bytes( &String::from_utf8_lossy( &name ), data )?;
-            data.set_inode( inode );
-
-            Arc::new( data )
-        },
-        BinarySource::Preloaded( data ) => data
-    };
-
-    Ok( data )
 }
 
 #[derive(Clone, Default)]
@@ -313,7 +310,7 @@ pub struct AddressSpace< A: Architecture > {
 }
 
 impl< A: Architecture > IAddressSpace for AddressSpace< A > {
-    fn reload( &mut self, mut binaries: HashMap< Inode, BinarySource >, regions: Vec< Region >, load: bool ) -> Reloaded {
+    fn reload( &mut self, regions: Vec< Region >, try_load: &Fn( &Region, &mut LoadHandle ) ) -> Reloaded {
         debug!( "Reloading..." );
 
         struct Data< E: Endianity > {
@@ -321,9 +318,11 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
             addresses: BinaryAddresses,
             mappings: Vec< AddressMapping >,
             old_addresses: Option< BinaryAddresses >,
-            symbols: Option< Arc< Symbols< BinaryData > > >,
+            symbols: Option< Arc< Symbols > >,
             frame_descriptions: Option< FrameDescriptions< E > >,
-            regions: Vec< (Region, bool) >
+            regions: Vec< (Region, bool) >,
+            load_symbols: bool,
+            load_frame_descriptions: bool
         }
 
         let mut reloaded = Reloaded::default();
@@ -341,6 +340,7 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
         let old_region_count = old_regions.len();
 
         let mut new_binary_map = HashMap::new();
+        let mut tried_to_load = HashSet::new();
         for region in regions {
             if region.is_shared || region.name.is_empty() || (region.inode == 0 && region.name != "[vdso]") {
                 continue;
@@ -371,10 +371,25 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
                         old_addresses: Some( virtual_addresses ),
                         symbols,
                         frame_descriptions,
-                        regions: Vec::new()
+                        regions: Vec::new(),
+                        load_symbols: false,
+                        load_frame_descriptions: false
                     });
-                } else if let Some( source ) = binaries.remove( &id ) {
-                    if let Ok( binary_data ) = load_binary::< A >( source ) {
+                } else if !tried_to_load.contains( &id ) {
+                    tried_to_load.insert( id );
+
+                    let mut handle = LoadHandle {
+                        binary: None,
+                        debug_binary: None,
+                        symbols: Vec::new(),
+                        mappings: Vec::new(),
+                        load_frame_descriptions: true,
+                        load_symbols: true
+                    };
+
+                    try_load( &region, &mut handle );
+
+                    if let Some( binary_data ) = handle.binary  {
                         new_binary_map.insert( id.clone(), Data {
                             binary_data,
                             addresses: BinaryAddresses::default(),
@@ -382,7 +397,9 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
                             old_addresses: None,
                             symbols: None,
                             frame_descriptions: None,
-                            regions: Vec::new()
+                            regions: Vec::new(),
+                            load_symbols: handle.load_symbols,
+                            load_frame_descriptions: handle.load_frame_descriptions
                         });
                     } else {
                         continue;
@@ -459,14 +476,13 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
 
             let symbols = match data.symbols {
                 Some( symbols ) => Some( symbols ),
-                None if load => Some( Arc::new( Symbols::load_from_binary_data( &data.binary_data ) ) ),
+                None if data.load_symbols => Some( Arc::new( Symbols::load_from_binary_data( &data.binary_data ) ) ),
                 None => None
             };
 
-
             let frame_descriptions = match data.frame_descriptions {
                 Some( frame_descriptions ) => Some( frame_descriptions ),
-                None if load => FrameDescriptions::load( &data.binary_data ),
+                None if data.load_frame_descriptions => FrameDescriptions::load( &data.binary_data ),
                 None => None
             };
 
@@ -612,17 +628,20 @@ fn test_reload() {
         fp.read_to_end( &mut raw_data ).unwrap();
     }
 
-    let mut binaries = HashMap::new();
-    {
-        let mut add_binary = |inode: u64, name: &'static str| {
-            let id = Inode { inode, dev_major: 0, dev_minor: 0 };
-            binaries.insert( id.clone(), BinarySource::Slice( name.as_bytes().into(), id, raw_data.clone().into() ) );
-        };
+    let callback = |region: &Region, handle: &mut LoadHandle| {
+        handle.should_load_frame_descriptions( false );
+        handle.should_load_symbols( false );
 
-        add_binary( 1, "file_1" );
-        add_binary( 2, "file_2" );
-        add_binary( 3, "file_3" );
-    }
+        match region.name.as_str() {
+            "file_1" | "file_2" | "file_3" => {
+                let mut data = BinaryData::load_from_owned_bytes( &region.name, raw_data.clone() ).unwrap();
+                let inode = region.name.as_bytes().last().unwrap() - b'1';
+                data.set_inode( Inode { inode: inode as _, dev_major: 0, dev_minor: 0 } );
+                handle.set_binary( data.into() );
+            },
+            _ => {}
+        }
+    };
 
     let mut address_space = AddressSpace::< arch::native::Arch >::new();
 
@@ -631,13 +650,13 @@ fn test_reload() {
         region( 0x2000, 2, "file_2" )
     ];
 
-    let res = address_space.reload( binaries.clone(), regions.clone(), false );
+    let res = address_space.reload( regions.clone(), &callback );
     assert_eq!( res.binaries_unmapped.len(), 0 );
     assert_eq!( res.binaries_mapped.len(), 2 );
     assert_eq!( res.regions_unmapped.len(), 0 );
     assert_eq!( res.regions_mapped.len(), 2 );
 
-    let res = address_space.reload( binaries.clone(), regions.clone(), false );
+    let res = address_space.reload( regions.clone(), &callback );
     assert_eq!( res.binaries_unmapped.len(), 0 );
     assert_eq!( res.binaries_mapped.len(), 0 );
     assert_eq!( res.regions_unmapped.len(), 0 );
@@ -645,7 +664,7 @@ fn test_reload() {
 
     regions.push( region( 0x3000, 3, "file_3" ) );
 
-    let res = address_space.reload( binaries.clone(), regions.clone(), false );
+    let res = address_space.reload( regions.clone(), &callback );
     assert_eq!( res.binaries_unmapped.len(), 0 );
     assert_eq!( res.binaries_mapped.len(), 1 );
     assert_eq!( res.regions_unmapped.len(), 0 );
@@ -653,7 +672,7 @@ fn test_reload() {
 
     regions.push( region( 0x4000, 3, "file_3" ) );
 
-    let res = address_space.reload( binaries.clone(), regions.clone(), false );
+    let res = address_space.reload( regions.clone(), &callback );
     assert_eq!( res.binaries_unmapped.len(), 0 );
     assert_eq!( res.binaries_mapped.len(), 0 );
     assert_eq!( res.regions_unmapped.len(), 0 );
@@ -662,7 +681,7 @@ fn test_reload() {
     regions.pop();
     regions.pop();
 
-    let res = address_space.reload( binaries.clone(), regions.clone(), false );
+    let res = address_space.reload( regions.clone(), &callback );
     assert_eq!( res.binaries_unmapped.len(), 1 );
     assert_eq!( res.binaries_mapped.len(), 0 );
     assert_eq!( res.regions_unmapped.len(), 2 );
