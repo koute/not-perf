@@ -11,6 +11,7 @@ extern crate speedy;
 #[macro_use]
 extern crate speedy_derive;
 extern crate string_interner;
+extern crate cpp_demangle;
 
 #[cfg(test)]
 extern crate env_logger;
@@ -55,7 +56,8 @@ pub use address_space::{
     Primitive,
     IAddressSpace,
     AddressSpace,
-    SymbolIndex
+    SymbolIndex,
+    Frame
 };
 pub use dwarf_regs::DwarfRegs;
 pub use range_map::RangeMap;

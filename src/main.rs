@@ -12,7 +12,6 @@ extern crate env_logger;
 extern crate parking_lot;
 extern crate num_cpus;
 extern crate chrono;
-extern crate cpp_demangle;
 extern crate speedy;
 #[macro_use]
 extern crate speedy_derive;

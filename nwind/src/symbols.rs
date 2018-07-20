@@ -141,6 +141,11 @@ impl Symbols {
     }
 
     #[inline]
+    pub fn get_symbol( &self, address: u64 ) -> Option< (Range< u64 >, &str) > {
+        self.as_range_map().get( address ).map( |(range, name)| (range, *name) )
+    }
+
+    #[inline]
     pub fn get_symbol_index( &self, address: u64 ) -> Option< usize > {
         self.as_range_map().get_index( address )
     }

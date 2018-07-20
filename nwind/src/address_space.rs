@@ -3,8 +3,10 @@ use std::sync::Arc;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::fmt;
+use std::borrow::Cow;
 
 use byteorder::{self, ByteOrder};
+use cpp_demangle;
 
 use arch::{Architecture, Registers, Endianity};
 use dwarf_regs::DwarfRegs;
@@ -118,6 +120,36 @@ impl< A: Architecture > Binary< A > {
     pub fn lookup_absolute_symbol_index( &self, address: u64 ) -> Option< SymbolIndex > {
         let effective_address = translate_address( &self.mappings, address );
         self.lookup_relative_symbol_index( effective_address )
+    }
+
+    pub fn decode_symbol_while( &self, address: u64, callback: &mut FnMut( &mut Frame ) -> bool ) {
+        let relative_address = translate_address( &self.mappings, address );
+        let mut frame = Frame {
+            absolute_address: address,
+            relative_address,
+            name: None,
+            demangled_name: None,
+            file: None,
+            line: None,
+            column: None,
+            is_inline: false
+        };
+
+        for symbols in &self.symbols {
+            if let Some( (_, symbol) ) = symbols.get_symbol( relative_address ) {
+                let demangled_name =
+                    cpp_demangle::Symbol::new( symbol ).ok()
+                        .and_then( |symbol| {
+                            symbol.demangle( &cpp_demangle::DemangleOptions { no_params: false } ).ok()
+                    });
+
+                frame.name = Some( symbol.into() );
+                frame.demangled_name = demangled_name.map( |symbol| symbol.into() );
+                break;
+            }
+        }
+
+        callback( &mut frame );
     }
 }
 
@@ -304,9 +336,21 @@ impl LoadHandle {
     }
 }
 
+pub struct Frame< 'a > {
+    pub absolute_address: u64,
+    pub relative_address: u64,
+    pub name: Option< Cow< 'a, str > >,
+    pub demangled_name: Option< Cow< 'a, str > >,
+    pub file: Option< String >,
+    pub line: Option< u64 >,
+    pub column: Option< u64 >,
+    pub is_inline: bool
+}
+
 pub trait IAddressSpace {
     fn reload( &mut self, regions: Vec< Region >, try_load: &mut FnMut( &Region, &mut LoadHandle ) ) -> Reloaded;
     fn unwind( &mut self, regs: &mut DwarfRegs, stack: &BufferReader, output: &mut Vec< UserFrame > );
+    fn decode_symbol_while( &self, address: u64, callback: &mut FnMut( &mut Frame ) -> bool );
     fn lookup_absolute_symbol( &self, address: u64 ) -> Option< &str >;
     fn lookup_absolute_symbol_index( &self, binary_id: &BinaryId, address: u64 ) -> Option< SymbolIndex >;
     fn get_symbol_by_index< 'a >( &'a self, binary_id: &BinaryId, index: SymbolIndex ) -> (Range< u64 >, &'a str);
@@ -569,6 +613,25 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
             if !ctx.unwind( &memory ) {
                 break;
             }
+        }
+    }
+
+    fn decode_symbol_while( &self, address: u64, callback: &mut FnMut( &mut Frame ) -> bool ) {
+        if let Some( region ) = self.regions.get_value( address ) {
+            region.binary.decode_symbol_while( address, callback );
+        } else {
+            let mut frame = Frame {
+                absolute_address: address,
+                relative_address: address,
+                name: None,
+                demangled_name: None,
+                file: None,
+                line: None,
+                column: None,
+                is_inline: false
+            };
+
+            callback( &mut frame );
         }
     }
 
