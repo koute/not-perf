@@ -44,7 +44,7 @@ pub struct SymbolTable {
     pub is_dynamic: bool
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Readable, Writable)]
 pub struct LoadHeader {
     pub address: u64,
     pub file_offset: u64,

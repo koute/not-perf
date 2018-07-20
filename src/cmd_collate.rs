@@ -24,7 +24,10 @@ use nwind::{
     BinaryData,
     SymbolTable,
     IAddressSpace,
-    AddressSpace
+    AddressSpace,
+    SymbolIndex,
+    LoadHeader,
+    BinaryId
 };
 
 use archive::{Packet, Inode, Bitness, UserFrame, ArchiveReader};
@@ -33,21 +36,14 @@ use kallsyms::{self, KernelSymbol};
 
 use stack_reader::StackReader;
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
-enum Table {
-    Debug,
-    Original,
-    AddressSpace
-}
-
 #[derive(PartialEq, Eq, Debug, Hash)]
 enum Frame {
     Process( u32 ),
     Thread( u32 ),
     MainThread,
     User( u64 ),
-    UserBinary( Inode, u64 ),
-    UserSymbol( Inode, u64, usize, Table ),
+    UserBinary( BinaryId, u64 ),
+    UserSymbol( BinaryId, u64, SymbolIndex ),
     Kernel( u64 ),
     KernelSymbol( usize )
 }
@@ -56,8 +52,59 @@ struct Process {
     pid: u32,
     executable: String,
     memory_regions: RangeMap< Region >,
-    base_address_for_binary: HashMap< Inode, u64 >,
+    base_address_for_binary: HashMap< BinaryId, u64 >,
+    address_space: Box< IAddressSpace >,
     address_space_needs_reload: bool
+}
+
+impl Process {
+    fn reload_if_necessary( &mut self, binary_by_id: &mut HashMap< BinaryId, Binary > ) {
+        if !self.address_space_needs_reload {
+            return;
+        }
+
+        self.address_space_needs_reload = false;
+        let regions = self.memory_regions.values().cloned().collect();
+        let base_address_for_binary = &mut self.base_address_for_binary;
+
+        self.address_space.reload( regions, &mut |region, handle| {
+            let binary_id = region.into();
+            if let Some( binary ) = binary_by_id.get_mut( &binary_id ) {
+                if let Some( ref data ) = binary.data {
+                    handle.set_binary( data.clone() );
+                } else {
+                    for load_header in binary.load_headers.iter().cloned() {
+                        handle.add_region_mapping( load_header );
+                    }
+
+                    // For compatibility with old profiling data.
+                    if let Some( &base_address ) = base_address_for_binary.get( &binary_id ) {
+                        let address = region.start - base_address;
+                        let size = region.end - region.start;
+                        debug!( "Old profiling data compatibility: adding PT_LOAD region for '{}': {:016X}-{:016X}", region.name, address, address + size );
+                        handle.add_region_mapping( LoadHeader {
+                            address,
+                            file_offset: 0,
+                            file_size: size,
+                            memory_size: size,
+                            alignment: 0,
+                            is_readable: true,
+                            is_writable: false,
+                            is_executable: true
+                        });
+                    }
+                }
+
+                if let Some( symbols ) = binary.symbols.take() {
+                    handle.add_symbols( symbols );
+                }
+
+                if let Some( symbols ) = binary.debug_symbols.take() {
+                    handle.add_symbols( symbols );
+                }
+            }
+        });
+    }
 }
 
 struct Binary {
@@ -68,7 +115,9 @@ struct Binary {
     symbol_tables_chunks: BinaryChunks,
     symbol_tables: Vec< SymbolTable >,
     symbols: Option< Symbols >,
-    debug_symbols: Option< Symbols >
+    debug_symbols: Option< Symbols >,
+    data: Option< Arc< BinaryData > >,
+    load_headers: Vec< LoadHeader >
 }
 
 struct BinaryChunks {
@@ -120,63 +169,24 @@ unsafe impl StableIndex for BinaryChunks {}
 
 fn decode_user_frame(
     omit_regex: &Option< Regex >,
-    address_space: Option< &Box< IAddressSpace > >,
     process: &Process,
-    binary_by_id: &HashMap< Inode, Binary >,
     user_frame: &UserFrame
 ) -> Option< Frame > {
     let address = user_frame.initial_address.unwrap_or( user_frame.address );
     if let Some( region ) = process.memory_regions.get_value( address ) {
-        let binary_id = Inode {
-            inode: region.inode,
-            dev_major: region.major,
-            dev_minor: region.minor
-        };
-
-        if let Some( binary ) = binary_by_id.get( &binary_id ) {
-            if let Some( debug_symbols ) = binary.debug_symbols.as_ref() {
-                let base_address = process.base_address_for_binary.get( &binary_id ).expect( "no base address for binary" );
-                if let Some( index ) = debug_symbols.get_symbol_index( address - base_address ) {
-                    if let Some( ref regex ) = *omit_regex {
-                        let symbol = debug_symbols.get_symbol_by_index( index ).unwrap().1;
-                        if regex.is_match( symbol ) {
-                            return None;
-                        }
-                    }
-
-                    return Some( Frame::UserSymbol( binary_id, address, index, Table::Debug ) );
+        let binary_id: BinaryId = region.into();
+        if let Some( index ) = process.address_space.lookup_absolute_symbol_index( &binary_id, address ) {
+            if let Some( ref regex ) = *omit_regex {
+                let symbol = process.address_space.get_symbol_by_index( &binary_id, index ).1;
+                if regex.is_match( symbol ) {
+                    return None;
                 }
             }
 
-            if let Some( symbols ) = binary.symbols.as_ref() {
-                let base_address = process.base_address_for_binary.get( &binary_id ).expect( "no base address for binary" );
-                if let Some( index ) = symbols.get_symbol_index( address - base_address ) {
-                    if let Some( ref regex ) = *omit_regex {
-                        let symbol = symbols.get_symbol_by_index( index ).unwrap().1;
-                        if regex.is_match( symbol ) {
-                            return None;
-                        }
-                    }
-
-                    return Some( Frame::UserSymbol( binary_id, address, index, Table::Original ) );
-                }
-            }
-
-            if let Some( address_space ) = address_space {
-                if let Some( index ) = address_space.lookup_absolute_symbol_index( &binary_id, address ) {
-                    if let Some( ref regex ) = *omit_regex {
-                        let symbol = address_space.get_symbol_by_index( &binary_id, index ).1;
-                        if regex.is_match( symbol ) {
-                            return None;
-                        }
-                    }
-
-                    return Some( Frame::UserSymbol( binary_id, address, index, Table::AddressSpace ) );
-                }
-            }
-
-            return Some( Frame::UserBinary( binary_id, address ) );
+            return Some( Frame::UserSymbol( binary_id, address, index ) );
         }
+
+        return Some( Frame::UserBinary( binary_id, address ) );
     }
 
     Some( Frame::User( address ) )
@@ -295,18 +305,15 @@ struct Collation {
     process_index_by_pid: HashMap< u32, usize >,
     processes: Vec< Process >,
     thread_names: HashMap< u32, String >,
-    binary_by_id: HashMap< Inode, Binary >,
-    address_space: Option< Box< IAddressSpace > >
+    binary_by_id: HashMap< BinaryId, Binary >
 }
 
 impl Collation {
-    fn get_user_symbol< 'a >( &'a self, demangle_cache: &'a mut DemangleCache, binary_id: &Inode, symbol_index: usize, table: Table ) -> (&'a str, &'a Binary) {
+    fn get_user_symbol< 'a >( &'a self, demangle_cache: &'a mut DemangleCache, binary_id: &BinaryId, symbol_index: SymbolIndex ) -> (&'a str, &'a Binary) {
         let binary = self.binary_by_id.get( &binary_id ).unwrap();
-        let symbol = match table {
-            Table::Original => binary.symbols.as_ref().unwrap().get_symbol_by_index( symbol_index ).unwrap().1,
-            Table::Debug => binary.debug_symbols.as_ref().unwrap().get_symbol_by_index( symbol_index ).unwrap().1,
-            Table::AddressSpace => self.address_space.as_ref().unwrap().get_symbol_by_index( &binary_id, symbol_index ).1
-        };
+
+        // TODO: Support multiple processes.
+        let symbol = self.processes[0].address_space.get_symbol_by_index( binary_id, symbol_index ).1;
 
         (demangle_cache.demangle( symbol ).unwrap_or( symbol ), binary)
     }
@@ -315,7 +322,7 @@ impl Collation {
         self.kallsyms.get_value_by_index( symbol_index ).unwrap()
     }
 
-    fn get_binary( &self, binary_id: &Inode ) -> &Binary {
+    fn get_binary( &self, binary_id: &BinaryId ) -> &Binary {
         self.binary_by_id.get( binary_id ).unwrap()
     }
 
@@ -325,6 +332,14 @@ impl Collation {
 
     fn get_process( &self, pid: u32 ) -> Option< &Process > {
         self.process_index_by_pid.get( &pid ).map( |&index| &self.processes[ index ] )
+    }
+}
+
+fn to_binary_id( inode: Inode, name: &str ) -> BinaryId {
+    if inode.is_invalid() {
+        BinaryId::ByName( name.to_owned() )
+    } else {
+        BinaryId::ByInode( inode )
     }
 }
 
@@ -339,15 +354,13 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
         process_index_by_pid: HashMap::new(),
         processes: Vec::new(),
         thread_names: HashMap::new(),
-        binary_by_id: HashMap::new(),
-        address_space: None
+        binary_by_id: HashMap::new()
     };
 
     let mut machine_architecture = String::new();
     let mut machine_endianness = Endianness::LittleEndian;
     let mut machine_bitness = Bitness::B64;
     let mut sample_counter = 0;
-    let mut binaries: HashMap< String, Arc< BinaryData > > = HashMap::new();
 
     let mut debug_symbols = look_through_debug_symbols( &args.debug_symbols );
 
@@ -355,13 +368,6 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
         let packet = packet.unwrap();
         match packet {
             Packet::MachineInfo { architecture, bitness, endianness, .. } => {
-                collation.address_space = match &*architecture {
-                    arch::arm::Arch::NAME => Some( Box::new( AddressSpace::< arch::arm::Arch >::new() ) ),
-                    arch::amd64::Arch::NAME => Some( Box::new( AddressSpace::< arch::amd64::Arch >::new() ) ),
-                    arch::mips64::Arch::NAME => Some( Box::new( AddressSpace::< arch::mips64::Arch >::new() ) ),
-                    _ => None
-                };
-
                 machine_architecture = architecture.into_owned();
                 machine_bitness = bitness;
                 machine_endianness = endianness;
@@ -371,11 +377,19 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                 let executable = get_basename( &executable );
                 debug!( "New process with PID {}: \"{}\"", pid, executable );
 
+                let address_space: Box< IAddressSpace > = match &*machine_architecture {
+                    arch::arm::Arch::NAME => Box::new( AddressSpace::< arch::arm::Arch >::new() ),
+                    arch::amd64::Arch::NAME => Box::new( AddressSpace::< arch::amd64::Arch >::new() ),
+                    arch::mips64::Arch::NAME => Box::new( AddressSpace::< arch::mips64::Arch >::new() ),
+                    _ => panic!( "Unknown architecture: {}", machine_architecture )
+                };
+
                 let process = Process {
                     pid,
                     executable,
                     memory_regions: RangeMap::new(),
                     base_address_for_binary: HashMap::new(),
+                    address_space,
                     address_space_needs_reload: true
                 };
 
@@ -383,11 +397,17 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                 collation.processes.push( process );
                 collation.process_index_by_pid.insert( pid, process_index );
             },
-            Packet::BinaryInfo { id, symbol_table_count, path, debuglink, .. } => {
+            Packet::BinaryInfo { inode, symbol_table_count, path, debuglink, load_headers, .. } => {
                 let debuglink_length = debuglink.iter().position( |&byte| byte == 0 ).unwrap_or( debuglink.len() );
                 let debuglink = &debuglink[ 0..debuglink_length ];
 
                 let path = String::from_utf8_lossy( &path ).into_owned();
+                let binary_id = if inode.dev_major == 0 && inode.dev_minor == 0 {
+                    BinaryId::ByName( path.clone() )
+                } else {
+                    BinaryId::ByInode( inode )
+                };
+
                 let mut binary = Binary {
                     basename: get_basename( &path ),
                     path,
@@ -396,7 +416,9 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                     symbol_tables_chunks: BinaryChunks::new(),
                     symbol_tables: Vec::new(),
                     symbols: None,
-                    debug_symbols: None
+                    debug_symbols: None,
+                    data: None,
+                    load_headers: load_headers.into_owned()
                 };
 
                 debug!( "New binary: {:?}", binary.path );
@@ -410,7 +432,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                     }
                 }
 
-                collation.binary_by_id.insert( id, binary );
+                collation.binary_by_id.insert( binary_id, binary );
             },
             Packet::MemoryRegionMap { pid, range, is_read, is_write, is_executable, is_shared, file_offset, inode, major, minor, name } => {
                 let process = match collation.process_index_by_pid.get( &pid ).cloned() {
@@ -452,12 +474,13 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                 process.memory_regions.remove_by_exact_range( range ).expect( "unknown region unmapped" );
                 process.address_space_needs_reload = true;
             },
-            Packet::BinaryMap { pid, id, base_address } => {
+            Packet::Deprecated_BinaryMap { pid, inode, base_address } => {
                 let process = match collation.process_index_by_pid.get( &pid ).cloned() {
                     Some( index ) => &mut collation.processes[ index ],
                     None => continue
                 };
 
+                let id = BinaryId::ByInode( inode );
                 let binary = match collation.binary_by_id.get( &id ) {
                     Some( binary ) => binary,
                     None => {
@@ -470,29 +493,34 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                 process.base_address_for_binary.insert( id, base_address );
                 process.address_space_needs_reload = true;
             },
-            Packet::BinaryUnmap { pid, id, .. } => {
+            Packet::Deprecated_BinaryUnmap { pid, inode, .. } => {
                 let process = match collation.process_index_by_pid.get( &pid ).cloned() {
                     Some( index ) => &mut collation.processes[ index ],
                     None => continue
                 };
 
-                let binary = match collation.binary_by_id.get( &id ) {
+                let binary_id = BinaryId::ByInode( inode );
+                let binary = match collation.binary_by_id.get( &binary_id ) {
                     Some( binary ) => binary,
                     None => {
-                        warn!( "Unknown binary unmapped for PID {}: {:?}", pid, id );
+                        warn!( "Unknown binary unmapped for PID {}: {:?}", pid, binary_id );
                         continue;
                     }
                 };
 
                 debug!( "Binary unmapped for PID {}: \"{}\"", pid, binary.path );
-                process.base_address_for_binary.remove( &id );
+                process.base_address_for_binary.remove( &binary_id );
                 process.address_space_needs_reload = true;
             },
-            Packet::StringTable { binary_id, offset, data } => {
+            Packet::StringTable { inode, offset, data, path } => {
+                let binary_name = String::from_utf8_lossy( &path );
+                let binary_id = to_binary_id( inode, &binary_name );
                 let binary = collation.binary_by_id.get_mut( &binary_id ).unwrap();
                 Arc::get_mut( &mut binary.string_tables ).unwrap().add( offset, data.into_owned() );
             },
-            Packet::SymbolTable { binary_id, offset, data, string_table_offset, is_dynamic } => {
+            Packet::SymbolTable { inode, offset, data, string_table_offset, is_dynamic, path } => {
+                let binary_name = String::from_utf8_lossy( &path );
+                let binary_id = to_binary_id( inode, &binary_name );
                 let binary = collation.binary_by_id.get_mut( &binary_id ).unwrap();
 
                 let range = offset..offset + data.len() as u64;
@@ -532,17 +560,18 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
 
                 debug!( "Sample #{}", sample_counter );
 
-                let process = &collation.processes[ 0 ];
-                if process.pid != pid {
+                if collation.processes[ 0 ].pid != pid {
                     debug!( "Sample #{} is from different process with PID {}, skipping!", sample_counter, pid );
                     continue;
                 }
+
+                collation.processes[ 0 ].reload_if_necessary( &mut collation.binary_by_id );
 
                 if args.without_kernel_callstacks {
                     kernel_backtrace = Vec::new().into();
                 }
 
-                on_sample( &collation, timestamp, process, tid, cpu, &user_backtrace, &kernel_backtrace );
+                on_sample( &collation, timestamp, &collation.processes[ 0 ], tid, cpu, &user_backtrace, &kernel_backtrace );
 
                 sample_counter += 1;
             },
@@ -565,20 +594,9 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                     kernel_backtrace = Vec::new().into();
                 }
 
-                let user_backtrace = if let Some( ref mut address_space ) = collation.address_space {
+                let user_backtrace = {
                     let mut process = &mut collation.processes[ 0 ];
-                    if process.address_space_needs_reload {
-                        process.address_space_needs_reload = false;
-                        let regions = process.memory_regions.values().cloned().collect();
-                        address_space.reload( regions, &|region, handle| {
-                            let data = match binaries.get( &region.name ) {
-                                Some( data ) => data.clone(),
-                                None => return
-                            };
-
-                            handle.set_binary( data.into() );
-                        });
-                    }
+                    process.reload_if_necessary( &mut collation.binary_by_id );
 
                     let mut dwarf_regs = DwarfRegs::new();
                     for reg in regs.iter() {
@@ -592,24 +610,23 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
 
                     let reader = StackReader { stack: stack.into() };
                     let mut user_backtrace = Vec::new();
-                    address_space.unwind( &mut dwarf_regs, &reader, &mut user_backtrace );
-                    Some( user_backtrace )
-                } else {
-                    None
+                    process.address_space.unwind( &mut dwarf_regs, &reader, &mut user_backtrace );
+                    user_backtrace
                 };
 
-                if let Some( user_backtrace ) = user_backtrace {
-                    on_sample( &collation, timestamp, &collation.processes[ 0 ], tid, cpu, &user_backtrace, &kernel_backtrace );
-                }
-
+                on_sample( &collation, timestamp, &collation.processes[ 0 ], tid, cpu, &user_backtrace, &kernel_backtrace );
                 sample_counter += 1;
             },
-            Packet::BinaryBlob { id, path, data } => {
+            Packet::BinaryBlob { inode, path, data } => {
                 let name = String::from_utf8_lossy( &path );
                 let mut data = BinaryData::load_from_owned_bytes( &name, data.into_owned() ).unwrap();
-                data.set_inode( id );
+                if !inode.is_invalid() {
+                    data.set_inode( inode );
+                }
 
-                binaries.insert( name.into_owned(), Arc::new( data ) );
+                let binary_name = String::from_utf8_lossy( &path );
+                let binary_id = to_binary_id( inode, &binary_name );
+                collation.binary_by_id.get_mut( &binary_id ).unwrap().data = Some( Arc::new( data ) );
             },
             Packet::FileBlob { ref path, ref data } if path.as_ref() == b"/proc/kallsyms" => {
                 collation.kallsyms = kallsyms::parse( data.as_ref() );
@@ -652,9 +669,7 @@ fn collapse_frames(
     for user_frame in user_backtrace.iter() {
         let frame = match decode_user_frame(
             omit_regex,
-            collation.address_space.as_ref(),
             process,
-            &collation.binary_by_id,
             user_frame
         ) {
             Some( frame ) => frame,
@@ -699,9 +714,7 @@ fn write_perf_like_output< T: io::Write >(
     for user_frame in user_backtrace {
         let frame = decode_user_frame(
             omit_regex,
-            collation.address_space.as_ref(),
             process,
-            &collation.binary_by_id,
             user_frame
         );
 
@@ -739,8 +752,8 @@ fn write_perf_like_output< T: io::Write >(
                 let binary = collation.get_binary( binary_id );
                 writeln!( output, "\t{:16X} 0x{:016X} ({})", address, address, binary.basename )?;
             },
-            Frame::UserSymbol( ref binary_id, address, symbol_index, table ) => {
-                let (symbol, binary) = collation.get_user_symbol( demangle_cache, binary_id, symbol_index, table );
+            Frame::UserSymbol( ref binary_id, address, symbol_index ) => {
+                let (symbol, binary) = collation.get_user_symbol( demangle_cache, binary_id, symbol_index );
                 writeln!( output, "\t{:16X} {} ({})", address, symbol, binary.basename )?;
             },
             _ => unreachable!()
@@ -771,8 +784,8 @@ fn write_frame< T: fmt::Write >( collation: &Collation, demangle_cache: &mut Dem
                 write!( output, "[THREAD={}]", tid ).unwrap()
             }
         },
-        Frame::UserSymbol( ref binary_id, _, symbol_index, table ) => {
-            let (symbol, binary) = collation.get_user_symbol( demangle_cache, binary_id, symbol_index, table );
+        Frame::UserSymbol( ref binary_id, _, symbol_index ) => {
+            let (symbol, binary) = collation.get_user_symbol( demangle_cache, binary_id, symbol_index );
             write!( output, "{} [{}]", symbol, binary.basename ).unwrap()
         },
         Frame::UserBinary( ref binary_id, addr ) => {
@@ -944,9 +957,9 @@ mod test {
                     format!( "[thread]" )
                 }
             },
-            Frame::UserSymbol( ref binary_id, _, symbol_index, table ) => {
+            Frame::UserSymbol( ref binary_id, _, symbol_index ) => {
                 let mut demangle_cache = data.demangle_cache.borrow_mut();
-                let (symbol, binary) = data.collation.get_user_symbol( &mut demangle_cache, binary_id, symbol_index, table );
+                let (symbol, binary) = data.collation.get_user_symbol( &mut demangle_cache, binary_id, symbol_index );
                 format!( "{}:{}", symbol, binary.basename )
             },
             Frame::UserBinary( ref binary_id, _ ) => {

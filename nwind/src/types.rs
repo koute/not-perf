@@ -4,6 +4,8 @@ use speedy::{Readable, Writable, Context, Reader, Writer};
 
 pub use speedy::Endianness;
 
+use maps::Region;
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Readable, Writable)]
 pub struct Inode {
     pub inode: u64,
@@ -11,10 +13,49 @@ pub struct Inode {
     pub dev_minor: u32
 }
 
+impl Inode {
+    #[inline]
+    pub fn is_invalid( &self ) -> bool {
+        self.dev_major == 0 && self.dev_minor == 0
+    }
+
+    #[inline]
+    pub fn empty() -> Self {
+        Inode { inode: 0, dev_major: 0, dev_minor: 0 }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Readable, Writable)]
 pub enum Bitness {
     B32,
     B64
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
+pub enum BinaryId {
+    ByInode( Inode ),
+    ByName( String )
+}
+
+impl BinaryId {
+    #[inline]
+    pub fn to_inode( &self ) -> Option< Inode > {
+        match *self {
+            BinaryId::ByInode( inode ) => Some( inode ),
+            _ => None
+        }
+    }
+}
+
+impl< 'a > From< &'a Region > for BinaryId {
+    #[inline]
+    fn from( region: &'a Region ) -> Self {
+        if region.major == 0 && region.minor == 0 {
+            BinaryId::ByName( region.name.clone() )
+        } else {
+            BinaryId::ByInode( Inode { inode: region.inode, dev_major: region.major, dev_minor: region.minor } )
+        }
+    }
 }
 
 impl Bitness {

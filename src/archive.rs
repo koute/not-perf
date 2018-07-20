@@ -8,7 +8,8 @@ use speedy::{Readable, Writable, Context, Reader, Writer};
 pub use nwind::{
     Inode,
     Bitness,
-    UserFrame
+    UserFrame,
+    LoadHeader
 };
 
 pub use speedy::Endianness;
@@ -47,6 +48,7 @@ impl< 'a, C: Context > Writable< C > for DwarfReg {
 pub const ARCHIVE_MAGIC: u32 = 0x4652504E;
 pub const ARCHIVE_VERSION: u32 = 1;
 
+#[allow(non_camel_case_types)]
 #[derive(Debug, Readable, Writable)]
 pub enum Packet< 'a > {
     Header {
@@ -73,23 +75,29 @@ pub enum Packet< 'a > {
         user_backtrace: Cow< 'a, [UserFrame] >
     },
     BinaryInfo {
-        id: Inode,
+        inode: Inode,
         is_shared_object: bool,
         symbol_table_count: u16,
         path: Cow< 'a, [u8] >,
-        debuglink: Cow< 'a, [u8] >
+        debuglink: Cow< 'a, [u8] >,
+        #[speedy(default_on_eof)]
+        load_headers: Cow< 'a, [LoadHeader] >
     },
     StringTable {
-        binary_id: Inode,
+        inode: Inode,
         offset: u64,
-        data: Cow< 'a, [u8] >
+        data: Cow< 'a, [u8] >,
+        #[speedy(default_on_eof)]
+        path: Cow< 'a, [u8] >
     },
     SymbolTable {
-        binary_id: Inode,
+        inode: Inode,
         offset: u64,
         string_table_offset: u64,
         is_dynamic: bool,
         data: Cow< 'a, [u8] >,
+        #[speedy(default_on_eof)]
+        path: Cow< 'a, [u8] >
     },
     FileBlob {
         path: Cow< 'a, [u8] >,
@@ -105,7 +113,7 @@ pub enum Packet< 'a > {
         regs: Cow< 'a, [DwarfReg] >
     },
     BinaryBlob {
-        id: Inode,
+        inode: Inode,
         path: Cow< 'a, [u8] >,
         data: Cow< 'a, [u8] >
     },
@@ -131,22 +139,34 @@ pub enum Packet< 'a > {
         pid: u32,
         range: Range< u64 >
     },
-    BinaryMap {
+    Deprecated_BinaryMap {
         pid: u32,
-        id: Inode,
+        inode: Inode,
         base_address: u64
     },
-    BinaryUnmap {
+    Deprecated_BinaryUnmap {
         pid: u32,
-        id: Inode,
+        inode: Inode,
         base_address: u64
     },
     Lost {
         count: u64
     },
     BuildId {
-        id: Inode,
-        build_id: Vec< u8 >
+        inode: Inode,
+        build_id: Vec< u8 >,
+        #[speedy(default_on_eof)]
+        path: Cow< 'a, [u8] >
+    },
+    BinaryLoaded {
+        pid: u32,
+        inode: Option< Inode >,
+        name: Cow< 'a, [u8] >
+    },
+    BinaryUnloaded {
+        pid: u32,
+        inode: Option< Inode >,
+        name: Cow< 'a, [u8] >
     }
 }
 

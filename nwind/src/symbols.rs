@@ -126,10 +126,13 @@ impl Symbols {
         let symbols: Vec< (Range< u64 >, &'static str) > = unsafe { mem::transmute( symbols ) };
         let elapsed = start_timestamp.elapsed();
         debug!( "Loaded {} symbols for '{}' ({} normal, {} dynamic) in {}ms", symbols.len(), name, normal_count, dynamic_count, get_ms( elapsed ) );
-        Symbols {
+        let symbols = Symbols {
             strtab_owner: ManuallyDrop::new( strtab_owner.clone() ),
             symbols: ManuallyDrop::new( RangeMap::from_vec( symbols ) )
-        }
+        };
+
+        debug_assert!( symbols.is_owned_by( strtab_owner ) );
+        symbols
     }
 
     #[inline]
@@ -146,4 +149,18 @@ impl Symbols {
     pub fn get_symbol_by_index( &self, index: usize ) -> Option< (Range< u64 >, &str) > {
         self.as_range_map().get_by_index( index ).map( |(range, name)| (range, *name) )
     }
+
+    #[inline]
+    pub fn is_owned_by< T >( &self, strtab_owner: &Arc< T > ) -> bool
+        where T: StableIndex + Index< Range< u64 >, Output = [u8] > + 'static
+    {
+        let lhs: &ByteContainer< Output = [u8] > = &**self.strtab_owner;
+        let rhs: &ByteContainer< Output = [u8] > = &**strtab_owner;
+        to_ptr( lhs ) == to_ptr( rhs )
+    }
+}
+
+#[inline]
+fn to_ptr< T: ?Sized >( reference: &T ) -> *const u8 {
+    reference as *const T as *const u8
 }

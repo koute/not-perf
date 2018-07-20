@@ -89,11 +89,12 @@ impl Architecture for Arch {
         initial_address: &mut Option< u64 >
     ) -> Option< UnwindStatus > {
         let binary = lookup_binary( nth_frame, memory, regs )?;
+        let binary_data = binary.data()?;
 
-        let exidx_range = match binary.arm_exidx_range() {
+        let exidx_range = match binary_data.arm_exidx_range() {
             Some( exidx_range ) => exidx_range,
             None => {
-                debug!( "Previous frame not found: binary '{}' is missing .ARM.exidx section", binary.name() );
+                debug!( "Previous frame not found: binary '{}' is missing .ARM.exidx section", binary_data.name() );
                 return None;
             }
         };
@@ -101,7 +102,7 @@ impl Architecture for Arch {
         let exidx_base = match binary.arm_exidx_address() {
             Some( exidx_address ) => exidx_address,
             None => {
-                debug!( "Previous frame not found: binary '{}' .ARM.exidx address is not known", binary.name() );
+                debug!( "Previous frame not found: binary '{}' .ARM.exidx address is not known", binary_data.name() );
                 return None;
             }
         };
@@ -109,19 +110,19 @@ impl Architecture for Arch {
         let extab_base = match binary.arm_extab_address() {
             Some( extab_address ) => extab_address,
             None => {
-                if binary.arm_extab_range().is_none() {
+                if binary_data.arm_extab_range().is_none() {
                     0
                 } else {
-                    debug!( "Previous frame not found: binary '{}' .ARM.extab address is not known", binary.name() );
+                    debug!( "Previous frame not found: binary '{}' .ARM.extab address is not known", binary_data.name() );
                     return None;
                 }
             }
         };
 
         let address = regs.get( dwarf::R15 ).unwrap() as u32;
-        let exidx = &binary.as_bytes()[ exidx_range ];
-        let extab = if let Some( extab_range ) = binary.arm_extab_range() {
-            &binary.as_bytes()[ extab_range ]
+        let exidx = &binary_data.as_bytes()[ exidx_range ];
+        let extab = if let Some( extab_range ) = binary_data.arm_extab_range() {
+            &binary_data.as_bytes()[ extab_range ]
         } else {
             b""
         };

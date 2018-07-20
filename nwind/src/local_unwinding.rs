@@ -72,7 +72,7 @@ impl LocalAddressSpace {
         trace!( "Parsing maps..." );
         let regions = maps::parse( &data );
 
-        self.inner.reload( regions, &|region, handle| {
+        self.inner.reload( regions, &mut |region, handle| {
             if region.name == "[vdso]" {
                 return;
             }

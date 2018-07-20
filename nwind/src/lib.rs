@@ -52,7 +52,8 @@ pub use address_space::{
     BufferReader,
     Primitive,
     IAddressSpace,
-    AddressSpace
+    AddressSpace,
+    SymbolIndex
 };
 pub use dwarf_regs::DwarfRegs;
 pub use range_map::RangeMap;
@@ -61,7 +62,8 @@ pub use symbols::Symbols;
 pub use types::{
     Inode,
     Bitness,
-    UserFrame
+    UserFrame,
+    BinaryId
 };
 
 #[cfg(feature = "local-unwinding")]

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use serde_json;
 
+use nwind::BinaryId;
 use archive::{Packet, ArchiveReader};
 use metadata::{self, Metadata};
 
@@ -34,8 +35,9 @@ pub fn main( args: Args ) -> Result< (), Box< Error > > {
                     executable: String::from_utf8_lossy( &executable ).into()
                 });
             },
-            Packet::BinaryInfo { id, path, debuglink, .. } => {
+            Packet::BinaryInfo { inode, path, debuglink, .. } => {
                 let path = String::from_utf8_lossy( &path ).into_owned();
+                let binary_id: BinaryId = if !inode.is_invalid() { BinaryId::ByInode( inode ) } else { BinaryId::ByName( path.clone() ) };
 
                 let debuglink_length = debuglink.iter().position( |&byte| byte == 0 ).unwrap_or( debuglink.len() );
                 let debuglink = &debuglink[ 0..debuglink_length ];
@@ -45,15 +47,17 @@ pub fn main( args: Args ) -> Result< (), Box< Error > > {
                     Some( String::from_utf8_lossy( &debuglink ).into_owned() )
                 };
 
-                binary_id_to_index.insert( id, metadata.binaries.len() );
+                binary_id_to_index.insert( binary_id, metadata.binaries.len() );
                 metadata.binaries.push( metadata::Binary {
                     path,
                     debuglink,
                     build_id: None
                 });
             },
-            Packet::BuildId { id, build_id } => {
-                if let Some( &index ) = binary_id_to_index.get( &id ) {
+            Packet::BuildId { inode, path, build_id } => {
+                let path = String::from_utf8_lossy( &path ).into_owned();
+                let binary_id: BinaryId = if !inode.is_invalid() { BinaryId::ByInode( inode ) } else { BinaryId::ByName( path.clone() ) };
+                if let Some( &index ) = binary_id_to_index.get( &binary_id ) {
                     let build_id: Vec< _ > = build_id.iter().map( |byte| format!( "{:02x}", byte ) ).collect();
                     let build_id = build_id.join( "" );
                     metadata.binaries[ index ].build_id = Some( build_id );
