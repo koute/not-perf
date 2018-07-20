@@ -10,6 +10,7 @@ extern crate lru;
 extern crate speedy;
 #[macro_use]
 extern crate speedy_derive;
+extern crate string_interner;
 
 #[cfg(test)]
 extern crate env_logger;
@@ -47,6 +48,7 @@ pub mod utils;
 mod unwind_context;
 #[cfg(feature = "local-unwinding")]
 mod local_unwinding;
+mod interner;
 
 pub use address_space::{
     BufferReader,
@@ -68,3 +70,5 @@ pub use types::{
 
 #[cfg(feature = "local-unwinding")]
 pub use local_unwinding::{LocalAddressSpace, UnwindControl};
+
+pub use interner::{StringInterner, StringId};
