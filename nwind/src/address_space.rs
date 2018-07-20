@@ -17,7 +17,6 @@ use binary::{BinaryData, LoadHeader};
 use symbols::Symbols;
 use frame_descriptions::{FrameDescriptions, ContextCache, UnwindInfo, AddressMapping};
 use types::{Bitness, Inode, UserFrame, Endianness, BinaryId};
-use utils::HexRange;
 
 fn translate_address( mappings: &[AddressMapping], address: u64 ) -> u64 {
     if let Some( mapping ) = mappings.iter().find( |mapping| address >= mapping.actual_address && address < (mapping.actual_address + mapping.size) ) {
@@ -32,9 +31,6 @@ struct BinaryAddresses {
     arm_exidx: Option< u64 >,
     arm_extab: Option< u64 >
 }
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct SymbolIndex( usize, usize );
 
 pub struct Binary< A: Architecture > {
     name: String,
@@ -64,7 +60,7 @@ pub fn lookup_binary< 'a, A: Architecture, M: MemoryReader< A > >( nth_frame: us
         region.binary().name(),
         address,
         translate_address( &region.binary().mappings, address ),
-        region.binary().lookup_absolute_symbol( address ).map( |(range, symbol)| (HexRange( range ), symbol) )
+        region.binary().decode_symbol_once( address )
     );
 
     Some( &region.binary() )
@@ -97,32 +93,7 @@ impl< A: Architecture > Binary< A > {
         self.virtual_addresses.arm_extab
     }
 
-    fn lookup_relative_symbol_index( &self, address: u64 ) -> Option< SymbolIndex > {
-        for (index, symbols) in self.symbols.iter().enumerate() {
-            if let Some( symbol_index ) = symbols.get_symbol_index( address ) {
-                return Some( SymbolIndex( index, symbol_index ) );
-            }
-        }
-
-        None
-    }
-
-    pub fn get_symbol_by_index( &self, index: SymbolIndex ) -> Option< (Range< u64 >, &str) > {
-        self.symbols[ index.0 ].get_symbol_by_index( index.1 )
-    }
-
-    pub fn lookup_absolute_symbol( &self, address: u64 ) -> Option< (Range< u64 >, &str) > {
-        self.lookup_absolute_symbol_index( address ).and_then( |index| {
-            self.get_symbol_by_index( index )
-        })
-    }
-
-    pub fn lookup_absolute_symbol_index( &self, address: u64 ) -> Option< SymbolIndex > {
-        let effective_address = translate_address( &self.mappings, address );
-        self.lookup_relative_symbol_index( effective_address )
-    }
-
-    pub fn decode_symbol_while( &self, address: u64, callback: &mut FnMut( &mut Frame ) -> bool ) {
+    pub fn decode_symbol_while< 'a >( &'a self, address: u64, callback: &mut FnMut( &mut Frame< 'a > ) -> bool ) {
         let relative_address = translate_address( &self.mappings, address );
         let mut frame = Frame {
             absolute_address: address,
@@ -150,6 +121,26 @@ impl< A: Architecture > Binary< A > {
         }
 
         callback( &mut frame );
+    }
+
+    fn decode_symbol_once( &self, address: u64 ) -> Frame {
+        let mut output = Frame {
+            absolute_address: address,
+            relative_address: address,
+            name: None,
+            demangled_name: None,
+            file: None,
+            line: None,
+            column: None,
+            is_inline: false
+        };
+
+        self.decode_symbol_while( address, &mut |frame| {
+            mem::swap( &mut output, frame );
+            false
+        });
+
+        output
     }
 }
 
@@ -336,6 +327,7 @@ impl LoadHandle {
     }
 }
 
+#[derive(Debug)]
 pub struct Frame< 'a > {
     pub absolute_address: u64,
     pub relative_address: u64,
@@ -350,10 +342,8 @@ pub struct Frame< 'a > {
 pub trait IAddressSpace {
     fn reload( &mut self, regions: Vec< Region >, try_load: &mut FnMut( &Region, &mut LoadHandle ) ) -> Reloaded;
     fn unwind( &mut self, regs: &mut DwarfRegs, stack: &BufferReader, output: &mut Vec< UserFrame > );
-    fn decode_symbol_while( &self, address: u64, callback: &mut FnMut( &mut Frame ) -> bool );
-    fn lookup_absolute_symbol( &self, address: u64 ) -> Option< &str >;
-    fn lookup_absolute_symbol_index( &self, binary_id: &BinaryId, address: u64 ) -> Option< SymbolIndex >;
-    fn get_symbol_by_index< 'a >( &'a self, binary_id: &BinaryId, index: SymbolIndex ) -> (Range< u64 >, &'a str);
+    fn decode_symbol_while< 'a >( &'a self, address: u64, callback: &mut FnMut( &mut Frame< 'a > ) -> bool );
+    fn decode_symbol_once( &self, address: u64 ) -> Frame;
     fn set_panic_on_partial_backtrace( &mut self, value: bool );
 }
 
@@ -616,7 +606,7 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
         }
     }
 
-    fn decode_symbol_while( &self, address: u64, callback: &mut FnMut( &mut Frame ) -> bool ) {
+    fn decode_symbol_while< 'a >( &'a self, address: u64, callback: &mut FnMut( &mut Frame< 'a > ) -> bool ) {
         if let Some( region ) = self.regions.get_value( address ) {
             region.binary.decode_symbol_while( address, callback );
         } else {
@@ -635,26 +625,21 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
         }
     }
 
-    fn lookup_absolute_symbol( &self, address: u64 ) -> Option< &str > {
-        self.regions.get_value( address )
-            .and_then( |region| {
-                let index = region.binary.lookup_absolute_symbol_index( address );
-                if let Some( index ) = index {
-                    region.binary.get_symbol_by_index( index ).map( |(_, symbol)| symbol )
-                } else {
-                    None
-                }
-            })
-    }
-
-    fn lookup_absolute_symbol_index( &self, binary_id: &BinaryId, address: u64 ) -> Option< SymbolIndex > {
-        self.binary_map.get( &binary_id ).and_then( |binary| {
-            binary.lookup_absolute_symbol_index( address )
-        })
-    }
-
-    fn get_symbol_by_index< 'a >( &'a self, binary_id: &BinaryId, index: SymbolIndex ) -> (Range< u64 >, &'a str) {
-        self.binary_map.get( &binary_id ).unwrap().get_symbol_by_index( index ).unwrap()
+    fn decode_symbol_once( &self, address: u64 ) -> Frame {
+        if let Some( region ) = self.regions.get_value( address ) {
+            region.binary.decode_symbol_once( address )
+        } else {
+            Frame {
+                absolute_address: address,
+                relative_address: address,
+                name: None,
+                demangled_name: None,
+                file: None,
+                line: None,
+                column: None,
+                is_inline: false
+            }
+        }
     }
 
     fn set_panic_on_partial_backtrace( &mut self, value: bool ) {

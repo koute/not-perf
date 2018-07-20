@@ -1,7 +1,7 @@
 use std::io;
 use std::fs;
 
-use address_space::{IAddressSpace, AddressSpace, BinaryRegion, MemoryReader};
+use address_space::{IAddressSpace, AddressSpace, BinaryRegion, MemoryReader, Frame};
 use binary::BinaryData;
 use range_map::RangeMap;
 use types::{Endianness, UserFrame};
@@ -110,8 +110,8 @@ impl LocalAddressSpace {
         }
     }
 
-    pub fn lookup_symbol( &self, address: u64 ) -> Option< &str > {
-        self.inner.lookup_absolute_symbol( address )
+    pub fn decode_symbol_once( &self, address: u64 ) -> Frame {
+        self.inner.decode_symbol_once( address )
     }
 }
 
@@ -130,7 +130,7 @@ fn test_self_unwind() {
     let mut addresses = Vec::new();
     let mut symbols = Vec::new();
     for frame in frames.iter() {
-        if let Some( symbol ) = address_space.lookup_symbol( frame.address ) {
+        if let Some( symbol ) = address_space.decode_symbol_once( frame.address ).name {
             symbols.push( symbol.to_owned() );
         }
 

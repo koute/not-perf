@@ -56,7 +56,6 @@ pub use address_space::{
     Primitive,
     IAddressSpace,
     AddressSpace,
-    SymbolIndex,
     Frame
 };
 pub use dwarf_regs::DwarfRegs;
