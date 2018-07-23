@@ -58,7 +58,7 @@ struct Process {
 }
 
 impl Process {
-    fn reload_if_necessary( &mut self, binary_by_id: &mut HashMap< BinaryId, Binary > ) {
+    fn reload_if_necessary( &mut self, debug_info_index: &DebugInfoIndex, binary_by_id: &mut HashMap< BinaryId, Binary > ) {
         if !self.address_space_needs_reload {
             return;
         }
@@ -95,12 +95,14 @@ impl Process {
                     }
                 }
 
+                binary.load_debug_info( debug_info_index );
+
                 if let Some( symbols ) = binary.symbols.take() {
                     handle.add_symbols( symbols );
                 }
 
-                if let Some( symbols ) = binary.debug_symbols.take() {
-                    handle.add_symbols( symbols );
+                if let Some( ref data ) = binary.debug_data {
+                    handle.set_debug_binary( data.clone() );
                 }
             }
         });
@@ -115,9 +117,31 @@ struct Binary {
     symbol_tables_chunks: BinaryChunks,
     symbol_tables: Vec< SymbolTable >,
     symbols: Option< Symbols >,
-    debug_symbols: Option< Symbols >,
     data: Option< Arc< BinaryData > >,
-    load_headers: Vec< LoadHeader >
+    debug_data: Option< Arc< BinaryData > >,
+    load_headers: Vec< LoadHeader >,
+    build_id: Option< Vec< u8 > >,
+    debuglink: Option< String >
+}
+
+impl Binary {
+    fn load_debug_info( &mut self, debug_info_index: &DebugInfoIndex ) {
+        if self.debug_data.is_some() {
+            return;
+        }
+
+        if let Some( ref debuglink ) = self.debuglink {
+            if let Some( debug_data ) = debug_info_index.by_filename.get( debuglink ) {
+                debug!( "Found debug symbols for '{}': '{}'", self.path, debug_data.name() );
+                self.debug_data = Some( debug_data.clone() );
+            }
+        } else {
+            if let Some( debug_data ) = debug_info_index.by_filename.get( &self.basename ) {
+                debug!( "Found debug symbols for '{}': '{}'", self.path, debug_data.name() );
+                self.debug_data = Some( debug_data.clone() );
+            }
+        }
+    }
 }
 
 struct BinaryChunks {
@@ -171,50 +195,63 @@ fn get_basename( path: &str ) -> String {
     path[ path.rfind( "/" ).map( |index| index + 1 ).unwrap_or( 0 ).. ].to_owned()
 }
 
-fn look_through_debug_symbols( debug_symbols: &[&OsStr] ) -> HashMap< String, Symbols > {
-    fn check( path: &Path, results: &mut HashMap< String, Symbols > ) {
-        match BinaryData::load_from_fs( path ) {
-            Ok( binary ) => {
-                let filename = path.file_name().unwrap();
-                let filename = filename.to_string_lossy().into_owned();
-                let binary = Arc::new( binary );
-                let symbols = Symbols::load_from_binary_data( &binary );
-                results.insert( filename, symbols );
-            },
-            Err( error ) => {
-                warn!( "Cannot read debug symbols from {:?}: {}", path, error );
-                return;
-            }
-        }
-    }
+struct DebugInfoIndex {
+    by_filename: HashMap< String, Arc< BinaryData > >,
+    by_build_id: HashMap< Vec< u8 >, Arc< BinaryData > >
+}
 
-    let mut results = HashMap::new();
-    for path in debug_symbols {
-        let path = Path::new( path );
-        if !path.exists() {
-            continue;
-        }
-
-        if path.is_dir() {
-            let dir = match path.read_dir() {
-                Ok( dir ) => dir,
+impl DebugInfoIndex {
+    fn new( paths: &[&OsStr] ) -> Self {
+        fn check( path: &Path, by_filename: &mut HashMap< String, Arc< BinaryData > >, by_build_id: &mut HashMap< Vec< u8 >, Arc< BinaryData > > ) {
+            match BinaryData::load_from_fs( path ) {
+                Ok( binary ) => {
+                    let filename = path.file_name().unwrap();
+                    let filename = filename.to_string_lossy().into_owned();
+                    let binary = Arc::new( binary );
+                    by_filename.insert( filename, binary.clone() );
+                    if let Some( build_id ) = binary.build_id() {
+                        by_build_id.insert( build_id.to_owned(), binary.clone() );
+                    }
+                },
                 Err( error ) => {
                     warn!( "Cannot read debug symbols from {:?}: {}", path, error );
-                    continue;
-                }
-            };
-
-            for entry in dir {
-                if let Ok( entry ) = entry {
-                    check( &entry.path(), &mut results );
+                    return;
                 }
             }
-        } else {
-            check( path, &mut results );
+        }
+
+        let mut by_filename = HashMap::new();
+        let mut by_build_id = HashMap::new();
+        for path in paths {
+            let path = Path::new( path );
+            if !path.exists() {
+                continue;
+            }
+
+            if path.is_dir() {
+                let dir = match path.read_dir() {
+                    Ok( dir ) => dir,
+                    Err( error ) => {
+                        warn!( "Cannot read debug symbols from {:?}: {}", path, error );
+                        continue;
+                    }
+                };
+
+                for entry in dir {
+                    if let Ok( entry ) = entry {
+                        check( &entry.path(), &mut by_filename, &mut by_build_id );
+                    }
+                }
+            } else {
+                check( path, &mut by_filename, &mut by_build_id );
+            }
+        }
+
+        DebugInfoIndex {
+            by_filename,
+            by_build_id
         }
     }
-
-    results
 }
 
 pub enum CollateFormat {
@@ -293,7 +330,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
     let mut machine_bitness = Bitness::B64;
     let mut sample_counter = 0;
 
-    let mut debug_symbols = look_through_debug_symbols( &args.debug_symbols );
+    let debug_info_index = DebugInfoIndex::new( &args.debug_symbols );
 
     while let Some( packet ) = reader.next() {
         let packet = packet.unwrap();
@@ -331,6 +368,12 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
             Packet::BinaryInfo { inode, symbol_table_count, path, debuglink, load_headers, .. } => {
                 let debuglink_length = debuglink.iter().position( |&byte| byte == 0 ).unwrap_or( debuglink.len() );
                 let debuglink = &debuglink[ 0..debuglink_length ];
+                let debuglink = String::from_utf8_lossy( &debuglink ).into_owned();
+                let debuglink = if debuglink.is_empty() {
+                    None
+                } else {
+                    Some( debuglink )
+                };
 
                 let path = String::from_utf8_lossy( &path ).into_owned();
                 let binary_id = if inode.dev_major == 0 && inode.dev_minor == 0 {
@@ -347,23 +390,27 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                     symbol_tables_chunks: BinaryChunks::new(),
                     symbol_tables: Vec::new(),
                     symbols: None,
-                    debug_symbols: None,
                     data: None,
-                    load_headers: load_headers.into_owned()
+                    debug_data: None,
+                    load_headers: load_headers.into_owned(),
+                    build_id: None,
+                    debuglink
                 };
 
                 debug!( "New binary: {:?}", binary.path );
-                if !debuglink.is_empty() {
-                    let debuglink = String::from_utf8_lossy( &debuglink );
-                    if let Some( debug_symbols ) = debug_symbols.remove( &*debuglink ) {
-                        binary.debug_symbols = Some( debug_symbols );
-                        debug!( "Found debug symbols for '{}': '{}'", binary.path, debuglink );
-                    } else {
+                if let Some( ref debuglink ) = binary.debuglink {
+                    if !debug_info_index.by_filename.contains_key( debuglink ) {
                         warn!( "Missing external debug symbols for '{}': '{}'", binary.path, debuglink );
                     }
                 }
 
                 collation.binary_by_id.insert( binary_id, binary );
+            },
+            Packet::BuildId { inode, path, build_id } => {
+                let binary_name = String::from_utf8_lossy( &path );
+                let binary_id = to_binary_id( inode, &binary_name );
+                let binary = collation.binary_by_id.get_mut( &binary_id ).unwrap();
+                binary.build_id = Some( build_id );
             },
             Packet::MemoryRegionMap { pid, range, is_read, is_write, is_executable, is_shared, file_offset, inode, major, minor, name } => {
                 let process = match collation.process_index_by_pid.get( &pid ).cloned() {
@@ -496,7 +543,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                     continue;
                 }
 
-                collation.processes[ 0 ].reload_if_necessary( &mut collation.binary_by_id );
+                collation.processes[ 0 ].reload_if_necessary( &debug_info_index, &mut collation.binary_by_id );
 
                 if args.without_kernel_callstacks {
                     kernel_backtrace = Vec::new().into();
@@ -527,7 +574,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
 
                 let user_backtrace = {
                     let mut process = &mut collation.processes[ 0 ];
-                    process.reload_if_necessary( &mut collation.binary_by_id );
+                    process.reload_if_necessary( &debug_info_index, &mut collation.binary_by_id );
 
                     let mut dwarf_regs = DwarfRegs::new();
                     for reg in regs.iter() {
