@@ -15,6 +15,7 @@ speedy-derive = "0.3"
 lru = "0.1"
 string-interner = "0.6"
 cpp_demangle = "0.2"
+addr2line = "0.7"
 
 [build-dependencies]
 cc = { version = "1", optional = true }

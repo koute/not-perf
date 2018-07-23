@@ -7,13 +7,15 @@ use std::borrow::Cow;
 
 use byteorder::{self, ByteOrder};
 use cpp_demangle;
+use addr2line;
+use gimli;
 
 use arch::{Architecture, Registers, Endianity};
 use dwarf_regs::DwarfRegs;
 use maps::Region;
 use range_map::RangeMap;
 use unwind_context::UnwindContext;
-use binary::{BinaryData, LoadHeader};
+use binary::{BinaryData, LoadHeader, BinaryDataReader};
 use symbols::Symbols;
 use frame_descriptions::{FrameDescriptions, ContextCache, UnwindInfo, AddressMapping};
 use types::{Bitness, Inode, UserFrame, Endianness, BinaryId};
@@ -38,8 +40,10 @@ pub struct Binary< A: Architecture > {
     load_headers: Vec< LoadHeader >,
     mappings: Vec< AddressMapping >,
     data: Option< Arc< BinaryData > >,
+    debug_data: Option< Arc< BinaryData > >,
     symbols: Vec< Symbols >,
-    frame_descriptions: Option< FrameDescriptions< A::Endianity > >
+    frame_descriptions: Option< FrameDescriptions< A::Endianity > >,
+    context: Option< addr2line::Context< BinaryDataReader > >
 }
 
 pub type BinaryHandle< A > = Arc< Binary< A > >;
@@ -64,6 +68,29 @@ pub fn lookup_binary< 'a, A: Architecture, M: MemoryReader< A > >( nth_frame: us
     );
 
     Some( &region.binary() )
+}
+
+fn process_frame< R: gimli::Reader >( raw_frame: addr2line::Frame< R >, frame: &mut Frame ) {
+    frame.file = None;
+    frame.line = None;
+    frame.column = None;
+    frame.name = None;
+    frame.demangled_name = None;
+
+    if let Some( location ) = raw_frame.location {
+        frame.file = location.file;
+        frame.line = location.line;
+        frame.column = location.column;
+    }
+
+    if let Some( function ) = raw_frame.function {
+        if let Ok( raw_name ) = function.raw_name() {
+            frame.name = Some( raw_name.into_owned().into() );
+        }
+        if let Ok( demangled_name ) = function.demangle() {
+            frame.demangled_name = Some( demangled_name.into_owned().into() );
+        }
+    }
 }
 
 impl< A: Architecture > Binary< A > {
@@ -95,17 +122,56 @@ impl< A: Architecture > Binary< A > {
 
     pub fn decode_symbol_while< 'a >( &'a self, address: u64, callback: &mut FnMut( &mut Frame< 'a > ) -> bool ) {
         let relative_address = translate_address( &self.mappings, address );
-        let mut frame = Frame {
-            absolute_address: address,
-            relative_address,
-            name: None,
-            demangled_name: None,
-            file: None,
-            line: None,
-            column: None,
-            is_inline: false
-        };
+        let mut frame = Frame::from_address( address, relative_address );
 
+        let mut found = false;
+        if let Some( context ) = self.context.as_ref() {
+            if let Ok( mut raw_frames ) = context.find_frames( relative_address ) {
+                if let Ok( Some( raw_frame ) ) = raw_frames.next() {
+                    found = true;
+                    process_frame( raw_frame, &mut frame );
+
+                    loop {
+                        let next_raw_frame = match raw_frames.next() {
+                            Ok( Some( raw_frame ) ) => Some( raw_frame ),
+                            _ => None
+                        };
+
+                        frame.is_inline = next_raw_frame.is_some();
+                        if !frame.is_inline {
+                            if let Some( (name, demangled_name) ) = self.resolve_symbol( relative_address ) {
+                                frame.name = Some( name );
+                                frame.demangled_name = demangled_name;
+                            }
+                        }
+
+                        if !callback( &mut frame ) {
+                            return;
+                        }
+
+                        if let Some( raw_frame ) = next_raw_frame {
+                            process_frame( raw_frame, &mut frame );
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if found {
+            return;
+        }
+
+        if let Some( (name, demangled_name) ) = self.resolve_symbol( relative_address ) {
+            frame.name = Some( name );
+            frame.demangled_name = demangled_name;
+        }
+
+        callback( &mut frame );
+    }
+
+    fn resolve_symbol( &self, relative_address: u64 ) -> Option< (Cow< str >, Option< Cow< str > >) > {
         for symbols in &self.symbols {
             if let Some( (_, symbol) ) = symbols.get_symbol( relative_address ) {
                 let demangled_name =
@@ -114,13 +180,13 @@ impl< A: Architecture > Binary< A > {
                             symbol.demangle( &cpp_demangle::DemangleOptions { no_params: false } ).ok()
                     });
 
-                frame.name = Some( symbol.into() );
-                frame.demangled_name = demangled_name.map( |symbol| symbol.into() );
-                break;
+                let name = symbol.into();
+                let demangled_name = demangled_name.map( |symbol| symbol.into() );
+                return Some( (name, demangled_name) );
             }
         }
 
-        callback( &mut frame );
+        None
     }
 
     fn decode_symbol_once( &self, address: u64 ) -> Frame {
@@ -339,6 +405,22 @@ pub struct Frame< 'a > {
     pub is_inline: bool
 }
 
+impl< 'a > Frame< 'a > {
+    #[inline]
+    fn from_address( absolute_address: u64, relative_address: u64 ) -> Self {
+        Frame {
+            absolute_address,
+            relative_address,
+            name: None,
+            demangled_name: None,
+            file: None,
+            line: None,
+            column: None,
+            is_inline: false
+        }
+    }
+}
+
 pub trait IAddressSpace {
     fn reload( &mut self, regions: Vec< Region >, try_load: &mut FnMut( &Region, &mut LoadHandle ) ) -> Reloaded;
     fn unwind( &mut self, regs: &mut DwarfRegs, stack: &BufferReader, output: &mut Vec< UserFrame > );
@@ -369,6 +451,7 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
         struct Data< E: Endianity > {
             name: String,
             binary_data: Option< Arc< BinaryData > >,
+            debug_binary_data: Option< Arc< BinaryData > >,
             addresses: BinaryAddresses,
             load_headers: Vec< LoadHeader >,
             mappings: Vec< AddressMapping >,
@@ -377,7 +460,8 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
             regions: Vec< (Region, bool) >,
             load_symbols: bool,
             load_frame_descriptions: bool,
-            is_old: bool
+            is_old: bool,
+            context: Option< addr2line::Context< BinaryDataReader > >
         }
 
         let mut reloaded = Reloaded::default();
@@ -406,8 +490,8 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
 
             if !new_binary_map.contains_key( &id ) {
                 if let Some( binary ) = old_binary_map.remove( &id ) {
-                    let (binary_data, symbols, frame_descriptions, load_headers) = match Arc::try_unwrap( binary ) {
-                        Ok( binary ) => (binary.data, binary.symbols, binary.frame_descriptions, binary.load_headers),
+                    let (binary_data, debug_binary_data, symbols, frame_descriptions, load_headers, context) = match Arc::try_unwrap( binary ) {
+                        Ok( binary ) => (binary.data, binary.debug_data, binary.symbols, binary.frame_descriptions, binary.load_headers, binary.context),
                         Err( _ ) => {
                             unimplemented!();
                         }
@@ -416,6 +500,7 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
                     new_binary_map.insert( id.clone(), Data {
                         name: region.name.clone(),
                         binary_data,
+                        debug_binary_data,
                         addresses: BinaryAddresses::default(),
                         load_headers,
                         mappings: Default::default(),
@@ -424,7 +509,8 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
                         regions: Vec::new(),
                         load_symbols: false,
                         load_frame_descriptions: false,
-                        is_old: true
+                        is_old: true,
+                        context
                     });
                 } else if !tried_to_load.contains( &id ) {
                     tried_to_load.insert( id.clone() );
@@ -450,6 +536,7 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
                     new_binary_map.insert( id.clone(), Data {
                         name: region.name.clone(),
                         binary_data: handle.binary,
+                        debug_binary_data: handle.debug_binary,
                         addresses: BinaryAddresses::default(),
                         load_headers: handle.mappings,
                         mappings: Default::default(),
@@ -458,7 +545,8 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
                         regions: Vec::new(),
                         load_symbols: handle.load_symbols,
                         load_frame_descriptions: handle.load_frame_descriptions,
-                        is_old: false
+                        is_old: false,
+                        context: None
                     });
                 } else {
                     continue;
@@ -512,10 +600,26 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
             }
 
             let mut symbols = data.symbols;
+            let mut context = data.context;
             if data.load_symbols {
-                if symbols.is_empty() {
-                    if let Some( binary_data ) = data.binary_data.as_ref() {
+                let binary_data = data.debug_binary_data.as_ref().or( data.binary_data.as_ref() );
+                if let Some( binary_data ) = binary_data {
+                    if symbols.is_empty() {
                         symbols.push( Symbols::load_from_binary_data( &binary_data ) );
+                    }
+
+                    if context.is_none() {
+                        debug!( "Creating addr2line context for '{}'...", data.name );
+                        let ctx = addr2line::Context::from_sections(
+                            BinaryData::get_section_or_empty( &binary_data ),
+                            BinaryData::get_section_or_empty( &binary_data ),
+                            BinaryData::get_section_or_empty( &binary_data ),
+                            BinaryData::get_section_or_empty( &binary_data ),
+                            BinaryData::get_section_or_empty( &binary_data ),
+                            BinaryData::get_section_or_empty( &binary_data )
+                        );
+
+                        context = ctx.ok();
                     }
                 }
             }
@@ -535,11 +639,13 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
             let binary = Arc::new( Binary {
                 name: data.name,
                 data: data.binary_data,
+                debug_data: data.debug_binary_data,
                 virtual_addresses: data.addresses,
                 load_headers: data.load_headers,
                 mappings: data.mappings,
                 symbols,
-                frame_descriptions
+                frame_descriptions,
+                context
             });
 
             for (region, is_new) in data.regions {

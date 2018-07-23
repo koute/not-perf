@@ -12,6 +12,7 @@ extern crate speedy;
 extern crate speedy_derive;
 extern crate string_interner;
 extern crate cpp_demangle;
+extern crate addr2line;
 
 #[cfg(test)]
 extern crate env_logger;
