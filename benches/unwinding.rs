@@ -3,6 +3,7 @@ extern crate criterion;
 
 extern crate nperf;
 extern crate nwind;
+extern crate proc_maps;
 
 use std::fs;
 use std::collections::HashMap;
@@ -13,8 +14,8 @@ use criterion::{Criterion, Bencher};
 
 use nperf::{Packet, ArchiveReader, StackReader};
 use nwind::arch::{self, Registers};
-use nwind::{AddressSpace, IAddressSpace, BinaryData, BinarySource, DwarfRegs, RangeMap};
-use nwind::maps::Region;
+use nwind::{AddressSpace, IAddressSpace, BinaryData, DwarfRegs, RangeMap};
+use proc_maps::Region;
 
 fn benchmark_unwind( b: &mut Bencher, filename: &str ) {
     let path = Path::new( env!( "CARGO_MANIFEST_DIR" ) ).join( "test-data" ).join( "artifacts" ).join( filename );
@@ -31,10 +32,13 @@ fn benchmark_unwind( b: &mut Bencher, filename: &str ) {
             Packet::RawSample { stack, regs, .. } => {
                 samples.push( (stack, regs) );
             },
-            Packet::BinaryBlob { id, path, data } => {
-                let data = BinaryData::load_from_owned_bytes( &String::from_utf8_lossy( &path ), id.clone(), data.into_owned() ).unwrap();
-                let source = BinarySource::Preloaded( Arc::new( data ) );
-                binary_source_map.insert( id, source );
+            Packet::BinaryBlob { inode, path, data } => {
+                let path = String::from_utf8_lossy( &path );
+                let mut data = BinaryData::load_from_owned_bytes( &path, data.into_owned() ).unwrap();
+                if !inode.is_invalid() {
+                    data.set_inode( inode );
+                }
+                binary_source_map.insert( path.into_owned(), Arc::new( data ) );
             },
             Packet::MemoryRegionMap { range, is_read, is_write, is_executable, is_shared, file_offset, inode, major, minor, name, .. } => {
                 let region = Region {
@@ -61,7 +65,11 @@ fn benchmark_unwind( b: &mut Bencher, filename: &str ) {
     }
 
     let regions = memory_regions.values().cloned().collect();
-    address_space.reload( binary_source_map, regions, true );
+    address_space.reload( regions, &mut |region, handle| {
+        if let Some( binary_data ) = binary_source_map.get( &region.name ) {
+            handle.set_binary( binary_data.clone() );
+        }
+    });
 
     let mut user_backtrace = Vec::new();
     let mut dwarf_regs = DwarfRegs::new();
