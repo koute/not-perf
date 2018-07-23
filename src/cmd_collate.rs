@@ -43,7 +43,7 @@ enum FrameKind {
     MainThread,
     User( u64 ),
     UserBinary( BinaryId, u64 ),
-    UserSymbol( BinaryId, u64, StringId ),
+    UserSymbol( BinaryId, u64, bool, StringId ),
     Kernel( u64 ),
     KernelSymbol( usize )
 }
@@ -649,7 +649,7 @@ fn decode_user_frames( omit_regex: &Option< Regex >, process: &Process, user_bac
                 }
 
                 let string_id = interner.get_or_intern( name );
-                output.push( FrameKind::UserSymbol( binary_id.clone(), frame.absolute_address, string_id ) );
+                output.push( FrameKind::UserSymbol( binary_id.clone(), frame.absolute_address, frame.is_inline, string_id ) );
             } else {
                 output.push( FrameKind::UserBinary( binary_id.clone(), frame.absolute_address ) );
             }
@@ -750,10 +750,14 @@ fn write_perf_like_output< T: io::Write >(
                 let binary = collation.get_binary( binary_id );
                 writeln!( output, "\t{:16X} 0x{:016X} ({})", address, address, binary.basename )?;
             },
-            FrameKind::UserSymbol( ref binary_id, address, symbol_id ) => {
+            FrameKind::UserSymbol( ref binary_id, address, is_inline, symbol_id ) => {
                 let binary = collation.get_binary( binary_id );
                 let symbol = interner.resolve( symbol_id ).unwrap();
-                writeln!( output, "\t{:16X} {} ({})", address, symbol, binary.basename )?;
+                if is_inline {
+                    writeln!( output, "\t{:16X} inline {} ({})", address, symbol, binary.basename )?;
+                } else {
+                    writeln!( output, "\t{:16X} {} ({})", address, symbol, binary.basename )?;
+                }
             },
             _ => unreachable!()
         }
@@ -783,10 +787,14 @@ fn write_frame< T: fmt::Write >( collation: &Collation, interner: &StringInterne
                 write!( output, "[THREAD={}]", tid ).unwrap()
             }
         },
-        FrameKind::UserSymbol( ref binary_id, _, symbol_id ) => {
+        FrameKind::UserSymbol( ref binary_id, _, is_inline, symbol_id ) => {
             let binary = collation.get_binary( binary_id );
             let symbol = interner.resolve( symbol_id ).unwrap();
-            write!( output, "{} [{}]", symbol, binary.basename ).unwrap()
+            if is_inline {
+                write!( output, "inline {} [{}]", symbol, binary.basename ).unwrap()
+            } else {
+                write!( output, "{} [{}]", symbol, binary.basename ).unwrap()
+            }
         },
         FrameKind::UserBinary( ref binary_id, addr ) => {
             let binary = collation.get_binary( binary_id );
@@ -957,7 +965,7 @@ mod test {
                     format!( "[thread]" )
                 }
             },
-            FrameKind::UserSymbol( ref binary_id, _, symbol_id ) => {
+            FrameKind::UserSymbol( ref binary_id, _, _, symbol_id ) => {
                 let binary = data.collation.get_binary( binary_id );
                 let symbol = data.interner.resolve( symbol_id ).unwrap();
                 format!( "{}:{}", symbol, binary.basename )
