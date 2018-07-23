@@ -12,7 +12,7 @@ function initialize_toolchain {
     TOOLCHAIN_INITIALIZED=1
 
     set +e
-    if [[ "$OECORE_TARGET_SYSROOT" = "" ]]; then
+    if [[ "${OECORE_TARGET_SYSROOT-}" = "" ]]; then
         echo "No SDK detected!"
         print_sdk_urls_and_exit
     fi
