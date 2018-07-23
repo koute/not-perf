@@ -1329,4 +1329,62 @@ mod test {
             "pthread_mutex_lock:libpthread-2.26.so"
         ]);
     }
+
+    #[test]
+    fn collate_amd64_inline_functions() {
+        let data = load( "amd64-inline_functions.nperf" );
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
+                "[process:amd64-inline_functions]",
+                "[main_thread]",
+                "_start:amd64-inline_functions",
+                "__libc_start_main:libc-2.26.so",
+                "main:amd64-inline_functions",
+                "inline_function_1st:amd64-inline_functions",
+                "inline_function_2nd:amd64-inline_functions",
+                "function:amd64-inline_functions",
+                "usleep:libc-2.26.so",
+                "**"
+            ]);
+        }
+    }
+
+    #[ignore]
+    #[test]
+    fn collate_mips64_inline_functions() {
+        let data = load( "mips64-inline_functions.nperf" );
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
+                "[process:mips64-inline_functions]",
+                "[main_thread]",
+                "?:mips64-inline_functions",
+                "__libc_start_main:libc-2.26.so",
+                "main:mips64-inline_functions",
+                "inline_function_1st:mips64-inline_functions",
+                "inline_function_2nd:mips64-inline_functions",
+                "function:mips64-inline_functions",
+                "usleep:libc-2.26.so",
+                "**"
+            ]);
+        }
+    }
+
+    #[test]
+    fn collate_arm_inline_functions() {
+        let data = load( "arm-inline_functions.nperf" );
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
+                "[process:arm-inline_functions]",
+                "[main_thread]",
+                "?:arm-inline_functions",
+                "__libc_start_main:libc-2.26.so",
+                "main:arm-inline_functions",
+                "inline_function_1st:arm-inline_functions",
+                "inline_function_2nd:arm-inline_functions",
+                "function:arm-inline_functions",
+                "usleep:libc-2.26.so",
+                "**"
+            ]);
+        }
+    }
 }
