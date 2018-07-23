@@ -10,9 +10,10 @@ use cpp_demangle;
 use addr2line;
 use gimli;
 
+use proc_maps::Region;
+
 use arch::{Architecture, Registers, Endianity};
 use dwarf_regs::DwarfRegs;
-use maps::Region;
 use range_map::RangeMap;
 use unwind_context::UnwindContext;
 use binary::{BinaryData, LoadHeader, BinaryDataReader};

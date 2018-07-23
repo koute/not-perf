@@ -13,6 +13,7 @@ extern crate speedy_derive;
 extern crate string_interner;
 extern crate cpp_demangle;
 extern crate addr2line;
+extern crate proc_maps;
 
 #[cfg(test)]
 extern crate env_logger;
@@ -42,7 +43,6 @@ mod binary;
 mod dwarf;
 mod dwarf_regs;
 mod frame_descriptions;
-pub mod maps;
 mod range_map;
 mod symbols;
 mod types;

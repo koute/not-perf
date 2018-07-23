@@ -33,6 +33,7 @@ extern crate serde_derive;
 extern crate quickcheck;
 
 extern crate nwind;
+extern crate proc_maps;
 
 mod utils;
 

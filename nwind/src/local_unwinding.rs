@@ -1,12 +1,13 @@
 use std::io;
 use std::fs;
 
+use proc_maps;
+
 use address_space::{IAddressSpace, AddressSpace, BinaryRegion, MemoryReader, Frame};
 use binary::BinaryData;
 use range_map::RangeMap;
 use types::{Endianness, UserFrame};
 use arch::{self, LocalRegs};
-use maps;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum UnwindControl {
@@ -70,7 +71,7 @@ impl LocalAddressSpace {
         let data = fs::read( "/proc/self/maps" )?;
         let data = String::from_utf8_lossy( &data );
         trace!( "Parsing maps..." );
-        let regions = maps::parse( &data );
+        let regions = proc_maps::parse( &data );
 
         self.inner.reload( regions, &mut |region, handle| {
             if region.name == "[vdso]" {

@@ -3,8 +3,7 @@ use std::io;
 use speedy::{Readable, Writable, Context, Reader, Writer};
 
 pub use speedy::Endianness;
-
-use maps::Region;
+use proc_maps::Region;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Readable, Writable)]
 pub struct Inode {

@@ -14,8 +14,8 @@ use std::borrow::Cow;
 use speedy::Endianness;
 use regex::Regex;
 
+use proc_maps::Region;
 use nwind::arch::{self, Architecture, Registers};
-use nwind::maps::Region;
 use nwind::{
     DwarfRegs,
     RangeMap,

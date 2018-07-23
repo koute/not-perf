@@ -16,7 +16,7 @@ use speedy::{Writable, Endianness};
 use libc;
 use num_cpus;
 
-use nwind::maps::{self, Region};
+use proc_maps::{self, Region};
 use nwind::arch::{self, Architecture, Registers};
 use nwind::{
     IAddressSpace,
@@ -44,7 +44,7 @@ pub enum TargetProcess {
 
 fn get_vdso() -> Option< &'static [u8] > {
     let maps_str = read_string_lossy( "/proc/self/maps" ).expect( "cannot read /proc/self/maps" );
-    let maps = maps::parse( &maps_str );
+    let maps = proc_maps::parse( &maps_str );
     for region in &maps {
         if region.is_executable && region.name == "[vdso]" {
             let bytes: &[u8] = unsafe {
@@ -109,7 +109,7 @@ mod tests {
     use env_logger;
 
     use nwind::{arch, RangeMap, IAddressSpace, AddressSpace, Inode, BinaryData};
-    use nwind::maps::Region;
+    use proc_maps::Region;
 
     use quickcheck::{Arbitrary, Gen};
 
@@ -371,7 +371,7 @@ impl PacketWriter {
         })
     }
 
-    fn write_region_map( &mut self, pid: u32, region: &maps::Region ) -> io::Result< () > {
+    fn write_region_map( &mut self, pid: u32, region: &proc_maps::Region ) -> io::Result< () > {
         self.write_packet( Packet::MemoryRegionMap {
             pid,
             range: region.start..region.end,

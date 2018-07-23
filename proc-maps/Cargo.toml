@@ -1,0 +1,6 @@
+[package]
+name = "proc-maps"
+version = "0.1.0"
+authors = ["Jan Bujak <jan.bujak@nokia.com>"]
+
+[dependencies]

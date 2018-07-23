@@ -5,6 +5,7 @@ extern crate speedy;
 extern crate speedy_derive;
 
 extern crate nwind;
+extern crate proc_maps;
 
 mod archive;
 mod stack_reader;

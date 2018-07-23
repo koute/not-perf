@@ -10,7 +10,7 @@ use std::mem;
 use num_cpus;
 use libc;
 
-use nwind::maps;
+use proc_maps;
 
 use utils::read_string_lossy;
 use perf::{Perf, EventRef, Event, CommEvent, Mmap2Event, EventSource};
@@ -175,7 +175,7 @@ impl PerfGroup {
         }
 
         let maps = read_string_lossy( &format!( "/proc/{}/maps", pid ) )?;
-        let maps = maps::parse( &maps );
+        let maps = proc_maps::parse( &maps );
 
         for (tid, name) in threads {
             self.initial_events.push( Event::Comm( CommEvent {
