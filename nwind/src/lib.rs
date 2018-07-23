@@ -48,6 +48,7 @@ mod symbols;
 mod types;
 pub mod utils;
 mod unwind_context;
+mod debug_info_index;
 #[cfg(feature = "local-unwinding")]
 mod local_unwinding;
 mod interner;
@@ -69,6 +70,8 @@ pub use types::{
     UserFrame,
     BinaryId
 };
+
+pub use debug_info_index::DebugInfoIndex;
 
 #[cfg(feature = "local-unwinding")]
 pub use local_unwinding::{LocalAddressSpace, UnwindControl};

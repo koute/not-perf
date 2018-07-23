@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
 use std::sync::Arc;
 use std::ops::{Range, Index};
-use std::path::Path;
 use std::cmp::min;
 use std::fmt;
 use std::error::Error;
@@ -27,7 +26,8 @@ use nwind::{
     LoadHeader,
     BinaryId,
     StringInterner,
-    StringId
+    StringId,
+    DebugInfoIndex
 };
 
 use archive::{Packet, Inode, Bitness, UserFrame, ArchiveReader};
@@ -131,12 +131,12 @@ impl Binary {
         }
 
         if let Some( ref debuglink ) = self.debuglink {
-            if let Some( debug_data ) = debug_info_index.by_filename.get( debuglink ) {
+            if let Some( debug_data ) = debug_info_index.get_by_basename( debuglink ) {
                 debug!( "Found debug symbols for '{}': '{}'", self.path, debug_data.name() );
                 self.debug_data = Some( debug_data.clone() );
             }
         } else {
-            if let Some( debug_data ) = debug_info_index.by_filename.get( &self.basename ) {
+            if let Some( debug_data ) = debug_info_index.get_by_basename( &self.basename ) {
                 debug!( "Found debug symbols for '{}': '{}'", self.path, debug_data.name() );
                 self.debug_data = Some( debug_data.clone() );
             }
@@ -193,65 +193,6 @@ unsafe impl StableIndex for BinaryChunks {}
 
 fn get_basename( path: &str ) -> String {
     path[ path.rfind( "/" ).map( |index| index + 1 ).unwrap_or( 0 ).. ].to_owned()
-}
-
-struct DebugInfoIndex {
-    by_filename: HashMap< String, Arc< BinaryData > >,
-    by_build_id: HashMap< Vec< u8 >, Arc< BinaryData > >
-}
-
-impl DebugInfoIndex {
-    fn new( paths: &[&OsStr] ) -> Self {
-        fn check( path: &Path, by_filename: &mut HashMap< String, Arc< BinaryData > >, by_build_id: &mut HashMap< Vec< u8 >, Arc< BinaryData > > ) {
-            match BinaryData::load_from_fs( path ) {
-                Ok( binary ) => {
-                    let filename = path.file_name().unwrap();
-                    let filename = filename.to_string_lossy().into_owned();
-                    let binary = Arc::new( binary );
-                    by_filename.insert( filename, binary.clone() );
-                    if let Some( build_id ) = binary.build_id() {
-                        by_build_id.insert( build_id.to_owned(), binary.clone() );
-                    }
-                },
-                Err( error ) => {
-                    warn!( "Cannot read debug symbols from {:?}: {}", path, error );
-                    return;
-                }
-            }
-        }
-
-        let mut by_filename = HashMap::new();
-        let mut by_build_id = HashMap::new();
-        for path in paths {
-            let path = Path::new( path );
-            if !path.exists() {
-                continue;
-            }
-
-            if path.is_dir() {
-                let dir = match path.read_dir() {
-                    Ok( dir ) => dir,
-                    Err( error ) => {
-                        warn!( "Cannot read debug symbols from {:?}: {}", path, error );
-                        continue;
-                    }
-                };
-
-                for entry in dir {
-                    if let Ok( entry ) = entry {
-                        check( &entry.path(), &mut by_filename, &mut by_build_id );
-                    }
-                }
-            } else {
-                check( path, &mut by_filename, &mut by_build_id );
-            }
-        }
-
-        DebugInfoIndex {
-            by_filename,
-            by_build_id
-        }
-    }
 }
 
 pub enum CollateFormat {
@@ -330,7 +271,13 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
     let mut machine_bitness = Bitness::B64;
     let mut sample_counter = 0;
 
-    let debug_info_index = DebugInfoIndex::new( &args.debug_symbols );
+    let debug_info_index = {
+        let mut debug_info_index = DebugInfoIndex::new();
+        for path in args.debug_symbols {
+            debug_info_index.add( path );
+        }
+        debug_info_index
+    };
 
     while let Some( packet ) = reader.next() {
         let packet = packet.unwrap();
@@ -399,7 +346,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
 
                 debug!( "New binary: {:?}", binary.path );
                 if let Some( ref debuglink ) = binary.debuglink {
-                    if !debug_info_index.by_filename.contains_key( debuglink ) {
+                    if debug_info_index.get_by_basename( debuglink ).is_none() {
                         warn!( "Missing external debug symbols for '{}': '{}'", binary.path, debuglink );
                     }
                 }
