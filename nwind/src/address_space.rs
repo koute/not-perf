@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::fmt;
 use std::borrow::Cow;
+use std::ops::Deref;
 
 use byteorder::{self, ByteOrder};
 use cpp_demangle;
@@ -124,6 +125,7 @@ impl< A: Architecture > Binary< A > {
     pub fn decode_symbol_while< 'a >( &'a self, address: u64, callback: &mut FnMut( &mut Frame< 'a > ) -> bool ) {
         let relative_address = translate_address( &self.mappings, address );
         let mut frame = Frame::from_address( address, relative_address );
+        frame.library = Some( self.name.as_str().into() );
 
         let mut found = false;
         if let Some( context ) = self.context.as_ref() {
@@ -191,17 +193,7 @@ impl< A: Architecture > Binary< A > {
     }
 
     fn decode_symbol_once( &self, address: u64 ) -> Frame {
-        let mut output = Frame {
-            absolute_address: address,
-            relative_address: address,
-            name: None,
-            demangled_name: None,
-            file: None,
-            line: None,
-            column: None,
-            is_inline: false
-        };
-
+        let mut output = Frame::from_address( address, address );
         self.decode_symbol_while( address, &mut |frame| {
             mem::swap( &mut output, frame );
             false
@@ -394,10 +386,10 @@ impl LoadHandle {
     }
 }
 
-#[derive(Debug)]
 pub struct Frame< 'a > {
     pub absolute_address: u64,
     pub relative_address: u64,
+    pub library: Option< Cow< 'a, str > >,
     pub name: Option< Cow< 'a, str > >,
     pub demangled_name: Option< Cow< 'a, str > >,
     pub file: Option< String >,
@@ -406,12 +398,28 @@ pub struct Frame< 'a > {
     pub is_inline: bool
 }
 
+impl< 'a > fmt::Debug for Frame< 'a > {
+    fn fmt( &self, fmt: &mut fmt::Formatter ) -> Result< (), fmt::Error > {
+        write!(
+            fmt,
+            "0x{:016X}: {:?} in {:?}, {:?}:{:?}:{:?}",
+            self.absolute_address,
+            self.demangled_name.as_ref().or_else( || self.name.as_ref() ).map( |name| name.deref() ),
+            self.library,
+            self.file.as_ref().map( |path| path.deref() ),
+            self.line,
+            self.column
+        )
+    }
+}
+
 impl< 'a > Frame< 'a > {
     #[inline]
     fn from_address( absolute_address: u64, relative_address: u64 ) -> Self {
         Frame {
             absolute_address,
             relative_address,
+            library: None,
             name: None,
             demangled_name: None,
             file: None,
@@ -717,17 +725,7 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
         if let Some( region ) = self.regions.get_value( address ) {
             region.binary.decode_symbol_while( address, callback );
         } else {
-            let mut frame = Frame {
-                absolute_address: address,
-                relative_address: address,
-                name: None,
-                demangled_name: None,
-                file: None,
-                line: None,
-                column: None,
-                is_inline: false
-            };
-
+            let mut frame = Frame::from_address( address, address );
             callback( &mut frame );
         }
     }
@@ -736,16 +734,7 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
         if let Some( region ) = self.regions.get_value( address ) {
             region.binary.decode_symbol_once( address )
         } else {
-            Frame {
-                absolute_address: address,
-                relative_address: address,
-                name: None,
-                demangled_name: None,
-                file: None,
-                line: None,
-                column: None,
-                is_inline: false
-            }
+            Frame::from_address( address, address )
         }
     }
 
