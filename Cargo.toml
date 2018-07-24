@@ -25,8 +25,13 @@ serde = "1"
 serde_json = "1"
 serde_derive = "1"
 
-nwind = { version = "0.1", path = "nwind" }
 proc-maps = { version = "0.1", path = "proc-maps" }
+
+[dependencies.nwind]
+version = "0.1"
+path = "nwind"
+features = ["logging", "addr2line"]
+default-features = false
 
 [dev-dependencies]
 quickcheck = "0.6"

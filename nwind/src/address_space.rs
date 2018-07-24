@@ -8,6 +8,7 @@ use std::ops::Deref;
 
 use byteorder::{self, ByteOrder};
 use cpp_demangle;
+#[cfg(feature = "addr2line")]
 use addr2line;
 use gimli;
 
@@ -21,6 +22,62 @@ use binary::{BinaryData, LoadHeader, BinaryDataReader};
 use symbols::Symbols;
 use frame_descriptions::{FrameDescriptions, ContextCache, UnwindInfo, AddressMapping};
 use types::{Bitness, Inode, UserFrame, Endianness, BinaryId};
+
+#[cfg(not(feature = "addr2line"))]
+mod addr2line {
+    use std::marker::PhantomData;
+    use std::borrow::Cow;
+    use gimli;
+
+    pub struct Context< T >( PhantomData< T > );
+    pub struct Frame< T > {
+        pub location: Option< Location >,
+        pub function: Option< Function >,
+        phantom: PhantomData< T >
+    }
+    pub struct Location {
+        pub file: Option< String >,
+        pub line: Option< u64 >,
+        pub column: Option< u64 >
+    }
+    pub struct Function {
+    }
+
+    impl Function {
+        pub fn raw_name( &self ) -> Result< Cow< str >, () > {
+            Err(())
+        }
+
+        pub fn demangle( &self ) -> Result< Cow< str >, () > {
+            Err(())
+        }
+    }
+
+    pub struct FrameIter< T >( PhantomData< T > );
+
+    impl< T > FrameIter< T > {
+        pub fn next( &mut self ) -> Result< Option< Frame< T > >, () > {
+            Err(())
+        }
+    }
+
+    impl< T: gimli::Reader > Context< T > {
+        pub fn find_frames( &self, _: u64 ) -> Result< FrameIter< T >, () > {
+            Err(())
+        }
+
+        pub fn from_sections(
+            _: gimli::DebugAbbrev< T >,
+            _: gimli::DebugInfo< T >,
+            _: gimli::DebugLine< T >,
+            _: gimli::DebugRanges< T >,
+            _: gimli::DebugRngLists< T >,
+            _: gimli::DebugStr< T >
+        ) -> Result< Self, () > {
+            Err(())
+        }
+    }
+}
 
 fn translate_address( mappings: &[AddressMapping], address: u64 ) -> u64 {
     if let Some( mapping ) = mappings.iter().find( |mapping| address >= mapping.actual_address && address < (mapping.actual_address + mapping.size) ) {
