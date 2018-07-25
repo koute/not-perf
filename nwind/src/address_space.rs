@@ -5,12 +5,14 @@ use std::ops::Range;
 use std::fmt;
 use std::borrow::Cow;
 use std::ops::Deref;
+use std::sync::Mutex;
 
 use byteorder::{self, ByteOrder};
 use cpp_demangle;
 #[cfg(feature = "addr2line")]
 use addr2line;
 use gimli;
+use lru::LruCache;
 
 use proc_maps::Region;
 
@@ -102,7 +104,8 @@ pub struct Binary< A: Architecture > {
     debug_data: Option< Arc< BinaryData > >,
     symbols: Vec< Symbols >,
     frame_descriptions: Option< FrameDescriptions< A::Endianity > >,
-    context: Option< addr2line::Context< BinaryDataReader > >
+    context: Option< addr2line::Context< BinaryDataReader > >,
+    symbol_decode_cache: Option< Mutex< SymbolDecodeCache > >
 }
 
 pub type BinaryHandle< A > = Arc< Binary< A > >;
@@ -149,6 +152,26 @@ fn process_frame< R: gimli::Reader >( raw_frame: addr2line::Frame< R >, frame: &
         if let Ok( demangled_name ) = function.demangle() {
             frame.demangled_name = Some( demangled_name.into_owned().into() );
         }
+    }
+}
+
+struct SymbolDecodeCache {
+    cache: LruCache< u64, (String, Option< String >) >
+}
+
+impl SymbolDecodeCache {
+    pub fn new() -> Self {
+        SymbolDecodeCache {
+            cache: LruCache::new( 2000 )
+        }
+    }
+
+    pub fn get( &mut self, address: u64 ) -> Option< (&str, Option< &str >) > {
+        self.cache.get( &address ).map( |&(ref raw_name, ref name)| (raw_name.as_str(), name.as_ref().map( |name| name.as_str() )) )
+    }
+
+    pub fn put( &mut self, address: u64, raw_name: String, name: Option< String > ) {
+        self.cache.put( address, (raw_name, name) );
     }
 }
 
@@ -232,6 +255,13 @@ impl< A: Architecture > Binary< A > {
     }
 
     fn resolve_symbol( &self, relative_address: u64 ) -> Option< (Cow< str >, Option< Cow< str > >) > {
+        if let Some( symbol_decode_cache ) = self.symbol_decode_cache.as_ref() {
+            let mut cache = symbol_decode_cache.lock().unwrap();
+            if let Some( (name, raw_name) ) = cache.get( relative_address ) {
+                return Some( (name.to_owned().into(), raw_name.map( |raw_name| raw_name.to_owned().into() )) );
+            }
+        }
+
         for symbols in &self.symbols {
             if let Some( (_, symbol) ) = symbols.get_symbol( relative_address ) {
                 let demangled_name =
@@ -239,6 +269,11 @@ impl< A: Architecture > Binary< A > {
                         .and_then( |symbol| {
                             symbol.demangle( &cpp_demangle::DemangleOptions { no_params: false } ).ok()
                     });
+
+                if let Some( symbol_decode_cache ) = self.symbol_decode_cache.as_ref() {
+                    let mut cache = symbol_decode_cache.lock().unwrap();
+                    cache.put( relative_address, symbol.into(), demangled_name.clone() );
+                }
 
                 let name = symbol.into();
                 let demangled_name = demangled_name.map( |symbol| symbol.into() );
@@ -711,7 +746,8 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
                 mappings: data.mappings,
                 symbols,
                 frame_descriptions,
-                context
+                context,
+                symbol_decode_cache: if data.load_symbols { Some( Mutex::new( SymbolDecodeCache::new() ) ) } else { None }
             });
 
             for (region, is_new) in data.regions {
