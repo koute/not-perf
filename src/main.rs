@@ -2,10 +2,6 @@
 extern crate sc;
 extern crate libc;
 extern crate byteorder;
-extern crate gimli;
-extern crate goblin;
-extern crate scroll;
-extern crate memmap;
 extern crate regex;
 extern crate clap;
 extern crate env_logger;
