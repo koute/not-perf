@@ -121,25 +121,26 @@ struct Binary {
     debug_data: Option< Arc< BinaryData > >,
     load_headers: Vec< LoadHeader >,
     build_id: Option< Vec< u8 > >,
-    debuglink: Option< String >
+    debuglink: Option< Vec< u8 > >
 }
 
 impl Binary {
+    fn debuglink( &self ) -> Option< &[u8] > {
+        self.debuglink.as_ref().map( |debuglink| debuglink.as_slice() )
+    }
+
+    fn build_id( &self ) -> Option< &[u8] > {
+        self.build_id.as_ref().map( |build_id| build_id.as_slice() )
+    }
+
     fn load_debug_info( &mut self, debug_info_index: &DebugInfoIndex ) {
         if self.debug_data.is_some() {
             return;
         }
 
-        if let Some( ref debuglink ) = self.debuglink {
-            if let Some( debug_data ) = debug_info_index.get_by_basename( debuglink ) {
-                debug!( "Found debug symbols for '{}': '{}'", self.path, debug_data.name() );
-                self.debug_data = Some( debug_data.clone() );
-            }
-        } else {
-            if let Some( debug_data ) = debug_info_index.get_by_basename( &self.basename ) {
-                debug!( "Found debug symbols for '{}': '{}'", self.path, debug_data.name() );
-                self.debug_data = Some( debug_data.clone() );
-            }
+        if let Some( debug_data ) = debug_info_index.get( &self.basename, self.debuglink(), self.build_id() ) {
+            debug!( "Found debug symbols for '{}': '{}'", self.path, debug_data.name() );
+            self.debug_data = Some( debug_data.clone() );
         }
     }
 }
@@ -314,8 +315,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
             },
             Packet::BinaryInfo { inode, symbol_table_count, path, debuglink, load_headers, .. } => {
                 let debuglink_length = debuglink.iter().position( |&byte| byte == 0 ).unwrap_or( debuglink.len() );
-                let debuglink = &debuglink[ 0..debuglink_length ];
-                let debuglink = String::from_utf8_lossy( &debuglink ).into_owned();
+                let debuglink = debuglink[ 0..debuglink_length ].to_owned();
                 let debuglink = if debuglink.is_empty() {
                     None
                 } else {
@@ -346,8 +346,8 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
 
                 debug!( "New binary: {:?}", binary.path );
                 if let Some( ref debuglink ) = binary.debuglink {
-                    if debug_info_index.get_by_basename( debuglink ).is_none() {
-                        warn!( "Missing external debug symbols for '{}': '{}'", binary.path, debuglink );
+                    if debug_info_index.get( &binary.basename, binary.debuglink(), binary.build_id() ).is_none() {
+                        warn!( "Missing external debug symbols for '{}': '{}'", binary.path, String::from_utf8_lossy( debuglink ) );
                     }
                 }
 

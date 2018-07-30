@@ -399,6 +399,17 @@ impl BinaryData {
     }
 
     #[inline]
+    pub fn debuglink( &self ) -> Option< &[u8] > {
+        let debuglink = &self.as_bytes()[ self.gnu_debuglink_range.clone()? ];
+        let debuglink_length = debuglink.iter().position( |&byte| byte == 0 ).unwrap_or( debuglink.len() );
+        if debuglink_length == 0 {
+            return None;
+        }
+
+        Some( &debuglink[ 0..debuglink_length ] )
+    }
+
+    #[inline]
     fn subslice( data: Arc< BinaryData >, range: Range< usize > ) -> BinaryDataSlice {
         BinaryDataSlice {
             data,
