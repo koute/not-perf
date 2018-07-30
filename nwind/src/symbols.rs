@@ -28,7 +28,7 @@ impl Drop for Symbols {
     }
 }
 
-fn load_symbols< 'a >( architecture: &str, bitness: Bitness, endianness: Endianness, sym_bytes: &[u8], strtab_bytes: &'a [u8], symbols: &mut Vec< (Range< u64 >, &'a str) > ) {
+fn load_symbols< 'a, F: FnMut( Range< u64 >, &'a str ) >( architecture: &str, bitness: Bitness, endianness: Endianness, sym_bytes: &[u8], strtab_bytes: &'a [u8], mut callback: F ) {
     macro_rules! select_branch {
         (if ($condition: expr) { $true_case:expr } else { $false_case:expr } => |$name:ident| $callback:expr) => {
             if $condition {
@@ -70,7 +70,7 @@ fn load_symbols< 'a >( architecture: &str, bitness: Bitness, endianness: Endiann
                     }
 
                     let end = start + sym.st_size as u64;
-                    symbols.push( ((start..end), name) );
+                    callback( start..end, name );
                 }
             }
         }
@@ -88,6 +88,20 @@ impl Symbols {
             &**data,
             data
         )
+    }
+
+    pub fn each_from_binary_data< F: FnMut( Range< u64 >, &str ) >(
+        data: &BinaryData,
+        mut callback: F
+    ) {
+        for symbol_table in data.symbol_tables() {
+            let sym_bytes = &data[ symbol_table.range.clone() ];
+            let strtab_bytes = &data[ symbol_table.strtab_range.clone() ];
+
+            load_symbols( data.architecture(), data.bitness(), data.endianness(), sym_bytes, strtab_bytes, |range, name| {
+                callback( range, name );
+            });
+        }
     }
 
     pub fn load< T, S >(
@@ -113,7 +127,9 @@ impl Symbols {
             let strtab_bytes = &strtab_owner[ symbol_table.strtab_range.clone() ];
 
             let count_before = symbols.len();
-            load_symbols( architecture, bitness, endianness, sym_bytes, strtab_bytes, &mut symbols );
+            load_symbols( architecture, bitness, endianness, sym_bytes, strtab_bytes, |range, name| {
+                symbols.push( (range, name) );
+            });
 
             let count = symbols.len() - count_before;
             if symbol_table.is_dynamic {
