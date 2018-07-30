@@ -234,6 +234,7 @@ impl< A: Architecture > Binary< A > {
 
                         if let Some( raw_frame ) = next_raw_frame {
                             process_frame( raw_frame, &mut frame );
+                            frame.library = Some( self.name.as_str().into() );
                         } else {
                             break;
                         }
