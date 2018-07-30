@@ -635,6 +635,14 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
                         handle.mappings = binary_data.load_headers().into();
                     }
 
+                    if let Some( binary ) = handle.binary.as_ref() {
+                        debug!( "Got binary for '{}' from '{}'", region.name, binary.name() );
+                    }
+
+                    if let Some( debug_binary ) = handle.debug_binary.as_ref() {
+                        debug!( "Got debug binary for '{}' from '{}'", region.name, debug_binary.name() );
+                    }
+
                     new_binary_map.insert( id.clone(), Data {
                         name: region.name.clone(),
                         binary_data: handle.binary,
@@ -711,7 +719,7 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
                     }
 
                     if context.is_none() {
-                        debug!( "Creating addr2line context for '{}'...", data.name );
+                        debug!( "Creating addr2line context for '{}' from '{}'...", data.name, binary_data.name() );
                         let ctx = addr2line::Context::from_sections(
                             BinaryData::get_section_or_empty( &binary_data ),
                             BinaryData::get_section_or_empty( &binary_data ),
