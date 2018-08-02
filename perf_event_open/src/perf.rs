@@ -15,7 +15,7 @@ use libc::{self, pid_t, c_void};
 use byteorder::{ReadBytesExt, NativeEndian};
 use parking_lot::Mutex;
 
-use perf_sys::*;
+use sys::*;
 use utils::{HexValue, HexSlice};
 use raw_data::{RawData, RawRegs};
 

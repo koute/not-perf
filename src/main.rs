@@ -1,7 +1,4 @@
-#[macro_use]
-extern crate sc;
 extern crate libc;
-extern crate byteorder;
 extern crate regex;
 extern crate clap;
 extern crate env_logger;
@@ -30,13 +27,12 @@ extern crate quickcheck;
 
 extern crate nwind;
 extern crate proc_maps;
+extern crate perf_event_open;
 
 mod utils;
 
 mod raw_data;
-mod perf;
 mod perf_group;
-mod perf_sys;
 mod perf_arch;
 mod archive;
 mod execution_queue;
@@ -270,7 +266,7 @@ fn main_impl() -> Result< (), Box< Error >  > {
             }
         }
 
-        use perf::EventSource;
+        use perf_event_open::EventSource;
 
         let event_source = match matches.value_of( "event-source" ).unwrap() {
             "hw_cpu_cycles" => EventSource::HwCpuCycles,

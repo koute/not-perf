@@ -4,10 +4,9 @@ extern crate speedy;
 #[macro_use]
 extern crate speedy_derive;
 
-extern crate byteorder;
-
 extern crate nwind;
 extern crate proc_maps;
+extern crate perf_event_open;
 
 mod archive;
 mod stack_reader;

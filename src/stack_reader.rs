@@ -1,7 +1,7 @@
 use std::mem;
 
 use archive::Endianness;
-use raw_data::RawData;
+use perf_event_open::RawData;
 use nwind::{Primitive, BufferReader};
 
 pub struct StackReader< 'a > {

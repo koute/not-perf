@@ -27,7 +27,7 @@ use nwind::{
     BinaryId
 };
 
-use perf::{Event, CommEvent, Mmap2Event, EventSource};
+use perf_event_open::{Event, CommEvent, Mmap2Event, EventSource};
 use perf_group::PerfGroup;
 use perf_arch;
 use utils::{SigintHandler, read_string_lossy, get_major, get_minor, get_ms};

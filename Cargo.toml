@@ -4,9 +4,7 @@ version = "0.1.0"
 authors = ["Jan Bujak <jan.bujak@nokia.com>"]
 
 [dependencies]
-sc = "0.2"
 libc = "0.2"
-byteorder = "1"
 regex = "0.2"
 lazy_static = "1"
 clap = "2"
@@ -22,6 +20,7 @@ serde_json = "1"
 serde_derive = "1"
 
 proc-maps = { version = "0.1", path = "proc-maps" }
+perf_event_open = { version = "0.1", path = "perf_event_open" }
 
 [dependencies.nwind]
 version = "0.1"
@@ -41,7 +40,7 @@ panic = "abort"
 default = []
 
 [workspace]
-members = [".", "nwind", "proc-maps"]
+members = [".", "nwind", "proc-maps", "perf_event_open"]
 
 [[bench]]
 name = "unwinding"

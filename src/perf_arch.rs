@@ -41,7 +41,7 @@ macro_rules! define_regs {
 
         #[allow(dead_code)]
         #[allow(unused_assignments)]
-        pub fn into_dwarf_regs( raw_regs: &::raw_data::RawRegs, regs: &mut ::nwind::DwarfRegs ) {
+        pub fn into_dwarf_regs( raw_regs: &::perf_event_open::RawRegs, regs: &mut ::nwind::DwarfRegs ) {
             use nwind::arch::Registers;
 
             let mut index = 0;
@@ -66,7 +66,7 @@ macro_rules! define_regs {
 }
 
 pub mod amd64 {
-    use perf_sys::*;
+    use perf_event_open::sys::*;
     use nwind::arch::amd64::dwarf::*;
 
     fn validate( register: u16, value: u64 ) -> bool {
@@ -109,7 +109,7 @@ pub mod amd64 {
 }
 
 pub mod mips64 {
-    use perf_sys::*;
+    use perf_event_open::sys::*;
     use nwind::arch::mips64::dwarf::*;
 
     fn validate( _register: u16, _value: u64 ) -> bool { return true; }
@@ -149,7 +149,7 @@ pub mod mips64 {
 }
 
 pub mod arm {
-    use perf_sys::*;
+    use perf_event_open::sys::*;
     use nwind::arch::arm::dwarf::*;
 
     fn validate( _register: u16, _value: u64 ) -> bool { return true; }

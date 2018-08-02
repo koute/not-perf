@@ -1,0 +1,11 @@
+[package]
+name = "perf_event_open"
+version = "0.1.0"
+authors = ["Jan Bujak <jan.bujak@nokia.com>"]
+
+[dependencies]
+sc = "0.2"
+libc = "0.2"
+byteorder = "1"
+parking_lot = "0.5"
+log = "0.4"
