@@ -546,249 +546,258 @@ pub struct AddressSpace< A: Architecture > {
     panic_on_partial_backtrace: bool
 }
 
-impl< A: Architecture > IAddressSpace for AddressSpace< A > {
-    fn reload( &mut self, regions: Vec< Region >, try_load: &mut FnMut( &Region, &mut LoadHandle ) ) -> Reloaded {
-        debug!( "Reloading..." );
+fn reload< A: Architecture >(
+    current_binary_map: &mut HashMap< BinaryId, BinaryHandle< A > >,
+    current_regions: &mut RangeMap< BinaryRegion< A > >,
+    regions: Vec< Region >,
+    try_load: &mut FnMut( &Region, &mut LoadHandle )
+) -> Reloaded {
+    debug!( "Reloading..." );
 
-        struct Data< E: Endianity > {
-            name: String,
-            binary_data: Option< Arc< BinaryData > >,
-            debug_binary_data: Option< Arc< BinaryData > >,
-            addresses: BinaryAddresses,
-            load_headers: Vec< LoadHeader >,
-            mappings: Vec< AddressMapping >,
-            symbols: Vec< Symbols >,
-            frame_descriptions: Option< FrameDescriptions< E > >,
-            regions: Vec< (Region, bool) >,
-            load_symbols: bool,
-            load_frame_descriptions: bool,
-            is_old: bool,
-            context: Option< addr2line::Context< BinaryDataReader > >
+    struct Data< E: Endianity > {
+        name: String,
+        binary_data: Option< Arc< BinaryData > >,
+        debug_binary_data: Option< Arc< BinaryData > >,
+        addresses: BinaryAddresses,
+        load_headers: Vec< LoadHeader >,
+        mappings: Vec< AddressMapping >,
+        symbols: Vec< Symbols >,
+        frame_descriptions: Option< FrameDescriptions< E > >,
+        regions: Vec< (Region, bool) >,
+        load_symbols: bool,
+        load_frame_descriptions: bool,
+        is_old: bool,
+        context: Option< addr2line::Context< BinaryDataReader > >
+    }
+
+    let mut reloaded = Reloaded::default();
+
+    let mut old_binary_map = HashMap::new();
+    mem::swap( &mut old_binary_map, current_binary_map );
+
+    let mut old_region_map = RangeMap::new();
+    mem::swap( &mut old_region_map, current_regions );
+
+    let mut old_regions = HashSet::new();
+    for (_, region) in old_region_map {
+        old_regions.insert( region.memory_region );
+    }
+    let old_region_count = old_regions.len();
+
+    let mut new_binary_map = HashMap::new();
+    let mut tried_to_load = HashSet::new();
+    for region in regions {
+        if region.is_shared || region.name.is_empty() || (region.inode == 0 && region.name != "[vdso]") {
+            continue;
         }
 
-        let mut reloaded = Reloaded::default();
+        debug!( "Adding memory region at 0x{:016X}-0x{:016X} for '{}' with offset 0x{:08X}", region.start, region.end, region.name, region.file_offset );
+        let id: BinaryId = (&region).into();
 
-        let mut old_binary_map = HashMap::new();
-        mem::swap( &mut old_binary_map, &mut self.binary_map );
-
-        let mut old_region_map = RangeMap::new();
-        mem::swap( &mut old_region_map, &mut self.regions );
-
-        let mut old_regions = HashSet::new();
-        for (_, region) in old_region_map {
-            old_regions.insert( region.memory_region );
-        }
-        let old_region_count = old_regions.len();
-
-        let mut new_binary_map = HashMap::new();
-        let mut tried_to_load = HashSet::new();
-        for region in regions {
-            if region.is_shared || region.name.is_empty() || (region.inode == 0 && region.name != "[vdso]") {
-                continue;
-            }
-
-            debug!( "Adding memory region at 0x{:016X}-0x{:016X} for '{}' with offset 0x{:08X}", region.start, region.end, region.name, region.file_offset );
-            let id: BinaryId = (&region).into();
-
-            if !new_binary_map.contains_key( &id ) {
-                if let Some( binary ) = old_binary_map.remove( &id ) {
-                    let (binary_data, debug_binary_data, symbols, frame_descriptions, load_headers, context) = match Arc::try_unwrap( binary ) {
-                        Ok( binary ) => (binary.data, binary.debug_data, binary.symbols, binary.frame_descriptions, binary.load_headers, binary.context),
-                        Err( _ ) => {
-                            unimplemented!();
-                        }
-                    };
-
-                    new_binary_map.insert( id.clone(), Data {
-                        name: region.name.clone(),
-                        binary_data,
-                        debug_binary_data,
-                        addresses: BinaryAddresses::default(),
-                        load_headers,
-                        mappings: Default::default(),
-                        symbols,
-                        frame_descriptions,
-                        regions: Vec::new(),
-                        load_symbols: false,
-                        load_frame_descriptions: false,
-                        is_old: true,
-                        context
-                    });
-                } else if !tried_to_load.contains( &id ) {
-                    tried_to_load.insert( id.clone() );
-
-                    let mut handle = LoadHandle {
-                        binary: None,
-                        debug_binary: None,
-                        symbols: Vec::new(),
-                        mappings: Vec::new(),
-                        load_frame_descriptions: true,
-                        load_symbols: true
-                    };
-
-                    try_load( &region, &mut handle );
-                    if handle.is_empty() {
-                        continue;
+        if !new_binary_map.contains_key( &id ) {
+            if let Some( binary ) = old_binary_map.remove( &id ) {
+                let (binary_data, debug_binary_data, symbols, frame_descriptions, load_headers, context) = match Arc::try_unwrap( binary ) {
+                    Ok( binary ) => (binary.data, binary.debug_data, binary.symbols, binary.frame_descriptions, binary.load_headers, binary.context),
+                    Err( _ ) => {
+                        unimplemented!();
                     }
+                };
 
-                    if let Some( binary_data ) = handle.binary.as_ref() {
-                        handle.mappings = binary_data.load_headers().into();
-                    }
+                new_binary_map.insert( id.clone(), Data {
+                    name: region.name.clone(),
+                    binary_data,
+                    debug_binary_data,
+                    addresses: BinaryAddresses::default(),
+                    load_headers,
+                    mappings: Default::default(),
+                    symbols,
+                    frame_descriptions,
+                    regions: Vec::new(),
+                    load_symbols: false,
+                    load_frame_descriptions: false,
+                    is_old: true,
+                    context
+                });
+            } else if !tried_to_load.contains( &id ) {
+                tried_to_load.insert( id.clone() );
 
-                    if let Some( binary ) = handle.binary.as_ref() {
-                        debug!( "Got binary for '{}' from '{}'", region.name, binary.name() );
-                    }
+                let mut handle = LoadHandle {
+                    binary: None,
+                    debug_binary: None,
+                    symbols: Vec::new(),
+                    mappings: Vec::new(),
+                    load_frame_descriptions: true,
+                    load_symbols: true
+                };
 
-                    if let Some( debug_binary ) = handle.debug_binary.as_ref() {
-                        debug!( "Got debug binary for '{}' from '{}'", region.name, debug_binary.name() );
-                    }
-
-                    new_binary_map.insert( id.clone(), Data {
-                        name: region.name.clone(),
-                        binary_data: handle.binary,
-                        debug_binary_data: handle.debug_binary,
-                        addresses: BinaryAddresses::default(),
-                        load_headers: handle.mappings,
-                        mappings: Default::default(),
-                        symbols: handle.symbols,
-                        frame_descriptions: None,
-                        regions: Vec::new(),
-                        load_symbols: handle.load_symbols,
-                        load_frame_descriptions: handle.load_frame_descriptions,
-                        is_old: false,
-                        context: None
-                    });
-                } else {
+                try_load( &region, &mut handle );
+                if handle.is_empty() {
                     continue;
                 }
-            }
 
-            let is_new = !old_regions.remove( &region );
-            let mut data = new_binary_map.get_mut( &id ).unwrap();
-
-            if region.file_offset == 0 {
-                if let Some( load_header ) = data.load_headers.iter().find( |header| header.file_offset == 0 ) {
-                    let base_address = region.start.wrapping_sub( load_header.address );
-                    debug!( "'{}': found base address at 0x{:016X}", region.name, base_address );
+                if let Some( binary_data ) = handle.binary.as_ref() {
+                    handle.mappings = binary_data.load_headers().into();
                 }
-            }
 
-            if let Some( header ) = data.load_headers.iter().find( |header| header.file_offset == region.file_offset ) {
-                data.mappings.push( AddressMapping {
-                    declared_address: header.address,
-                    actual_address: region.start,
-                    file_offset: header.file_offset,
-                    size: region.end - region.start
+                if let Some( binary ) = handle.binary.as_ref() {
+                    debug!( "Got binary for '{}' from '{}'", region.name, binary.name() );
+                }
+
+                if let Some( debug_binary ) = handle.debug_binary.as_ref() {
+                    debug!( "Got debug binary for '{}' from '{}'", region.name, debug_binary.name() );
+                }
+
+                new_binary_map.insert( id.clone(), Data {
+                    name: region.name.clone(),
+                    binary_data: handle.binary,
+                    debug_binary_data: handle.debug_binary,
+                    addresses: BinaryAddresses::default(),
+                    load_headers: handle.mappings,
+                    mappings: Default::default(),
+                    symbols: handle.symbols,
+                    frame_descriptions: None,
+                    regions: Vec::new(),
+                    load_symbols: handle.load_symbols,
+                    load_frame_descriptions: handle.load_frame_descriptions,
+                    is_old: false,
+                    context: None
                 });
+            } else {
+                continue;
             }
+        }
 
-            macro_rules! section {
-                ($name:expr, $section_range_getter:ident, $output_addr:expr) => {
-                    if $output_addr.is_none() {
-                        if let Some( binary_data ) = data.binary_data.as_ref() {
-                            if let Some( section_range ) = binary_data.$section_range_getter() {
-                                if let Some( addr ) = calculate_virtual_addr( &region, section_range.start as u64 ) {
-                                    debug!( "'{}': found {} section at 0x{:016X} (+0x{:08X})", region.name, $name, addr, addr - region.start );
-                                    *$output_addr = Some( addr );
-                                }
+        let is_new = !old_regions.remove( &region );
+        let mut data = new_binary_map.get_mut( &id ).unwrap();
+
+        if region.file_offset == 0 {
+            if let Some( load_header ) = data.load_headers.iter().find( |header| header.file_offset == 0 ) {
+                let base_address = region.start.wrapping_sub( load_header.address );
+                debug!( "'{}': found base address at 0x{:016X}", region.name, base_address );
+            }
+        }
+
+        if let Some( header ) = data.load_headers.iter().find( |header| header.file_offset == region.file_offset ) {
+            data.mappings.push( AddressMapping {
+                declared_address: header.address,
+                actual_address: region.start,
+                file_offset: header.file_offset,
+                size: region.end - region.start
+            });
+        }
+
+        macro_rules! section {
+            ($name:expr, $section_range_getter:ident, $output_addr:expr) => {
+                if $output_addr.is_none() {
+                    if let Some( binary_data ) = data.binary_data.as_ref() {
+                        if let Some( section_range ) = binary_data.$section_range_getter() {
+                            if let Some( addr ) = calculate_virtual_addr( &region, section_range.start as u64 ) {
+                                debug!( "'{}': found {} section at 0x{:016X} (+0x{:08X})", region.name, $name, addr, addr - region.start );
+                                *$output_addr = Some( addr );
                             }
                         }
                     }
                 }
             }
-
-            section!( ".ARM.exidx", arm_exidx_range, &mut data.addresses.arm_exidx );
-            section!( ".ARM.extab", arm_extab_range, &mut data.addresses.arm_extab );
-
-            data.regions.push( (region, is_new) );
         }
 
-        let mut new_regions = Vec::new();
-        for (id, data) in new_binary_map {
-            if !data.is_old {
-                reloaded.binaries_mapped.push( (id.to_inode(), data.name.clone(), data.binary_data.clone()) );
-            }
+        section!( ".ARM.exidx", arm_exidx_range, &mut data.addresses.arm_exidx );
+        section!( ".ARM.extab", arm_extab_range, &mut data.addresses.arm_extab );
 
-            let mut symbols = data.symbols;
-            let mut context = data.context;
-            if data.load_symbols {
-                let binary_data = data.debug_binary_data.as_ref().or( data.binary_data.as_ref() );
-                if let Some( binary_data ) = binary_data {
-                    if symbols.is_empty() {
-                        symbols.push( Symbols::load_from_binary_data( &binary_data ) );
-                    }
+        data.regions.push( (region, is_new) );
+    }
 
-                    if context.is_none() {
-                        debug!( "Creating addr2line context for '{}' from '{}'...", data.name, binary_data.name() );
-                        let ctx = addr2line::Context::from_sections(
-                            BinaryData::get_section_or_empty( &binary_data ),
-                            BinaryData::get_section_or_empty( &binary_data ),
-                            BinaryData::get_section_or_empty( &binary_data ),
-                            BinaryData::get_section_or_empty( &binary_data ),
-                            BinaryData::get_section_or_empty( &binary_data ),
-                            BinaryData::get_section_or_empty( &binary_data )
-                        );
+    let mut new_regions = Vec::new();
+    for (id, data) in new_binary_map {
+        if !data.is_old {
+            reloaded.binaries_mapped.push( (id.to_inode(), data.name.clone(), data.binary_data.clone()) );
+        }
 
-                        context = ctx.ok();
-                    }
+        let mut symbols = data.symbols;
+        let mut context = data.context;
+        if data.load_symbols {
+            let binary_data = data.debug_binary_data.as_ref().or( data.binary_data.as_ref() );
+            if let Some( binary_data ) = binary_data {
+                if symbols.is_empty() {
+                    symbols.push( Symbols::load_from_binary_data( &binary_data ) );
+                }
+
+                if context.is_none() {
+                    debug!( "Creating addr2line context for '{}' from '{}'...", data.name, binary_data.name() );
+                    let ctx = addr2line::Context::from_sections(
+                        BinaryData::get_section_or_empty( &binary_data ),
+                        BinaryData::get_section_or_empty( &binary_data ),
+                        BinaryData::get_section_or_empty( &binary_data ),
+                        BinaryData::get_section_or_empty( &binary_data ),
+                        BinaryData::get_section_or_empty( &binary_data ),
+                        BinaryData::get_section_or_empty( &binary_data )
+                    );
+
+                    context = ctx.ok();
                 }
             }
+        }
 
-            let frame_descriptions = match data.frame_descriptions {
-                Some( frame_descriptions ) => Some( frame_descriptions ),
-                None if data.load_frame_descriptions => {
-                    if let Some( binary_data ) = data.binary_data.as_ref() {
-                        FrameDescriptions::load( &binary_data )
-                    } else {
-                        None
-                    }
-                },
-                None => None
+        let frame_descriptions = match data.frame_descriptions {
+            Some( frame_descriptions ) => Some( frame_descriptions ),
+            None if data.load_frame_descriptions => {
+                if let Some( binary_data ) = data.binary_data.as_ref() {
+                    FrameDescriptions::load( &binary_data )
+                } else {
+                    None
+                }
+            },
+            None => None
+        };
+
+        let binary = Arc::new( Binary {
+            name: data.name,
+            data: data.binary_data,
+            debug_data: data.debug_binary_data,
+            virtual_addresses: data.addresses,
+            load_headers: data.load_headers,
+            mappings: data.mappings,
+            symbols,
+            frame_descriptions,
+            context,
+            symbol_decode_cache: if data.load_symbols { Some( Mutex::new( SymbolDecodeCache::new() ) ) } else { None }
+        });
+
+        for (region, is_new) in data.regions {
+            let start = region.start;
+            let end = region.end;
+            let binary_region = BinaryRegion {
+                binary: binary.clone(),
+                memory_region: region.clone()
             };
 
-            let binary = Arc::new( Binary {
-                name: data.name,
-                data: data.binary_data,
-                debug_data: data.debug_binary_data,
-                virtual_addresses: data.addresses,
-                load_headers: data.load_headers,
-                mappings: data.mappings,
-                symbols,
-                frame_descriptions,
-                context,
-                symbol_decode_cache: if data.load_symbols { Some( Mutex::new( SymbolDecodeCache::new() ) ) } else { None }
-            });
-
-            for (region, is_new) in data.regions {
-                let start = region.start;
-                let end = region.end;
-                let binary_region = BinaryRegion {
-                    binary: binary.clone(),
-                    memory_region: region.clone()
-                };
-
-                if is_new {
-                    reloaded.regions_mapped.push( region );
-                }
-
-                new_regions.push( ((start..end), binary_region) );
+            if is_new {
+                reloaded.regions_mapped.push( region );
             }
 
-            self.binary_map.insert( id, binary );
+            new_regions.push( ((start..end), binary_region) );
         }
 
-        let new_region_count = new_regions.len();
-        self.regions = RangeMap::from_vec( new_regions );
-        assert_eq!( new_region_count, self.regions.len() );
+        current_binary_map.insert( id, binary );
+    }
 
-        for (id, binary) in old_binary_map {
-            reloaded.binaries_unmapped.push( (id.to_inode(), binary.name.clone()) );
-        }
+    let new_region_count = new_regions.len();
+    *current_regions = RangeMap::from_vec( new_regions );
+    assert_eq!( new_region_count, current_regions.len() );
 
-        reloaded.regions_unmapped.extend( old_regions.into_iter().map( |region| region.start..region.end ) );
+    for (id, binary) in old_binary_map {
+        reloaded.binaries_unmapped.push( (id.to_inode(), binary.name.clone()) );
+    }
 
-        assert_eq!( new_region_count as i32 - old_region_count as i32, reloaded.regions_mapped.len() as i32 - reloaded.regions_unmapped.len() as i32 );
-        reloaded
+    reloaded.regions_unmapped.extend( old_regions.into_iter().map( |region| region.start..region.end ) );
+
+    assert_eq!( new_region_count as i32 - old_region_count as i32, reloaded.regions_mapped.len() as i32 - reloaded.regions_unmapped.len() as i32 );
+    reloaded
+}
+
+impl< A: Architecture > IAddressSpace for AddressSpace< A > {
+    fn reload( &mut self, regions: Vec< Region >, try_load: &mut FnMut( &Region, &mut LoadHandle ) ) -> Reloaded {
+        reload( &mut self.binary_map, &mut self.regions, regions, try_load )
     }
 
     fn unwind( &mut self, dwarf_regs: &mut DwarfRegs, stack: &BufferReader, output: &mut Vec< UserFrame > ) {
