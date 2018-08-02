@@ -15,10 +15,9 @@ use libc::{self, pid_t, c_void};
 use byteorder::{ReadBytesExt, NativeEndian};
 use parking_lot::Mutex;
 
-use perf_arch;
 use perf_sys::*;
 use utils::{HexValue, HexSlice};
-use raw_data::RawData;
+use raw_data::{RawData, RawRegs};
 
 #[derive(Debug)]
 #[repr(C)]
@@ -74,7 +73,7 @@ pub struct SampleEvent< 'a > {
     pub tid: u32,
     pub cpu: u32,
     pub period: u64,
-    pub regs: Option< perf_arch::native::Regs >,
+    pub regs: Option< RawRegs< 'a > >,
     pub dynamic_stack_size: u64,
     pub stack: RawData< 'a >,
     pub callchain: Vec< u64 >
@@ -191,7 +190,7 @@ impl< 'a > fmt::Debug for RawEvent< 'a > {
 }
 
 impl< 'a > RawEvent< 'a > {
-    pub fn parse( self ) -> Event< 'a > {
+    pub fn parse( self, sample_type: u64, regs_count: usize ) -> Event< 'a > {
         match self.kind {
             PERF_RECORD_EXIT | PERF_RECORD_FORK => {
                 let raw_data = self.data.as_slice();
@@ -249,36 +248,48 @@ impl< 'a > RawEvent< 'a > {
                 }
 
                 // PERF_SAMPLE_REGS_USER
-                let regs_abi = cur.read_u64::< NativeEndian >().unwrap();
-                let regs = if regs_abi == 0 {
-                    None
+                let regs = if sample_type & PERF_SAMPLE_REGS_USER != 0 {
+                    let regs_abi = cur.read_u64::< NativeEndian >().unwrap();
+                    if regs_abi == 0 {
+                        None
+                    } else {
+                        let regs_end_pos = cur.position() + regs_count as u64 * mem::size_of::< u64 >() as u64;
+                        let regs_range = cur.position() as usize..regs_end_pos as usize;
+                        cur.set_position( regs_end_pos );
+
+                        Some( RawRegs::from_raw_data( self.data.get( regs_range ) ) )
+                    }
                 } else {
-                    let mut regs = perf_arch::native::Regs {
-                        regs: unsafe { mem::uninitialized() },
-                        mask: perf_arch::native::REG_MASK
-                    };
-                    cur.read_u64_into::< NativeEndian >( &mut regs.regs ).unwrap();
-                    Some( regs )
+                    None
                 };
 
                 // PERF_SAMPLE_STACK_USER
-                let stack_size = cur.read_u64::< NativeEndian >().unwrap();
-                let stack_end_pos = cur.position() + stack_size;
-                let stack_range = cur.position() as usize..stack_end_pos as usize;
-                cur.set_position( stack_end_pos );
+                let stack;
+                let dynamic_stack_size;
+                if sample_type & PERF_SAMPLE_STACK_USER != 0 {
+                    let stack_size = cur.read_u64::< NativeEndian >().unwrap();
+                    let stack_end_pos = cur.position() + stack_size;
+                    let stack_range = cur.position() as usize..stack_end_pos as usize;
+                    cur.set_position( stack_end_pos );
 
-                let dynamic_stack_size =
-                    if stack_size != 0 {
-                         cur.read_u64::< NativeEndian >().unwrap()
-                    } else {
-                        0
-                    };
+                    dynamic_stack_size =
+                        if stack_size != 0 {
+                             cur.read_u64::< NativeEndian >().unwrap()
+                        } else {
+                            0
+                        };
+
+                    stack = self.data.get( stack_range )
+                } else {
+                    dynamic_stack_size = 0;
+                    stack = RawData::empty();
+                }
 
                 assert_eq!( cur.position(), self.data.len() as u64 );
                 Event::Sample( SampleEvent {
                     regs,
                     dynamic_stack_size,
-                    stack: self.data.get( stack_range ),
+                    stack,
                     callchain,
                     cpu,
                     timestamp,
@@ -368,13 +379,16 @@ unsafe fn write_tail( pointer: *mut u8, value: u64 ) {
     ptr::write_volatile( &mut page.data_tail, value );
 }
 
+#[derive(Debug)]
 pub struct Perf {
     pid: u32,
     event_ref_state: Arc< Mutex< EventRefState > >,
     buffer: *mut u8,
     size: u64,
     fd: RawFd,
-    position: Cell< u64 >
+    position: Cell< u64 >,
+    sample_type: u64,
+    regs_count: usize
 }
 
 impl Drop for Perf {
@@ -431,11 +445,80 @@ pub enum EventSource {
     HwCpuCycles,
     HwRefCpuCycles,
     SwCpuClock,
-    SwPageFaults
+    SwPageFaults,
+    SwDummy
 }
 
-impl Perf {
-    pub fn open( pid: u32, cpu: u32, frequency: u64, stack_size: u32, event_source: EventSource ) -> io::Result< Self > {
+#[derive(Clone, Debug)]
+pub struct PerfBuilder {
+    pid: u32,
+    cpu: Option< u32 >,
+    frequency: u64,
+    stack_size: u32,
+    reg_mask: u64,
+    event_source: EventSource,
+    inherit: bool
+}
+
+impl PerfBuilder {
+    pub fn pid( mut self, pid: u32 ) -> Self {
+        self.pid = pid;
+        self
+    }
+
+    pub fn only_cpu( mut self, cpu: u32 ) -> Self {
+        self.cpu = Some( cpu );
+        self
+    }
+
+    pub fn any_cpu( mut self ) -> Self {
+        self.cpu = None;
+        self
+    }
+
+    pub fn frequency( mut self, frequency: u64 ) -> Self {
+        self.frequency = frequency;
+        self
+    }
+
+    pub fn sample_user_stack( mut self, stack_size: u32 ) -> Self {
+        self.stack_size = stack_size;
+        self
+    }
+
+    pub fn sample_user_regs( mut self, reg_mask: u64 ) -> Self {
+        self.reg_mask = reg_mask;
+        self
+    }
+
+    pub fn event_source( mut self, event_source: EventSource ) -> Self {
+        self.event_source = event_source;
+        self
+    }
+
+    pub fn inherit_to_children( mut self ) -> Self {
+        self.inherit = true;
+        self
+    }
+
+    pub fn open( self ) -> io::Result< Perf > {
+        let pid = self.pid;
+        let cpu = self.cpu.map( |cpu| cpu as i32 ).unwrap_or( -1 );
+        let frequency = self.frequency;
+        let stack_size = self.stack_size;
+        let reg_mask = self.reg_mask;
+        let event_source = self.event_source;
+        let inherit = self.inherit;
+
+        if stack_size > 63 * 1024 {
+            return Err( io::Error::new( io::ErrorKind::InvalidInput, "sample_user_stack can be at most 63kb" ) );
+        }
+
+        // See `perf_mmap` in the Linux kernel.
+        if cpu == -1 && inherit {
+            return Err( io::Error::new( io::ErrorKind::InvalidInput, "you can't inherit to children and run on all cpus at the same time" ) );
+        }
+
         assert_eq!( mem::size_of::< PerfEventMmapPage >(), 1088 );
 
         if cfg!( target_arch = "x86_64" ) {
@@ -463,6 +546,10 @@ impl Perf {
             EventSource::SwPageFaults => {
                 attr.kind = PERF_TYPE_SOFTWARE;
                 attr.config = PERF_COUNT_SW_PAGE_FAULTS;
+            },
+            EventSource::SwDummy => {
+                attr.kind = PERF_TYPE_SOFTWARE;
+                attr.config = PERF_COUNT_SW_DUMMY;
             }
         }
 
@@ -472,10 +559,17 @@ impl Perf {
             PERF_SAMPLE_TIME |
             PERF_SAMPLE_CALLCHAIN |
             PERF_SAMPLE_CPU |
-            PERF_SAMPLE_PERIOD |
-            PERF_SAMPLE_REGS_USER |
-            PERF_SAMPLE_STACK_USER;
-        attr.sample_regs_user = perf_arch::native::REG_MASK;
+            PERF_SAMPLE_PERIOD;
+
+        if reg_mask != 0 {
+            attr.sample_type |= PERF_SAMPLE_REGS_USER;
+        }
+
+        if stack_size != 0 {
+            attr.sample_type |= PERF_SAMPLE_STACK_USER;
+        }
+
+        attr.sample_regs_user = reg_mask;
         attr.sample_stack_user = stack_size;
         attr.sample_period_or_freq = frequency;
 
@@ -487,8 +581,11 @@ impl Perf {
             PERF_ATTR_FLAG_COMM |
             PERF_ATTR_FLAG_FREQ |
             PERF_ATTR_FLAG_EXCLUDE_CALLCHAIN_USER |
-            PERF_ATTR_FLAG_INHERIT |
             PERF_ATTR_FLAG_TASK;
+
+        if inherit {
+            attr.flags |= PERF_ATTR_FLAG_INHERIT;
+        }
 
         let fd = sys_perf_event_open( &attr, pid as pid_t, cpu as _, -1, PERF_FLAG_FD_CLOEXEC );
         if fd < 0 {
@@ -503,7 +600,7 @@ impl Perf {
             return Err( err );
         }
 
-        let required_space = stack_size * 8;
+        let required_space = max( stack_size, 4096 ) * 8;
         let page_size = 4096;
         let n = (1..26).into_iter().find( |n| (1_u32 << n) * 4096_u32 >= required_space ).expect( "cannot find appropriate page count for given stack size" );
         let page_count: u32 = max( 1 << n, 16 );
@@ -522,14 +619,31 @@ impl Perf {
 
         let buffer = buffer as *mut u8;
         let size = (page_size * page_count) as u64;
+
         Ok( Perf {
             pid,
             event_ref_state: Arc::new( Mutex::new( EventRefState::new( buffer, size ) ) ),
             buffer: buffer,
             size,
             fd,
-            position: Cell::new( 0 )
+            position: Cell::new( 0 ),
+            sample_type: attr.sample_type,
+            regs_count: reg_mask.count_ones() as usize
         })
+    }
+}
+
+impl Perf {
+    pub fn build() -> PerfBuilder {
+        PerfBuilder {
+            pid: 0,
+            cpu: None,
+            frequency: 0,
+            stack_size: 0,
+            reg_mask: 0,
+            event_source: EventSource::SwCpuClock,
+            inherit: false
+        }
     }
 
     pub fn enable( &mut self ) {
@@ -553,6 +667,34 @@ impl Perf {
         head != self.position.get()
     }
 
+    fn poll( &self, timeout: libc::c_int ) -> libc::c_short {
+        let mut pollfd = libc::pollfd {
+            fd: self.fd(),
+            events: libc::POLLIN | libc::POLLHUP,
+            revents: 0
+        };
+
+        let ok = unsafe { libc::poll( &mut pollfd as *mut _, 1, timeout ) };
+        if ok == -1 {
+            let err = io::Error::last_os_error();
+            if err.kind() != io::ErrorKind::Interrupted {
+                panic!( "poll failed: {}", err );
+            }
+        }
+
+        pollfd.revents as _
+    }
+
+    #[inline]
+    pub fn wait( &self ) {
+        self.poll( 1000 );
+    }
+
+    #[inline]
+    pub fn is_closed( &self ) -> bool {
+        self.poll( 0 ) & libc::POLLHUP != 0
+    }
+
     #[inline]
     pub fn fd( &self ) -> RawFd {
         self.fd
@@ -564,6 +706,7 @@ impl Perf {
     }
 }
 
+#[derive(Debug)]
 struct EventRefState {
     buffer: *mut u8,
     size: u64,
@@ -596,6 +739,8 @@ pub struct EventRef {
     buffer_size: usize,
     event_location: RawEventLocation,
     mask: u32,
+    sample_type: u64,
+    regs_count: usize,
     state: Arc< Mutex< EventRefState > >
 }
 
@@ -627,12 +772,12 @@ impl Drop for EventRef {
 }
 
 impl EventRef {
-    pub fn get< 'a >( &'a self ) -> RawEvent< 'a > {
+    pub fn get< 'a >( &'a self ) -> Event< 'a > {
         let buffer = unsafe {
             slice::from_raw_parts( self.buffer.offset( 4096 ), self.buffer_size )
         };
 
-        self.event_location.get( buffer )
+        self.event_location.get( buffer ).parse( self.sample_type, self.regs_count )
     }
 }
 
@@ -697,6 +842,8 @@ impl< 'a > Iterator for EventIter< 'a > {
             buffer_size: self.perf.size as usize,
             event_location,
             mask: !(1 << (31 - self.index)),
+            sample_type: self.perf.sample_type,
+            regs_count: self.perf.regs_count,
             state: self.state.clone()
         };
 

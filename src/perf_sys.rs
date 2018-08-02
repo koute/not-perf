@@ -55,6 +55,7 @@ pub const PERF_COUNT_HW_REF_CPU_CYCLES: u64 = 9;
 pub const PERF_COUNT_SW_CPU_CLOCK: u64 = 0;
 pub const PERF_COUNT_SW_TASK_CLOCK: u64 = 1;
 pub const PERF_COUNT_SW_PAGE_FAULTS: u64 = 2;
+pub const PERF_COUNT_SW_DUMMY: u64 = 9;
 
 pub const PERF_RECORD_LOST: u32 = 2;
 pub const PERF_RECORD_COMM: u32 = 3;

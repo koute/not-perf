@@ -13,6 +13,7 @@ use libc;
 use proc_maps;
 
 use utils::read_string_lossy;
+use perf_arch;
 use perf::{Perf, EventRef, Event, CommEvent, Mmap2Event, EventSource};
 
 struct StoppedProcess( u32 );
@@ -161,11 +162,29 @@ impl PerfGroup {
         let threads = get_threads( pid )?;
 
         for cpu in 0..num_cpus::get() {
-            let perf = Perf::open( pid, cpu as _, self.frequency, self.stack_size, self.event_source )?;
+            let perf = Perf::build()
+                .pid( pid )
+                .only_cpu( cpu as _ )
+                .frequency( self.frequency )
+                .sample_user_stack( self.stack_size )
+                .sample_user_regs( perf_arch::native::REG_MASK )
+                .event_source( self.event_source )
+                .inherit_to_children()
+                .open()?;
+
             perf_events.push( perf );
 
             for &(tid, _) in &threads {
-                let perf = Perf::open( tid, cpu as _, self.frequency, self.stack_size, self.event_source )?;
+                let perf = Perf::build()
+                    .pid( tid )
+                    .only_cpu( cpu as _ )
+                    .frequency( self.frequency )
+                    .sample_user_stack( self.stack_size )
+                    .sample_user_regs( perf_arch::native::REG_MASK )
+                    .event_source( self.event_source )
+                    .inherit_to_children()
+                    .open()?;
+
                 perf_events.push( perf );
             }
         }

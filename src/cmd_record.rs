@@ -29,7 +29,7 @@ use nwind::{
 
 use perf::{Event, CommEvent, Mmap2Event, EventSource};
 use perf_group::PerfGroup;
-use perf_arch::IntoDwarfRegs;
+use perf_arch;
 use utils::{SigintHandler, read_string_lossy, get_major, get_minor, get_ms};
 use archive::{FramedPacket, Packet, Inode, Bitness, DwarfReg, ARCHIVE_MAGIC, ARCHIVE_VERSION};
 use execution_queue::ExecutionQueue;
@@ -722,7 +722,6 @@ pub fn main( args: Args ) -> Result< (), Box< Error > > {
         }
 
         for event_ref in iter {
-            let raw_event = event_ref.get();
             if sigint.was_triggered() {
                 break;
             }
@@ -733,7 +732,7 @@ pub fn main( args: Args ) -> Result< (), Box< Error > > {
                 }
             }
 
-            let event = raw_event.parse();
+            let event = event_ref.get();
             debug!( "Recording event: {:#?}", event );
 
             if discard_all {
@@ -788,7 +787,11 @@ pub fn main( args: Args ) -> Result< (), Box< Error > > {
                 Event::Sample( event ) => {
                     counter += 1;
                     let mut user_backtrace = Vec::new();
-                    event.regs.copy_to_dwarf_regs( &mut dwarf_regs );
+                    if let Some( regs ) = event.regs {
+                        perf_arch::native::into_dwarf_regs( &regs, &mut dwarf_regs );
+                    } else {
+                        dwarf_regs.clear();
+                    }
 
                     let packet;
                     if offline {

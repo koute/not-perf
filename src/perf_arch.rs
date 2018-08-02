@@ -39,50 +39,28 @@ macro_rules! define_regs {
         pub const REG_MASK: u64 = mask!( $($perf_reg),+ );
         pub const REG_COUNT: usize = count!( $($perf_reg),+ );
 
-        #[derive(Clone)]
-        pub struct Regs {
-            pub regs: [u64; count!( $($perf_reg),+ )],
-            pub mask: u64
-        }
+        #[allow(dead_code)]
+        #[allow(unused_assignments)]
+        pub fn into_dwarf_regs( raw_regs: &::raw_data::RawRegs, regs: &mut ::nwind::DwarfRegs ) {
+            use nwind::arch::Registers;
 
-        impl ::std::fmt::Debug for Regs {
-            fn fmt( &self, fmt: &mut ::std::fmt::Formatter ) -> Result< (), ::std::fmt::Error > {
-                let mut map = fmt.debug_map();
-                let mut counter = 0;
+            let mut index = 0;
+            let mut last_reg = 0;
 
-                $(
-                    map.entry( &stringify!( $dwarf_reg ), &$crate::utils::HexValue( self.regs[ counter ] ) );
-                    counter += 1;
-                )+
+            $(
+                let value = raw_regs.get( index );
+                if validate( $dwarf_reg, value ) {
+                    regs.append( $dwarf_reg, value );
+                }
+                index += 1;
 
-                assert_eq!( counter, REG_COUNT );
-                map.finish()
-            }
-        }
+                // To ensure that they're in the same order as
+                // Linux's perf subsystem will give them to us.
+                assert!( $perf_reg >= last_reg, "assertion failed: {} >= {}", $perf_reg, last_reg );
+                last_reg = $perf_reg;
+            )+
 
-        impl $crate::perf_arch::IntoDwarfRegs for Regs {
-            #[allow(unused_assignments)]
-            #[inline]
-            fn copy_to_dwarf_regs( &self, regs: &mut ::nwind::DwarfRegs ) {
-                use nwind::arch::Registers;
-
-                let mut index = 0;
-                let mut last_reg = 0;
-
-                $(
-                    if validate( $dwarf_reg, self.regs[ index ] ) {
-                        regs.append( $dwarf_reg, self.regs[ index ] );
-                    }
-                    index += 1;
-
-                    // To ensure that they're in the same order as
-                    // Linux's perf subsystem will give them to us.
-                    assert!( $perf_reg >= last_reg, "assertion failed: {} >= {}", $perf_reg, last_reg );
-                    last_reg = $perf_reg;
-                )+
-
-                assert_eq!( index, REG_COUNT );
-            }
+            assert_eq!( index, REG_COUNT );
         }
     }
 }

@@ -3,8 +3,12 @@ use std::ops::Range;
 use std::cmp::min;
 use std::fmt;
 use std::io;
+use std::mem;
+
+use byteorder::{ByteOrder, NativeEndian};
 
 use speedy::{Readable, Writable, Reader, Writer, Context};
+use nwind::utils::HexValue;
 
 pub enum CowRawData< 'a > {
     Owned( Vec< u8 > ),
@@ -99,6 +103,11 @@ impl< 'a > fmt::Debug for RawData< 'a > {
 
 impl< 'a > RawData< 'a > {
     #[inline]
+    pub(crate) fn empty() -> Self {
+        RawData::Single( &[] )
+    }
+
+    #[inline]
     fn write_into( &self, target: &mut Vec< u8 > ) {
         target.clear();
         match *self {
@@ -144,5 +153,53 @@ impl< 'a > RawData< 'a > {
             RawData::Single( buffer ) => buffer.len(),
             RawData::Split( first, second ) => first.len() + second.len()
         }
+    }
+}
+
+pub struct RawRegs< 'a > {
+    raw_data: RawData< 'a >
+}
+
+impl< 'a > RawRegs< 'a > {
+    #[inline]
+    pub(crate) fn from_raw_data( raw_data: RawData< 'a > ) -> Self {
+        RawRegs { raw_data }
+    }
+
+    pub fn len( &self ) -> usize {
+        self.raw_data.len() / mem::size_of::< u64 >()
+    }
+
+    pub fn get( &self, index: usize ) -> u64 {
+        let offset = index * mem::size_of::< u64 >();
+        match self.raw_data.get( offset..offset + mem::size_of::< u64 >() ) {
+            RawData::Single( buffer ) => NativeEndian::read_u64( buffer ),
+            RawData::Split( first, second ) => {
+                let mut buffer = [0; 4];
+                let mut index = 0;
+                for &byte in first {
+                    buffer[ index ] = byte;
+                    index += 1;
+                }
+                for &byte in second {
+                    buffer[ index ] = byte;
+                    index += 1;
+                }
+
+                NativeEndian::read_u64( &buffer )
+            }
+        }
+    }
+}
+
+impl< 'a > fmt::Debug for RawRegs< 'a > {
+    fn fmt( &self, fmt: &mut fmt::Formatter ) -> Result< (), fmt::Error > {
+        let mut list = fmt.debug_list();
+        for index in 0..self.len() {
+            let value = self.get( index );
+            list.entry( &HexValue( value ) );
+        }
+
+        list.finish()
     }
 }

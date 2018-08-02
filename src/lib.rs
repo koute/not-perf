@@ -4,6 +4,8 @@ extern crate speedy;
 #[macro_use]
 extern crate speedy_derive;
 
+extern crate byteorder;
+
 extern crate nwind;
 extern crate proc_maps;
 
