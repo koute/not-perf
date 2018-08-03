@@ -1,9 +1,13 @@
 language: rust
 rust:
+  - stable
+  - beta
   - nightly
 
 script:
   - cd nwind
   - cargo test --features local-unwinding --verbose
   - cd ..
+  - cargo test -p perf_event_open --verbose
+  - cargo test -p proc-maps --verbose
   - cargo test -p nperf --verbose
