@@ -1315,6 +1315,7 @@ mod test {
             "__libc_start_main:libc-2.26.so",
             "main:mips64-pthread_cond_wait",
             "pthread_cond_wait:libpthread-2.26.so",
+            "__pthread_cond_wait_common:libpthread-2.26.so",
             "__pthread_mutex_cond_lock:libpthread-2.26.so",
             "__lll_lock_wait:libpthread-2.26.so",
             "**"
