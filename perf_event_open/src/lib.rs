@@ -1,7 +1,5 @@
 extern crate libc;
 #[macro_use]
-extern crate sc;
-#[macro_use]
 extern crate log;
 extern crate byteorder;
 extern crate parking_lot;

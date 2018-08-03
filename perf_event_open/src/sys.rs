@@ -2,6 +2,7 @@
 
 use std::fmt;
 use libc::{
+    syscall,
     c_int,
     c_ulong,
     pid_t
@@ -302,8 +303,35 @@ pub struct PerfEventHeader {
     pub size: u16
 }
 
+#[cfg(target_arch = "x86")]
+const PERF_EVENT_OPEN: usize = 336;
+
+#[cfg(target_arch = "x86_64")]
+const PERF_EVENT_OPEN: usize = 298;
+
+#[cfg(target_arch = "mips")]
+const PERF_EVENT_OPEN: usize = 4333;
+
+#[cfg(target_arch = "powerpc")]
+const PERF_EVENT_OPEN: usize = 319;
+
+#[cfg(target_arch = "powerpc64")]
+const PERF_EVENT_OPEN: usize = 319;
+
+#[cfg(target_arch = "arm")]
+const PERF_EVENT_OPEN: usize = 364;
+
+#[cfg(target_arch = "sparc64")]
+const PERF_EVENT_OPEN: usize = 327;
+
+#[cfg(target_arch = "mips64")]
+const PERF_EVENT_OPEN: usize = 5292;
+
+#[cfg(target_arch = "aarch64")]
+const PERF_EVENT_OPEN: usize = 241;
+
 pub fn sys_perf_event_open( attr: &PerfEventAttr, pid: pid_t, cpu: c_int, group_fd: c_int, flags: c_ulong ) -> c_int {
     unsafe {
-        syscall!( PERF_EVENT_OPEN, attr as *const _, pid, cpu, group_fd, flags ) as c_int
+        syscall( PERF_EVENT_OPEN as _, attr as *const _, pid, cpu, group_fd, flags ) as c_int
     }
 }
