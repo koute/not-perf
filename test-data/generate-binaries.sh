@@ -73,6 +73,7 @@ compile usleep_in_a_loop    usleep_in_a_loop_no_fp
 compile usleep_in_a_loop    usleep_in_a_loop_fp     -fno-omit-frame-pointer
 compile pthread_cond_wait   pthread_cond_wait       -pthread
 compile inline_functions    inline_functions        -ggdb3
+compile noreturn            noreturn
 
 if [ ! -e "bin/$PREFIX-usleep_in_a_loop_external_info" ]; then
     compile usleep_in_a_loop    usleep_in_a_loop_external_info  -fvisibility=hidden
