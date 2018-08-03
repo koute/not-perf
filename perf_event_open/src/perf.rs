@@ -9,7 +9,6 @@ use std::fmt;
 use std::slice;
 use std::ops::Range;
 use std::cmp::max;
-use std::cell::Cell;
 
 use libc::{self, pid_t, c_void};
 use byteorder::{ReadBytesExt, NativeEndian};
@@ -386,7 +385,7 @@ pub struct Perf {
     buffer: *mut u8,
     size: u64,
     fd: RawFd,
-    position: Cell< u64 >,
+    position: u64,
     sample_type: u64,
     regs_count: usize
 }
@@ -404,14 +403,14 @@ unsafe fn get_buffer< 'a >( buffer: *const u8, size: u64 ) -> &'a [u8] {
     slice::from_raw_parts( buffer.offset( 4096 ), size as usize )
 }
 
-fn next_raw_event( buffer: *const u8, size: u64, position_cell: &Cell< u64 > ) -> Option< RawEventLocation > {
+fn next_raw_event( buffer: *const u8, size: u64, position_cell: &mut u64 ) -> Option< RawEventLocation > {
     let head = unsafe { read_head( buffer ) };
-    if head == position_cell.get() {
+    if head == *position_cell {
         return None;
     }
 
     let buffer = unsafe { get_buffer( buffer, size ) };
-    let position = position_cell.get();
+    let position = *position_cell;
     let relative_position = position % size;
     let event_position = relative_position as usize;
     let event_data_position = (relative_position + mem::size_of::< PerfEventHeader >() as u64) as usize;
@@ -435,7 +434,7 @@ fn next_raw_event( buffer: *const u8, size: u64, position_cell: &Cell< u64 > ) -
     debug!( "Parsed raw event: {:?}", raw_event_location );
 
     let next_position = position + event_header.size as u64;
-    position_cell.set( next_position );
+    *position_cell = next_position;
 
     Some( raw_event_location )
 }
@@ -626,7 +625,7 @@ impl PerfBuilder {
             buffer: buffer,
             size,
             fd,
-            position: Cell::new( 0 ),
+            position: 0,
             sample_type: attr.sample_type,
             regs_count: reg_mask.count_ones() as usize
         })
@@ -664,7 +663,7 @@ impl Perf {
     #[inline]
     pub fn are_events_pending( &self ) -> bool {
         let head = unsafe { read_head( self.buffer ) };
-        head != self.position.get()
+        head != self.position
     }
 
     fn poll( &self, timeout: libc::c_int ) -> libc::c_short {
@@ -800,8 +799,8 @@ impl< 'a > EventIter< 'a > {
             let state = state.get_mut();
 
             for _ in 0..31 {
-                state.positions[ count ] = perf.position.get();
-                let raw_event_location = match next_raw_event( perf.buffer, perf.size, &perf.position ) {
+                state.positions[ count ] = perf.position;
+                let raw_event_location = match next_raw_event( perf.buffer, perf.size, &mut perf.position ) {
                     Some( location ) => location,
                     None => break
                 };
@@ -810,7 +809,7 @@ impl< 'a > EventIter< 'a > {
                 count += 1;
             }
 
-            state.positions[ count ] = perf.position.get();
+            state.positions[ count ] = perf.position;
             state.done = !0;
         }
 
