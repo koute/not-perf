@@ -1387,4 +1387,56 @@ mod test {
             ]);
         }
     }
+
+    #[test]
+    fn collate_amd64_noreturn() {
+        let data = load( "amd64-noreturn.nperf" );
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
+                "[process:amd64-noreturn]",
+                "[main_thread]",
+                "_start:amd64-noreturn",
+                "__libc_start_main:libc-2.26.so",
+                "main:amd64-noreturn",
+                "function:amd64-noreturn",
+                "infinite_loop:amd64-noreturn",
+                "**"
+            ]);
+        }
+    }
+
+    #[test]
+    fn collate_mips64_noreturn() {
+        let data = load( "mips64-noreturn.nperf" );
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
+                "[process:mips64-noreturn]",
+                "[main_thread]",
+                "?:mips64-noreturn",
+                "__libc_start_main:libc-2.26.so",
+                "main:mips64-noreturn",
+                "function:mips64-noreturn",
+                "infinite_loop:mips64-noreturn",
+                "**"
+            ]);
+        }
+    }
+
+    #[test]
+    fn collate_arm_noreturn() {
+        let data = load( "arm-noreturn.nperf" );
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
+                "[process:arm-noreturn]",
+                "[main_thread]",
+                "?:arm-noreturn",
+                "__libc_start_main:libc-2.26.so",
+                "main:arm-noreturn",
+                "function:arm-noreturn",
+                "infinite_loop:arm-noreturn",
+                "usleep:libc-2.26.so",
+                "**"
+            ]);
+        }
+    }
 }
