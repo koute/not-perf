@@ -117,7 +117,7 @@ pub fn dwarf_unwind< A: Architecture, M: MemoryReader< A > >(
     }
 
     let binary = lookup_binary( nth_frame, memory, regs )?;
-    let unwind_info = match binary.lookup_unwind_row( ctx_cache, address ) {
+    let unwind_info = match binary.lookup_unwind_row( ctx_cache, if nth_frame == 0 { address } else { address - 1 } ) {
         Some( unwind_info ) => unwind_info,
         None => {
             debug!( "No unwind info for address 0x{:016X}", address );

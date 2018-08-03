@@ -574,7 +574,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
 }
 
 fn decode_user_frames( omit_regex: &Option< Regex >, process: &Process, user_backtrace: &[UserFrame], interner: &mut StringInterner, output: &mut Vec< FrameKind > ) -> bool {
-    for user_frame in user_backtrace.iter() {
+    for (nth_frame, user_frame) in user_backtrace.iter().enumerate() {
         let default = FrameKind::User( user_frame.initial_address.unwrap_or( user_frame.address ) );
         let region = match process.memory_regions.get_value( user_frame.address ) {
             Some( region ) => region,
@@ -586,7 +586,7 @@ fn decode_user_frames( omit_regex: &Option< Regex >, process: &Process, user_bac
 
         let binary_id: BinaryId = region.into();
         let mut omit = false;
-        process.address_space.decode_symbol_while( user_frame.address, &mut |frame| {
+        process.address_space.decode_symbol_while( if nth_frame == 0 { user_frame.address } else { user_frame.address - 1 }, &mut |frame| {
             if let Some( name ) = frame.demangled_name.take().or_else( || frame.name.take() ) {
                 if let Some( ref regex ) = *omit_regex {
                     if regex.is_match( &name ) {

@@ -862,7 +862,7 @@ impl VirtualMachine {
             return Err( Error::UnwindInfoMissing );
         }
 
-        let (index, entry, function_range) = match Self::find_entry( exidx, exidx_base, address ) {
+        let (index, entry, function_range) = match Self::find_entry( exidx, exidx_base, if is_first_frame { address } else { address - 1 } ) {
             Some( result ) => result,
             None => {
                 debug!( "Address 0x{:08X} has no unwinding information", address );
