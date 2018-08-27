@@ -1,12 +1,18 @@
 use gimli::{
     self,
     RegisterRule,
-    CfaRule
+    CfaRule,
+    EvaluationResult,
+    Format,
+    Value,
+    Location,
+    Piece
 };
 
 use arch::{Architecture, Registers};
 use address_space::{MemoryReader, lookup_binary};
 use frame_descriptions::{UnwindInfo, ContextCache, UnwindInfoCache};
+use types::Bitness;
 
 pub struct DwarfResult {
     pub initial_address: u64,
@@ -63,10 +69,70 @@ pub fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
             debug!( "Got CFA for frame #{}: {:?} (0x{:016X}) + {} = 0x{:016X}", nth_frame, A::register_name( cfa_register as _ ), cfa_register_value, cfa_offset, value );
             value
         },
-        ref cfa => {
-            error!( "Handling for this CFA rule is unimplemented: {:?}", cfa );
-            return None;
-        }
+        CfaRule::Expression( expr ) => {
+            // TODO: Is this always true?
+            let (address_size, format) = match A::BITNESS {
+                Bitness::B32 => {
+                    (4, Format::Dwarf32)
+                },
+                Bitness::B64 => {
+                    (8, Format::Dwarf64)
+                }
+            };
+
+            let mut evaluation = expr.evaluation( address_size, format );
+            let mut result = evaluation.evaluate();
+            let value;
+            loop {
+                match result {
+                    Ok( EvaluationResult::Complete ) => {
+                        let mut pieces = evaluation.result();
+                        if pieces.len() == 1 {
+                            match pieces.pop().unwrap() {
+                                Piece {
+                                    size_in_bits: None,
+                                    bit_offset: None,
+                                    location: Location::Address { address },
+                                    ..
+                                } => {
+                                    value = address;
+                                    break;
+                                },
+                                piece => {
+                                    error!( "Unhandled CFA evaluation result: {:?}", piece );
+                                    return None;
+                                }
+                            }
+                        } else {
+                            error!( "Unhandled CFA evaluation result: {:?}", pieces );
+                            return None;
+                        }
+                    },
+                    Ok( EvaluationResult::RequiresRegister { register, .. } ) => {
+                        let reg_value = match regs.get( register as _ ) {
+                            Some( reg_value ) => reg_value,
+                            None => {
+                                error!( "Failed to evaluate CFA rule due to a missing value of register {:?}", A::register_name( register as _ ) );
+                                return None;
+                            }
+                        };
+
+                        result = evaluation.resume_with_register( Value::Generic( reg_value ) );
+                    },
+                    Ok( result ) => {
+                        error!( "Failed to evaluate CFA rule due to unhandled requirement: {:?}", result );
+                        return None;
+                    },
+                    Err( error ) => {
+                        error!( "Failed to evaluate CFA rule: {:?}", error );
+                        return None;
+                    }
+                }
+            }
+
+            debug!( "Evaluated CFA for frame #{}: 0x{:016X}", nth_frame, value );
+            value
+        },
     };
 
     let mut cacheable = true;

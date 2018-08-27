@@ -1217,6 +1217,36 @@ mod test {
     }
 
     #[test]
+    fn collate_amd64_perfect_unwinding_pthread_cond_wait() {
+        let data = load( "amd64-pthread_cond_wait.nperf" );
+
+        let main_stacks: Vec< _ > = data.stacks.iter().filter( |&(ref frames, _)| frame_to_str( &data, &frames[ frames.len() - 2 ] ) == "[main_thread]" ).collect();
+        let thread_stacks: Vec< _ > = data.stacks.iter().filter( |&(ref frames, _)| frame_to_str( &data, &frames[ frames.len() - 2 ] ) == "[thread:another thread]" ).collect();
+
+        for (frames, _) in main_stacks.iter() {
+            assert_backtrace( &data, &frames, &[
+                "[process:amd64-pthread_cond_wait]",
+                "[main_thread]",
+                "_start:amd64-pthread_cond_wait",
+                "__libc_start_main:libc-2.26.so",
+                "main:amd64-pthread_cond_wait",
+                "**"
+            ]);
+        }
+
+        for (frames, _) in thread_stacks.iter() {
+            assert_backtrace( &data, &frames, &[
+                "[process:amd64-pthread_cond_wait]",
+                "[thread:another thread]",
+                "clone:libc-2.26.so",
+                "?:libpthread-2.26.so",
+                "thread_main:amd64-pthread_cond_wait",
+                "**"
+            ]);
+        }
+    }
+
+    #[test]
     fn collate_mips64_hot_spot_usleep_in_a_loop_no_fp() {
         let data = load( "mips64-usleep_in_a_loop_no_fp.nperf" );
 
