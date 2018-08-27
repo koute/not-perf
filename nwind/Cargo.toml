@@ -15,7 +15,7 @@ speedy-derive = "0.3"
 lru = "0.1"
 string-interner = "0.6"
 cpp_demangle = "0.2"
-addr2line = { version = "0.7", optional = true }
+addr2line = { version = "0.7", optional = true, default-features = false, features = ["cpp_demangle"], git = "https://github.com/gimli-rs/addr2line.git", rev = "b1ac5ae4325bdcd16501d71d0e69207ce9ecb004" }
 proc-maps = { version = "0.1", path = "../proc-maps" }
 
 [build-dependencies]
