@@ -456,7 +456,8 @@ pub struct PerfBuilder {
     stack_size: u32,
     reg_mask: u64,
     event_source: EventSource,
-    inherit: bool
+    inherit: bool,
+    start_disabled: bool
 }
 
 impl PerfBuilder {
@@ -500,6 +501,11 @@ impl PerfBuilder {
         self
     }
 
+    pub fn start_disabled( mut self ) -> Self {
+        self.start_disabled = true;
+        self
+    }
+
     pub fn open( self ) -> io::Result< Perf > {
         let pid = self.pid;
         let cpu = self.cpu.map( |cpu| cpu as i32 ).unwrap_or( -1 );
@@ -508,16 +514,18 @@ impl PerfBuilder {
         let reg_mask = self.reg_mask;
         let event_source = self.event_source;
         let inherit = self.inherit;
+        let start_disabled = self.start_disabled;
 
         debug!(
-            "Opening perf events; pid={}, cpu={}, frequency={}, stack_size={}, reg_mask=0x{:016X}, event_source={:?}, inherit={}...",
+            "Opening perf events; pid={}, cpu={}, frequency={}, stack_size={}, reg_mask=0x{:016X}, event_source={:?}, inherit={}, start_disabled={}...",
             pid,
             cpu,
             frequency,
             stack_size,
             reg_mask,
             event_source,
-            inherit
+            inherit,
+            start_disabled
         );
 
         if stack_size > 63 * 1024 {
@@ -631,7 +639,7 @@ impl PerfBuilder {
         let size = (page_size * page_count) as u64;
 
         debug!( "Perf events open with fd={}", fd );
-        Ok( Perf {
+        let mut perf = Perf {
             pid,
             event_ref_state: Arc::new( Mutex::new( EventRefState::new( buffer, size ) ) ),
             buffer: buffer,
@@ -640,7 +648,13 @@ impl PerfBuilder {
             position: 0,
             sample_type: attr.sample_type,
             regs_count: reg_mask.count_ones() as usize
-        })
+        };
+
+        if !start_disabled {
+            perf.enable();
+        }
+
+        Ok( perf )
     }
 }
 
@@ -653,7 +667,8 @@ impl Perf {
             stack_size: 0,
             reg_mask: 0,
             event_source: EventSource::SwCpuClock,
-            inherit: false
+            inherit: false,
+            start_disabled: false
         }
     }
 

@@ -170,6 +170,7 @@ impl PerfGroup {
                 .sample_user_regs( perf_arch::native::REG_MASK )
                 .event_source( self.event_source )
                 .inherit_to_children()
+                .start_disabled()
                 .open()?;
 
             perf_events.push( perf );
@@ -183,6 +184,7 @@ impl PerfGroup {
                     .sample_user_regs( perf_arch::native::REG_MASK )
                     .event_source( self.event_source )
                     .inherit_to_children()
+                    .start_disabled()
                     .open()?;
 
                 perf_events.push( perf );
