@@ -1185,10 +1185,6 @@ mod test {
     fn collate_amd64_pthread_cond_wait() {
         let data = load( "amd64-pthread_cond_wait.nperf" );
 
-        for (ref foo, _) in data.stacks.iter() {
-            println!( "{:?}", frame_to_str( &data, &foo[ foo.len() - 2 ] ) );
-        }
-
         let main_stacks: Vec< _ > = data.stacks.iter().filter( |&(ref frames, _)| frame_to_str( &data, &frames[ frames.len() - 2 ] ) == "[main_thread]" ).collect();
         let thread_stacks: Vec< _ > = data.stacks.iter().filter( |&(ref frames, _)| frame_to_str( &data, &frames[ frames.len() - 2 ] ) == "[thread:another thread]" ).collect();
 
@@ -1297,10 +1293,6 @@ mod test {
     #[test]
     fn collate_mips64_pthread_cond_wait() {
         let data = load( "mips64-pthread_cond_wait.nperf" );
-
-        for (ref foo, _) in data.stacks.iter() {
-            println!( "{:?}", frame_to_str( &data, &foo[ foo.len() - 2 ] ) );
-        }
 
         let main_stacks: Vec< _ > = data.stacks.iter().filter( |&(ref frames, _)| frame_to_str( &data, &frames[ frames.len() - 2 ] ) == "[main_thread]" ).collect();
         let thread_stacks: Vec< _ > = data.stacks.iter().filter( |&(ref frames, _)| frame_to_str( &data, &frames[ frames.len() - 2 ] ) == "[thread:another thread]" ).collect();
