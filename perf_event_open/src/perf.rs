@@ -509,6 +509,17 @@ impl PerfBuilder {
         let event_source = self.event_source;
         let inherit = self.inherit;
 
+        debug!(
+            "Opening perf events; pid={}, cpu={}, frequency={}, stack_size={}, reg_mask=0x{:016X}, event_source={:?}, inherit={}...",
+            pid,
+            cpu,
+            frequency,
+            stack_size,
+            reg_mask,
+            event_source,
+            inherit
+        );
+
         if stack_size > 63 * 1024 {
             return Err( io::Error::new( io::ErrorKind::InvalidInput, "sample_user_stack can be at most 63kb" ) );
         }
@@ -619,6 +630,7 @@ impl PerfBuilder {
         let buffer = buffer as *mut u8;
         let size = (page_size * page_count) as u64;
 
+        debug!( "Perf events open with fd={}", fd );
         Ok( Perf {
             pid,
             event_ref_state: Arc::new( Mutex::new( EventRefState::new( buffer, size ) ) ),
