@@ -45,3 +45,6 @@ members = [".", "nwind", "proc-maps", "perf_event_open"]
 [[bench]]
 name = "unwinding"
 harness = false
+
+[replace]
+"gimli:0.16.0" = { git = "https://github.com/gimli-rs/gimli.git", rev = "28d3e409ffdc9741c90ee93f18a3c95612e4a440" }
