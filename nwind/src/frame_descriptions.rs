@@ -347,7 +347,16 @@ impl< E: Endianity > FrameDescriptions< E > {
         let initial_address = fde.initial_address();
         let ctx = UnsafeCell::new( ctx );
         let mut table = UnwindTable::new( unsafe { &mut *ctx.get() }, &fde );
-        while let Ok( Some( row ) ) = table.next_row() {
+        loop {
+            let row = match table.next_row() {
+                Ok( None ) => break,
+                Ok( Some( row ) ) => row,
+                Err( error ) => {
+                    error!( "Failed to iterate the unwind table: {:?}", error );
+                    break;
+                }
+            };
+
             if row.contains( address ) {
                 let row = row.clone();
                 return Some( UnwindInfo {
