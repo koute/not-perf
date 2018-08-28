@@ -466,6 +466,13 @@ impl< 'a, E: Endianity > UnwindInfo< 'a, E > {
         };
 
         let mut rules = Vec::new();
+        if unwind_cache.cache.len() == unwind_cache.cache.cap() {
+            rules = unwind_cache.cache.pop_lru().map( |(_, old)| old.rules ).unwrap();
+            rules.clear();
+        } else {
+            rules.reserve( 16 );
+        }
+
         for &(register, ref rule) in row.registers() {
             let rule = match *rule {
                 RegisterRule::Undefined => SimpleRegisterRule::Undefined,
