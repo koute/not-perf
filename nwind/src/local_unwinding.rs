@@ -158,3 +158,32 @@ fn test_self_unwind() {
     assert!( symbols.iter().next().unwrap().contains( "test_self_unwind" ) );
     assert_ne!( addresses[ addresses.len() - 1 ], addresses[ addresses.len() - 2 ] );
 }
+
+#[test]
+fn test_unwind_twice() {
+    let _ = ::env_logger::try_init();
+    let mut address_space = LocalAddressSpace::new().unwrap();
+
+    #[inline(never)]
+    fn func_1( address_space: &mut LocalAddressSpace, output: &mut Vec< u64 > ) {
+        address_space.unwind( |frame| {
+            output.push( frame.address );
+            UnwindControl::Continue
+        });
+    }
+
+    #[inline(never)]
+    fn func_2( address_space: &mut LocalAddressSpace, output: &mut Vec< u64 > ) {
+        func_1( address_space, output );
+    }
+
+    let mut trace_1 = Vec::new();
+    func_1( &mut address_space, &mut trace_1 );
+
+    let mut trace_2 = Vec::new();
+    func_2( &mut address_space, &mut trace_2 );
+
+    assert_eq!( &trace_1[ 0 ], &trace_2[ 0 ] );
+    assert_ne!( &trace_1[ 1 ], &trace_2[ 2 ] );
+    assert_eq!( &trace_1[ 2.. ], &trace_2[ 3.. ] );
+}
