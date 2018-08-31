@@ -289,7 +289,7 @@ impl< A: Architecture > Binary< A > {
         let mut output = Frame::from_address( address, address );
         self.decode_symbol_while( address, &mut |frame| {
             mem::swap( &mut output, frame );
-            false
+            true
         });
 
         output
