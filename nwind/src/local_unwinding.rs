@@ -1,5 +1,6 @@
 use std::io;
 use std::fs;
+use std::marker::PhantomData;
 
 use proc_maps;
 
@@ -7,7 +8,8 @@ use address_space::{IAddressSpace, AddressSpace, BinaryRegion, MemoryReader, Fra
 use binary::BinaryData;
 use range_map::RangeMap;
 use types::{Endianness, UserFrame};
-use arch::{self, LocalRegs};
+use arch::{self, LocalRegs, Architecture};
+use unwind_context::InitializeRegs;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum UnwindControl {
@@ -55,6 +57,22 @@ pub struct LocalAddressSpace {
     inner: AddressSpace< arch::native::Arch >
 }
 
+struct LocalRegsInitializer< A: Architecture >( PhantomData< A > );
+
+impl< A: Architecture > Default for LocalRegsInitializer< A > {
+    #[inline]
+    fn default() -> Self {
+        LocalRegsInitializer( PhantomData )
+    }
+}
+
+impl< A: Architecture > InitializeRegs< A > for LocalRegsInitializer< A > where A::Regs: LocalRegs {
+    #[inline(always)]
+    fn initialize_regs( self, regs: &mut A::Regs ) {
+        regs.get_local_regs();
+    }
+}
+
 impl LocalAddressSpace {
     pub fn new() -> Result< Self, io::Error > {
         debug!( "Initializing local address space..." );
@@ -85,14 +103,13 @@ impl LocalAddressSpace {
         Ok(())
     }
 
+    #[inline(always)]
     pub fn unwind< F: FnMut( &UserFrame ) -> UnwindControl >( &mut self, mut callback: F ) {
         let memory = LocalMemory {
             regions: &self.inner.regions
         };
 
-        let mut ctx = self.inner.ctx.start( &memory, |regs| {
-            regs.get_local_regs();
-        });
+        let mut ctx = self.inner.ctx.start( &memory, LocalRegsInitializer::default() );
 
         loop {
             let frame = UserFrame {
@@ -138,6 +155,6 @@ fn test_self_unwind() {
         addresses.push( frame.address );
     }
 
-    assert!( symbols.iter().find( |symbol| symbol.contains( "LocalAddressSpace" ) && symbol.contains( "unwind" ) ).is_some() );
+    assert!( symbols.iter().next().unwrap().contains( "test_self_unwind" ) );
     assert_ne!( addresses[ addresses.len() - 1 ], addresses[ addresses.len() - 2 ] );
 }

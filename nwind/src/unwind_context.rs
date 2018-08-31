@@ -19,6 +19,20 @@ pub struct UnwindHandle< 'a, A: Architecture + 'a > {
     ctx: &'a mut UnwindContext< A >
 }
 
+// We define this trait to be able to put the `#[inline(always)]`
+// on the register fetching callback to guarantee that we won't
+// produce any extra frames when unwinding locally.
+pub trait InitializeRegs< A: Architecture > {
+    fn initialize_regs( self, &mut A::Regs );
+}
+
+impl< T, A: Architecture > InitializeRegs< A > for T where T: FnOnce( &mut A::Regs ) {
+    #[inline(always)]
+    fn initialize_regs( self, regs: &mut A::Regs ) {
+        self( regs )
+    }
+}
+
 impl< A: Architecture > UnwindContext< A > {
     pub fn new() -> Self {
         UnwindContext {
@@ -38,10 +52,15 @@ impl< A: Architecture > UnwindContext< A > {
         self.panic_on_partial_backtrace = value;
     }
 
-    pub fn start< 'a, M: MemoryReader< A >, F: FnOnce( &mut A::Regs ) >( &'a mut self, memory: &M, initialize_regs: F ) -> UnwindHandle< 'a, A > {
+    #[inline(always)]
+    pub fn start< 'a, M: MemoryReader< A >, T: InitializeRegs< A > >( &'a mut self, memory: &M, initializer: T ) -> UnwindHandle< 'a, A > {
+        initializer.initialize_regs( &mut self.regs_1 );
+        self.start_impl( memory )
+    }
+
+    fn start_impl< 'a, M: MemoryReader< A > >( &'a mut self, memory: &M ) -> UnwindHandle< 'a, A > {
         self.is_done = false;
         self.nth_frame = 0;
-        initialize_regs( &mut self.regs_1 );
         self.regs_2 = self.regs_1.clone();
 
         self.address = A::get_instruction_pointer( &self.regs_1 ).unwrap();
