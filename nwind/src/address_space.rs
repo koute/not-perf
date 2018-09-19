@@ -733,7 +733,12 @@ fn reload< A: Architecture >(
                         BinaryData::get_section_or_empty( &binary_data )
                     );
 
-                    context = ctx.ok();
+                    match ctx {
+                        Ok( ctx ) => context = Some( ctx ),
+                        Err( error ) => {
+                            warn!( "Failed to create addr2line context: {:?}", error );
+                        }
+                    }
                 }
             }
         }
