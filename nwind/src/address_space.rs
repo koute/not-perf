@@ -722,7 +722,9 @@ fn reload< A: Architecture >(
                     symbols.push( Symbols::load_from_binary_data( &binary_data ) );
                 }
 
-                if context.is_none() {
+                if cfg!( not( feature = "addr2line" ) ) {
+                    debug!( "Not compiled with the `addr2line` feature; skipping addr2line context creation" );
+                } else if context.is_none() {
                     debug!( "Creating addr2line context for '{}' from '{}'...", data.name, binary_data.name() );
                     let ctx = addr2line::Context::from_sections(
                         BinaryData::get_section_or_empty( &binary_data ),
