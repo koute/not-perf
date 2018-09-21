@@ -5,7 +5,7 @@ authors = ["Jan Bujak <jan.bujak@nokia.com>"]
 
 [dependencies]
 byteorder = "1"
-gimli = { version = "0.16", git = "https://github.com/gimli-rs/gimli.git", rev = "28d3e409ffdc9741c90ee93f18a3c95612e4a440" }
+gimli = "0.16"
 goblin = "0.0.15"
 scroll = "0.9"
 memmap = "0.6"
@@ -28,6 +28,3 @@ env_logger = "0.5"
 default = ["logging", "addr2line"]
 local-unwinding = ["cc"]
 logging = ["log"]
-
-[replace]
-"gimli:0.16.0" = { git = "https://github.com/gimli-rs/gimli.git", rev = "28d3e409ffdc9741c90ee93f18a3c95612e4a440" }
