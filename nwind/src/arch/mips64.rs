@@ -226,11 +226,8 @@ impl Architecture for Arch {
 
         regs.append( dwarf::R29, cfa );
         regs_next.append( dwarf::R29, cfa );
-        regs.append( dwarf::R30, cfa );
-        regs_next.append( dwarf::R30, cfa );
 
         debug!( "Register {:?} at frame #{} is equal to 0x{:016X}", Self::register_name( dwarf::R29 ), nth_frame + 1, cfa );
-        debug!( "Register {:?} at frame #{} is equal to 0x{:016X}", Self::register_name( dwarf::R30 ), nth_frame + 1, cfa );
 
         if recovered_return_address || nth_frame == 0 {
             regs.pc = regs.r31;
