@@ -217,6 +217,10 @@ impl< A: Architecture > Binary< A > {
                     loop {
                         let next_raw_frame = match raw_frames.next() {
                             Ok( Some( raw_frame ) ) => Some( raw_frame ),
+                            Err( error ) => {
+                                warn!( "Failed to decode symbol at 0x{:016X}: {}", address, error );
+                                None
+                            },
                             _ => None
                         };
 
