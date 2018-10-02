@@ -87,7 +87,7 @@ impl Process {
                             file_offset: 0,
                             file_size: size,
                             memory_size: size,
-                            alignment: 0,
+                            alignment: 1,
                             is_readable: true,
                             is_writable: false,
                             is_executable: true
