@@ -550,6 +550,23 @@ pub struct AddressSpace< A: Architecture > {
     panic_on_partial_backtrace: bool
 }
 
+fn match_mapping( load_headers: &[LoadHeader], region: &Region ) -> Option< AddressMapping > {
+    if !region.is_read {
+        return None;
+    }
+
+    let header = load_headers.iter().find( |header| {
+        header.file_offset & !(header.alignment - 1) == region.file_offset
+    })?;
+
+    Some( AddressMapping {
+        declared_address: header.address & !(header.alignment - 1),
+        actual_address: region.start,
+        file_offset: region.file_offset,
+        size: region.end - region.start
+    })
+}
+
 fn reload< A: Architecture >(
     current_binary_map: &mut HashMap< BinaryId, BinaryHandle< A > >,
     current_regions: &mut RangeMap< BinaryRegion< A > >,
@@ -681,13 +698,9 @@ fn reload< A: Architecture >(
             }
         }
 
-        if let Some( header ) = data.load_headers.iter().find( |header| header.file_offset == region.file_offset ) {
-            data.mappings.push( AddressMapping {
-                declared_address: header.address,
-                actual_address: region.start,
-                file_offset: header.file_offset,
-                size: region.end - region.start
-            });
+        if let Some( mapping ) = match_mapping( &data.load_headers, &region ) {
+            debug!( "0x{:016X}-0x{:016X} from '{}' is mapped at {:016X}-{:016X} in memory", mapping.file_offset, mapping.file_offset + mapping.size, data.name, region.start, region.end );
+            data.mappings.push( mapping );
         }
 
         macro_rules! section {
@@ -966,4 +979,135 @@ fn test_reload() {
     assert_eq!( res.binaries_mapped.len(), 0 );
     assert_eq!( res.regions_unmapped.len(), 2 );
     assert_eq!( res.regions_mapped.len(), 0 );
+}
+
+#[test]
+fn test_match_mapping() {
+    let load_headers = [
+        LoadHeader {
+            address: 0,
+            file_offset: 0,
+            file_size: 0x0e7df0,
+            memory_size: 0x0e7df0,
+            alignment: 0x1000,
+            is_readable: true,
+            is_writable: false,
+            is_executable: true
+        },
+        LoadHeader {
+            address: 0x0000000000909958,
+            file_offset: 0x0e8958,
+            file_size: 0x4cf4868,
+            memory_size: 0x4cf4868,
+            alignment: 0x1000,
+            is_readable: true,
+            is_writable: false,
+            is_executable: true
+        },
+        LoadHeader {
+            address: 0x00000000055ffee0,
+            file_offset: 0x4dddee0,
+            file_size: 0x447c38,
+            memory_size: 0x4ae728,
+            alignment: 0x1000,
+            is_readable: true,
+            is_writable: true,
+            is_executable: false
+        }
+    ];
+
+    let mapping = match_mapping( &load_headers, &Region {
+        start: 0x7fffe8a93000,
+        end: 0x7fffe8b7b000,
+        is_read: true,
+        is_write: false,
+        is_executable: true,
+        is_shared: false,
+        file_offset: 0,
+        major: 8,
+        minor: 2,
+        inode: 1974843,
+        name: "/usr/lib/thunderbird/libxul.so".into()
+    });
+
+    assert_eq!( mapping, Some( AddressMapping {
+        declared_address: 0,
+        actual_address: 0x7fffe8a93000,
+        file_offset: 0,
+        size: 0xe8000
+    }));
+
+    let mapping = match_mapping( &load_headers, &Region {
+        start: 0x7fffe8b7b000,
+        end: 0x7fffe939c000,
+        is_read: false,
+        is_write: false,
+        is_executable: false,
+        is_shared: false,
+        file_offset: 0xe8000,
+        major: 8,
+        minor: 2,
+        inode: 1974843,
+        name: "/usr/lib/thunderbird/libxul.so".into()
+    });
+
+    assert_eq!( mapping, None );
+
+    let mapping = match_mapping( &load_headers, &Region {
+        start: 0x7fffe939c000,
+        end: 0x7fffee092000,
+        is_read: true,
+        is_write: false,
+        is_executable: true,
+        is_shared: false,
+        file_offset: 0xe8000,
+        major: 8,
+        minor: 2,
+        inode: 1974843,
+        name: "/usr/lib/thunderbird/libxul.so".into()
+    });
+
+    assert_eq!( mapping, Some( AddressMapping {
+        declared_address: 0x909000,
+        actual_address: 0x7fffe939c000,
+        file_offset: 0xe8000,
+        size: 0x4cf6000
+    }));
+
+    let mapping = match_mapping( &load_headers, &Region {
+        start: 0x7fffee092000,
+        end: 0x7fffee4a5000,
+        is_read: true,
+        is_write: false,
+        is_executable: false,
+        is_shared: false,
+        file_offset: 0x4ddd000,
+        major: 8,
+        minor: 2,
+        inode: 1974843,
+        name: "/usr/lib/thunderbird/libxul.so".into()
+    });
+
+    assert_eq!( mapping, Some( AddressMapping {
+        declared_address: 0x55ff000,
+        actual_address: 0x7fffee092000,
+        file_offset: 0x4ddd000,
+        size: 0x413000
+    }));
+
+    let mapping = match_mapping( &load_headers, &Region {
+        start: 0x7fffee4a5000,
+        end: 0x7fffee4db000,
+        is_read: true,
+        is_write: true,
+        is_executable: false,
+        is_shared: false,
+        file_offset: 0x51f0000,
+        major: 8,
+        minor: 2,
+        inode: 1974843,
+        name: "/usr/lib/thunderbird/libxul.so".into()
+    });
+
+    assert_eq!( mapping, None );
 }
