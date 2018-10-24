@@ -6,6 +6,7 @@ use std::fmt;
 use std::borrow::Cow;
 use std::ops::Deref;
 use std::sync::Mutex;
+use std::str;
 
 use byteorder::{self, ByteOrder};
 use cpp_demangle;
@@ -79,6 +80,28 @@ mod addr2line {
             Err(())
         }
     }
+}
+
+fn strip_isra( string: &str ) -> &str {
+    let mut bytes = string.as_bytes();
+    while bytes.last().map( |&byte| byte >= b'0' && byte <= b'9' ).unwrap_or( false ) {
+        bytes = &bytes[ ..bytes.len() - 1 ];
+    }
+    if bytes.ends_with( b".isra." ) {
+        bytes = &bytes[ ..bytes.len() - b".isra.".len() ];
+    }
+
+    unsafe {
+        str::from_utf8_unchecked( bytes )
+    }
+}
+
+#[test]
+fn test_strip_isra() {
+    let symbol   = "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE12_M_constructIPcEEvT_S7_St20forward_iterator_tag.isra.90";
+    let expected = "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE12_M_constructIPcEEvT_S7_St20forward_iterator_tag";
+
+    assert_eq!( strip_isra( symbol ), expected );
 }
 
 fn translate_address( mappings: &[AddressMapping], address: u64 ) -> u64 {
@@ -269,6 +292,7 @@ impl< A: Architecture > Binary< A > {
 
         for symbols in &self.symbols {
             if let Some( (_, symbol) ) = symbols.get_symbol( relative_address ) {
+                let symbol = strip_isra( symbol ); // TODO: Remove this once `cpp_demangle` will properly support these symbols.
                 let demangled_name =
                     cpp_demangle::Symbol::new( symbol ).ok()
                         .and_then( |symbol| {
