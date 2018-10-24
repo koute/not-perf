@@ -49,3 +49,89 @@ get_regs_mips64:
     .set    reorder
     .end    get_regs_mips64
     .cfi_endproc
+
+
+    .section    .text.trampoline
+    .align 12 /* Align to a page boundary. (2 ** 12 = 4096) */
+    .globl nwind_ret_trampoline
+    .cfi_startproc
+
+.globl nwind_ret_trampoline_start
+.type nwind_ret_trampoline_start, @function
+nwind_ret_trampoline_start:
+
+    .cfi_personality 0x80,DW.ref.nwind_ret_trampoline_personality
+
+    /* The stack pointer is already unwound. */
+    .cfi_def_cfa_offset 0
+    /* We reuse the slot for the return address. */
+    .cfi_offset 16, 8
+
+    /* We need this nop as the unwinder looks at $addr - 1 when looking for a CFI. */
+    nop
+
+        .set    nomips16
+        .set    nomicromips
+        .ent    nwind_ret_trampoline
+        .type   nwind_ret_trampoline, @function
+nwind_ret_trampoline:
+        .mask   0x90000000,-8
+        .fmask  0x00000000,0
+        .set    noreorder
+        .set    nomacro
+
+    /* Pass the stack pointer as the first argument to the handler. */
+    move $4, $sp
+
+    /* Save the return value of the original function. */
+    daddiu $sp, $sp, -8
+    sd $2, ($sp)
+
+    daddiu $sp, $sp, -8
+    sd $3, ($sp)
+
+    /*
+        Load the address of our handler. This will be patched at runtime
+        with the actual address.
+    */
+    lui $25, 0x1234
+    ori $25, $25, 0x5678
+    dsll $25, $25, 16
+    ori $25, $25, 0xABCD
+    dsll $25, $25, 16
+    ori $25, $25, 0xEF00
+
+    /* Call the handler. */
+    jalr $25
+    nop
+
+    /* Grab the real return address. */
+    move $31, $2
+
+    /* Restore the original return value. */
+    ld      $3, 0($sp)
+    daddiu  $sp, $sp, 8
+
+    ld      $2, 0($sp)
+    daddiu  $sp, $sp, 8
+
+    /* Jump to the outer frame. */
+    jr $31
+    nop
+
+    .set    macro
+    .set    reorder
+    .end    nwind_ret_trampoline
+    .cfi_endproc
+    .size   nwind_ret_trampoline, .-nwind_ret_trampoline
+
+    .section    .text.startup
+
+    .hidden DW.ref.nwind_ret_trampoline_personality
+    .weak   DW.ref.nwind_ret_trampoline_personality
+    .section    .data.DW.ref.nwind_ret_trampoline_personality,"awG",@progbits,DW.ref.nwind_ret_trampoline_personality,comdat
+    .align 8
+    .type   DW.ref.nwind_ret_trampoline_personality, @object
+    .size   DW.ref.nwind_ret_trampoline_personality, 8
+DW.ref.nwind_ret_trampoline_personality:
+    .quad   nwind_ret_trampoline_personality

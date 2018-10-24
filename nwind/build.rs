@@ -12,7 +12,10 @@ fn build() {
         target => panic!( "unsupported target: {}", target )
     };
 
-    cc::Build::new().file( source ).compile( "get_regs.a" );
+    let mut build = cc::Build::new();
+    build.file( source );
+    build.file( "src/arch/shadow_stack.c" );
+    build.compile( "get_regs.a" );
 }
 
 #[cfg(not(feature = "local-unwinding"))]

@@ -15,6 +15,7 @@ extern crate cpp_demangle;
 #[cfg(feature = "addr2line")]
 extern crate addr2line;
 extern crate proc_maps;
+extern crate libc;
 
 #[cfg(test)]
 extern crate env_logger;
@@ -75,6 +76,6 @@ pub use types::{
 pub use debug_info_index::DebugInfoIndex;
 
 #[cfg(feature = "local-unwinding")]
-pub use local_unwinding::{LocalAddressSpace, UnwindControl};
+pub use local_unwinding::{LocalAddressSpace, UnwindControl, nwind_on_ret_trampoline, nwind_ret_trampoline_personality, _Unwind_RaiseException};
 
 pub use interner::{StringInterner, StringId};

@@ -1,5 +1,6 @@
 .intel_syntax noprefix
 
+.p2align 4,,15
 .globl get_regs_amd64
 .type get_regs_amd64, @function
 
@@ -45,3 +46,47 @@ get_regs_amd64:
 
     ret
     .cfi_endproc
+
+.p2align 4,,15
+.globl nwind_ret_trampoline
+.type nwind_ret_trampoline, @function
+
+    .cfi_startproc
+    .cfi_personality 0x9b,DW.ref.nwind_ret_trampoline_personality
+
+    /* The stack pointer is already unwound. */
+    .cfi_def_cfa_offset 0
+    /* We reuse the slot for the return address. */
+    .cfi_offset 16, 8
+
+    /* We need this nop as the unwinder looks at $addr - 1 when looking for a CFI. */
+    nop
+
+nwind_ret_trampoline:
+    /* Save the return value of the original function. */
+    push rax
+    push rdx
+
+    mov rdi, rsp
+    add rdi, 16
+    call nwind_on_ret_trampoline
+
+    mov rsi, rax
+    pop rdx
+    pop rax
+    jmp rsi
+    .cfi_endproc
+
+.globl nwind_on_ret_trampoline
+.type nwind_on_ret_trampoline, @function
+
+    .section    .text.startup
+
+    .hidden DW.ref.nwind_ret_trampoline_personality
+    .weak   DW.ref.nwind_ret_trampoline_personality
+    .section    .data.rel.local.DW.ref.nwind_ret_trampoline_personality,"awG",@progbits,DW.ref.nwind_ret_trampoline_personality,comdat
+    .align 8
+    .type   DW.ref.nwind_ret_trampoline_personality, @object
+    .size   DW.ref.nwind_ret_trampoline_personality, 8
+DW.ref.nwind_ret_trampoline_personality:
+    .quad   nwind_ret_trampoline_personality
