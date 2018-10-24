@@ -136,6 +136,7 @@ impl Architecture for Arch {
     const NAME: &'static str = "mips64";
     const ENDIANNESS: Endianness = Endianness::BigEndian;
     const BITNESS: Bitness = Bitness::B64;
+    const RETURN_ADDRESS_REG: u16 = dwarf::R31;
 
     type Endianity = BigEndian;
     type State = State;
@@ -210,10 +211,12 @@ impl Architecture for Arch {
         state: &mut Self::State,
         regs: &mut Self::Regs,
         regs_next: &mut Self::Regs,
-        initial_address: &mut Option< u64 >
+        initial_address: &mut Option< u64 >,
+        ra_address: &mut Option< u64 >
     ) -> Option< UnwindStatus > {
         let result = dwarf_unwind( nth_frame, memory, &mut state.ctx_cache, &mut state.unwind_cache, regs, &mut state.new_regs )?;
         *initial_address = Some( result.initial_address );
+        *ra_address = result.ra_address;
         let cfa = result.cfa?;
 
         let mut recovered_return_address = false;

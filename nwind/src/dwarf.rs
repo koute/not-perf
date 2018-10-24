@@ -16,13 +16,16 @@ use types::Bitness;
 
 pub struct DwarfResult {
     pub initial_address: u64,
-    pub cfa: Option< u64 >
+    pub cfa: Option< u64 >,
+    pub ra_address: Option< u64 >
 }
 
-fn dwarf_get_reg< A: Architecture, M: MemoryReader< A >, R: gimli::Reader >( nth_frame: usize, register: u16, memory: &M, cfa_value: u64, rule: &RegisterRule< R > ) -> Option< u64 > {
-    let value = match *rule {
+fn dwarf_get_reg< A: Architecture, M: MemoryReader< A >, R: gimli::Reader >( nth_frame: usize, register: u16, memory: &M, cfa_value: u64, rule: &RegisterRule< R > ) -> Option< (u64, u64) > {
+    let (value_address, value) = match *rule {
         RegisterRule::Offset( offset ) => {
             let value_address = (cfa_value as i64 + offset) as u64;
+            debug!( "Register {:?} at frame #{} is at 0x{:016X}", A::register_name( register ), nth_frame, value_address );
+
             let value = match memory.get_pointer_at_address( A::ENDIANNESS, A::BITNESS, value_address ) {
                 Some( value ) => value,
                 None => {
@@ -30,7 +33,7 @@ fn dwarf_get_reg< A: Architecture, M: MemoryReader< A >, R: gimli::Reader >( nth
                     return None;
                 }
             };
-            value
+            (value_address, value)
         },
         ref rule => {
             error!( "Handling for this register rule is unimplemented: {:?}", rule );
@@ -39,7 +42,7 @@ fn dwarf_get_reg< A: Architecture, M: MemoryReader< A >, R: gimli::Reader >( nth
     };
 
     debug!( "Register {:?} at frame #{} is equal to 0x{:016X}", A::register_name( register ), nth_frame, value );
-    Some( value )
+    Some( (value_address, value) )
 }
 
 pub fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
@@ -48,7 +51,8 @@ pub fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
     unwind_cache: Option< &mut UnwindInfoCache >,
     regs: &A::Regs,
     unwind_info: &UnwindInfo< A::Endianity >,
-    next_regs: &mut Vec< (u16, u64) >
+    next_regs: &mut Vec< (u16, u64) >,
+    ra_address: &mut Option< u64 >
 ) -> Option< u64 > {
     debug!( "Initial address for frame #{}: 0x{:016X}", nth_frame, unwind_info.initial_absolute_address() );
 
@@ -139,7 +143,11 @@ pub fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
     unwind_info.each_register( |(register, rule)| {
         debug!( "  Register {:?}: {:?}", A::register_name( register as _ ), rule );
 
-        if let Some( value ) = dwarf_get_reg( nth_frame + 1, register as u16, memory, cfa_value, rule ) {
+        if let Some( (value_address, value) ) = dwarf_get_reg( nth_frame + 1, register as u16, memory, cfa_value, rule ) {
+            if register == A::RETURN_ADDRESS_REG as _ {
+                *ra_address = Some( value_address );
+            }
+
             next_regs.push( (register as _, value) );
         } else {
             cacheable = false;
@@ -167,18 +175,21 @@ pub fn dwarf_unwind< A: Architecture, M: MemoryReader< A > >(
 
     let address = A::get_instruction_pointer( regs ).expect( "DWARF unwind: no instruction pointer" );
     if let Some( unwind_info ) = unwind_cache.lookup( address ) {
+        let mut ra_address = None;
         let cfa = dwarf_unwind_impl(
             nth_frame,
             memory,
             None,
             regs,
             &unwind_info,
-            next_regs
+            next_regs,
+            &mut ra_address
         );
 
         return Some( DwarfResult {
             initial_address: unwind_info.initial_absolute_address(),
-            cfa
+            cfa,
+            ra_address
         });
     }
 
@@ -191,17 +202,20 @@ pub fn dwarf_unwind< A: Architecture, M: MemoryReader< A > >(
         }
     };
 
+    let mut ra_address = None;
     let cfa = dwarf_unwind_impl(
         nth_frame,
         memory,
         Some( unwind_cache ),
         regs,
         &unwind_info,
-        next_regs
+        next_regs,
+        &mut ra_address
     );
 
     return Some( DwarfResult {
         initial_address: unwind_info.initial_absolute_address(),
-        cfa
+        cfa,
+        ra_address
     });
 }

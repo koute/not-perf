@@ -34,6 +34,7 @@ impl Architecture for Arch {
     const NAME: &'static str = "arm";
     const ENDIANNESS: Endianness = Endianness::LittleEndian;
     const BITNESS: Bitness = Bitness::B32;
+    const RETURN_ADDRESS_REG: u16 = dwarf::R15;
 
     type Endianity = LittleEndian;
     type State = ();
@@ -86,7 +87,8 @@ impl Architecture for Arch {
         _state: &mut Self::State,
         regs: &mut Self::Regs,
         regs_next: &mut Self::Regs,
-        initial_address: &mut Option< u64 >
+        initial_address: &mut Option< u64 >,
+        ra_address: &mut Option< u64 >
     ) -> Option< UnwindStatus > {
         let binary = lookup_binary( nth_frame, memory, regs )?;
         let binary_data = binary.data()?;

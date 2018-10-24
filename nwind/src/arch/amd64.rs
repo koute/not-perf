@@ -149,6 +149,7 @@ impl Architecture for Arch {
     const NAME: &'static str = "amd64";
     const ENDIANNESS: Endianness = Endianness::LittleEndian;
     const BITNESS: Bitness = Bitness::B64;
+    const RETURN_ADDRESS_REG: u16 = dwarf::RETURN_ADDRESS;
 
     type Endianity = LittleEndian;
     type State = State;
@@ -209,7 +210,8 @@ impl Architecture for Arch {
         state: &mut Self::State,
         regs: &mut Self::Regs,
         regs_next: &mut Self::Regs,
-        initial_address: &mut Option< u64 >
+        initial_address: &mut Option< u64 >,
+        ra_address: &mut Option< u64 >
     ) -> Option< UnwindStatus > {
         if !regs.contains( dwarf::RBP ) {
             let binary = lookup_binary( nth_frame, memory, regs )?;
@@ -221,6 +223,7 @@ impl Architecture for Arch {
 
         let result = dwarf_unwind( nth_frame, memory, &mut state.ctx_cache, &mut state.unwind_cache, regs, &mut state.new_regs )?;
         *initial_address = Some( result.initial_address );
+        *ra_address = result.ra_address;
         let cfa = result.cfa?;
 
         let mut recovered_return_address = false;

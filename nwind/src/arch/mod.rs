@@ -55,6 +55,7 @@ pub trait Architecture: Sized {
     const NAME: &'static str;
     const ENDIANNESS: Endianness;
     const BITNESS: Bitness;
+    const RETURN_ADDRESS_REG: u16;
 
     type Endianity: Endianity + 'static;
     type State;
@@ -78,7 +79,8 @@ pub trait Architecture: Sized {
         state: &mut Self::State,
         regs: &mut Self::Regs,
         regs_next: &mut Self::Regs,
-        initial_address: &mut Option< u64 >
+        initial_address: &mut Option< u64 >,
+        ra_address: &mut Option< u64 >
     ) -> Option< UnwindStatus >;
 }
 
