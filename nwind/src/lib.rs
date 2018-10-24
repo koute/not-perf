@@ -14,8 +14,9 @@ extern crate string_interner;
 extern crate cpp_demangle;
 #[cfg(feature = "addr2line")]
 extern crate addr2line;
-extern crate proc_maps;
 extern crate libc;
+
+pub extern crate proc_maps;
 
 #[cfg(test)]
 extern crate env_logger;
