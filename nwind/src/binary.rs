@@ -2,6 +2,7 @@ use std::str;
 use std::io;
 use std::fs::File;
 use std::ops::{Range, Deref, Index};
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
@@ -78,6 +79,7 @@ pub struct BinaryData {
 }
 
 impl BinaryData {
+    #[cfg(unix)]
     pub fn load_from_fs< P: AsRef< Path > >( path: P ) -> io::Result< Self > {
         let path = path.as_ref();
         debug!( "Loading binary {:?}...", path );
@@ -97,6 +99,11 @@ impl BinaryData {
         data.set_inode( inode );
 
         Ok( data )
+    }
+
+    #[cfg(not(unix))]
+    pub fn load_from_fs< P: AsRef< Path > >( _: P ) -> io::Result< Self > {
+        unimplemented!();
     }
 
     pub fn load_from_static_slice( name: &str, slice: &'static [u8] ) -> io::Result< Self > {
