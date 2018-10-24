@@ -5,12 +5,12 @@ authors = ["Jan Bujak <jan.bujak@nokia.com>"]
 
 [dependencies]
 libc = "0.2"
-regex = "0.2"
+regex = "1"
 lazy_static = "1"
 clap = "2"
 log = "0.4"
 env_logger = "0.5"
-parking_lot = "0.5"
+parking_lot = "0.6"
 num_cpus = "1"
 chrono = "0.4"
 speedy = "0.4"
@@ -29,7 +29,7 @@ features = ["logging", "addr2line"]
 default-features = false
 
 [dev-dependencies]
-quickcheck = "0.6"
+quickcheck = "0.7"
 criterion = "0.2"
 
 [profile.release]
