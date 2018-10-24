@@ -94,7 +94,6 @@ impl< 'a, A: Architecture > UnwindHandle< 'a, A > {
         }
 
         self.ctx.nth_frame += 1;
-        self.ctx.initial_address = None;
         let (regs, next_regs) = if self.ctx.nth_frame & 1 == 0 {
             (&mut self.ctx.regs_1, &mut self.ctx.regs_2)
         } else {
