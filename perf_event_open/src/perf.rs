@@ -457,7 +457,8 @@ pub struct PerfBuilder {
     reg_mask: u64,
     event_source: EventSource,
     inherit: bool,
-    start_disabled: bool
+    start_disabled: bool,
+    exclude_kernel: bool
 }
 
 impl PerfBuilder {
@@ -491,6 +492,12 @@ impl PerfBuilder {
         self
     }
 
+    /// Turns on the kernel measurements. This requires the `/proc/sys/kernel/perf_event_paranoid` to be less than `2`.
+    pub fn sample_kernel( mut self ) -> Self {
+        self.exclude_kernel = false;
+        self
+    }
+
     pub fn event_source( mut self, event_source: EventSource ) -> Self {
         self.event_source = event_source;
         self
@@ -515,6 +522,7 @@ impl PerfBuilder {
         let event_source = self.event_source;
         let inherit = self.inherit;
         let start_disabled = self.start_disabled;
+        let exclude_kernel = self.exclude_kernel;
 
         debug!(
             "Opening perf events; pid={}, cpu={}, frequency={}, stack_size={}, reg_mask=0x{:016X}, event_source={:?}, inherit={}, start_disabled={}...",
@@ -601,6 +609,10 @@ impl PerfBuilder {
             PERF_ATTR_FLAG_EXCLUDE_CALLCHAIN_USER |
             PERF_ATTR_FLAG_TASK;
 
+        if exclude_kernel {
+            attr.flags |= PERF_ATTR_FLAG_EXCLUDE_KERNEL;
+        }
+
         if inherit {
             attr.flags |= PERF_ATTR_FLAG_INHERIT;
         }
@@ -668,7 +680,8 @@ impl Perf {
             reg_mask: 0,
             event_source: EventSource::SwCpuClock,
             inherit: false,
-            start_disabled: false
+            start_disabled: false,
+            exclude_kernel: true
         }
     }
 
