@@ -278,7 +278,10 @@ fn process_maps( maps: &RangeMap< Region >, offline: bool, pid: u32, address_spa
 
             let data = match BinaryData::load_from_fs( &region.name ) {
                 Ok( data ) => data,
-                Err( _ ) => return
+                Err( error ) => {
+                    error!( "Failed to load '{}': {}", region.name, error );
+                    return;
+                }
             };
 
             if let Err( error ) = data.check_inode( Inode { inode: region.inode, dev_major: region.major, dev_minor: region.minor } ) {
