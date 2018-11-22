@@ -35,6 +35,7 @@ use archive::{FramedPacket, Packet, Inode, Bitness, DwarfReg, ARCHIVE_MAGIC, ARC
 use execution_queue::ExecutionQueue;
 use ps::{wait_for_process, find_process};
 use stack_reader::StackReader;
+use mount_info::PathResolver;
 
 pub enum TargetProcess {
     ByPid( u32 ),
@@ -249,7 +250,53 @@ mod tests {
     }
 }
 
-fn process_maps( maps: &RangeMap< Region >, offline: bool, pid: u32, address_space: &mut AddressSpace< arch::native::Arch >, writer: &ExecutionQueue< PacketWriter > ) {
+fn resolve_path< 'a >( path_resolver: &Option< PathResolver >, path: &'a AsRef< Path >, expected_major_minor: Option< (u32, u32) > ) -> Cow< 'a, Path > {
+    let path = path.as_ref();
+    trace!( "Trying to resolve {:?}...", path );
+
+    if path.exists() {
+        if let Some( (expected_major, expected_minor) ) = expected_major_minor {
+            if let Ok( metadata ) = fs::metadata( &path ) {
+                let dev = metadata.dev();
+                let dev_major = get_major( dev );
+                let dev_minor = get_minor( dev );
+                if expected_major == dev_major && expected_minor == dev_minor {
+                    return path.into();
+                }
+
+                trace!( "Path {:?} exists, however it doesn't match the major/minor!", path );
+            }
+        } else {
+            return path.into();
+        }
+    }
+
+    trace!( "Path {:?} doesn't exist, trying to resolve...", path );
+
+    if let &Some( ref resolver ) = path_resolver {
+        if let Some( iter ) = resolver.resolve( path ) {
+            for candidate in iter {
+                trace!( "Candidate: {:?}", candidate );
+                if candidate.exists() {
+                    debug!( "Resolved {:?} into {:?}", path, candidate );
+                    return candidate.into();
+                }
+            }
+        }
+    }
+
+    trace!( "Path {:?} was not resolved successfully!", path );
+    return path.into();
+}
+
+fn process_maps(
+    maps: &RangeMap< Region >,
+    offline: bool,
+    pid: u32,
+    path_resolver: &Option< PathResolver >,
+    address_space: &mut AddressSpace< arch::native::Arch >,
+    writer: &ExecutionQueue< PacketWriter >
+) {
     debug!( "Processing maps..." );
 
     let reloaded = {
@@ -276,10 +323,11 @@ fn process_maps( maps: &RangeMap< Region >, offline: bool, pid: u32, address_spa
                 return;
             }
 
-            let data = match BinaryData::load_from_fs( &region.name ) {
+            let path = resolve_path( path_resolver, &region.name, Some( (region.major, region.minor) ) );
+            let data = match BinaryData::load_from_fs( &path ) {
                 Ok( data ) => data,
                 Err( error ) => {
-                    error!( "Failed to load '{}': {}", region.name, error );
+                    error!( "Failed to load '{}' from {:?}: {}", region.name, path, error );
                     return;
                 }
             };
@@ -492,7 +540,7 @@ impl PacketWriter {
 fn initialize(
     sigint_handler: &SigintHandler,
     args: Args
-) -> Result< (u32, RangeMap< Region >, PerfGroup, AddressSpace< arch::native::Arch >, ExecutionQueue< PacketWriter >), Box< Error > >
+) -> Result< (u32, RangeMap< Region >, PerfGroup, AddressSpace< arch::native::Arch >, ExecutionQueue< PacketWriter >, Option< PathResolver >), Box< Error > >
 {
     let offline = args.offline;
     let pid = match args.target_process {
@@ -525,7 +573,20 @@ fn initialize(
         return Err( format!( "no process with PID {} was found", pid ).into() );
     }
 
+    let path_resolver = match PathResolver::new_for_pid( pid ) {
+        Ok( value ) => Some( value ),
+        Err( error ) => {
+            warn!( "Failed to process the mounts: {}", error );
+            warn!( "Support for profiling processes with a different mount point namespace will be broken!" );
+
+            None
+        }
+    };
+
+
     let executable = fs::read_link( format!( "/proc/{}/exe", pid ) ).map_err( |err| format!( "cannot read /proc/{}/exe: {}", pid, err ) )?;
+    let executable = resolve_path( &path_resolver, &executable, None ).into_owned();
+
     let exec_metadata = fs::metadata( &executable ).map_err( |err| format!( "cannot read the metadata of /proc/{}/exe: {}", pid, err ) )?;
     let exec_ident = Inode {
         inode: exec_metadata.ino(),
@@ -577,7 +638,7 @@ fn initialize(
         debug!( "Writing process info..." );
         fp.write_packet( Packet::ProcessInfo {
             pid: pid,
-            executable: executable.as_path().as_os_str().as_bytes().into(),
+            executable: executable.as_os_str().as_bytes().into(),
             binary_id: exec_ident
         })?;
 
@@ -603,7 +664,7 @@ fn initialize(
     address_space.set_panic_on_partial_backtrace( args.panic_on_partial_backtrace );
 
     update_maps( &mut maps, &mut new_maps );
-    process_maps( &maps, offline, pid, &mut address_space, &writer );
+    process_maps( &maps, offline, pid, &path_resolver, &mut address_space, &writer );
 
     writer.spawn( move |_| {
         info!( "Ready to write profiling data!" );
@@ -613,7 +674,7 @@ fn initialize(
     let elapsed = start_timestamp.elapsed();
     debug!( "Initial initialization done; took {}ms", get_ms( elapsed ) );
 
-    Ok( (pid, maps, perf, address_space, writer) )
+    Ok( (pid, maps, perf, address_space, writer, path_resolver) )
 }
 
 pub struct Args< 'a > {
@@ -680,7 +741,7 @@ pub fn main( args: Args ) -> Result< (), Box< Error > > {
     let offline = args.offline;
 
     let sigint = SigintHandler::new();
-    let (pid, mut maps, mut perf, mut address_space, writer) = initialize( &sigint, args )?;
+    let (pid, mut maps, mut perf, mut address_space, writer, path_resolver) = initialize( &sigint, args )?;
 
     info!( "Enabling perf events..." );
     perf.enable();
@@ -773,7 +834,7 @@ pub fn main( args: Args ) -> Result< (), Box< Error > > {
             if address_space_needs_reload {
                 address_space_needs_reload = false;
                 update_maps( &mut maps, &mut new_maps );
-                process_maps( &maps, offline, pid, &mut address_space, &writer );
+                process_maps( &maps, offline, pid, &path_resolver, &mut address_space, &writer );
                 new_maps.clear();
             }
 

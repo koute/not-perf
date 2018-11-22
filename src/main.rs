@@ -40,6 +40,7 @@ mod kallsyms;
 mod ps;
 mod stack_reader;
 mod metadata;
+mod mount_info;
 mod cmd_record;
 mod cmd_collate;
 mod cmd_metadata;
