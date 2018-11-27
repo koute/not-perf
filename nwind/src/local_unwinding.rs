@@ -71,15 +71,17 @@ pub extern fn nwind_on_ret_trampoline( stack_pointer: usize ) -> usize {
 
     while tls.tail > 0 {
         tls.tail -= 1;
-        let entry = tls.slice[ tls.tail ];
+        let index = tls.tail;
+        let entry = tls.slice[ index ];
         if entry.stack_pointer == stack_pointer {
-            debug!( "Found trampoline entry at index #{}; return address: 0x{:016X}", tls.tail, entry.return_address );
+            debug!( "Found trampoline entry at index #{}", index );
+            debug!( "Clearing shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
             return entry.return_address;
         }
     }
 
     error!( "Failed to find a matching trampoline entry" );
-    panic!();
+    panic!( "Failed to find a matching trampoline entry" );
 }
 
 #[allow(non_camel_case_types)]
@@ -127,7 +129,10 @@ pub unsafe extern fn _Unwind_RaiseException( ctx: *mut libc::c_void ) -> libc::c
     let tls = &mut *stack.tls;
     while tls.tail > 0 {
         tls.tail -= 1;
-        let entry = tls.slice[ tls.tail ];
+        let index = tls.tail;
+        let entry = tls.slice[ index ];
+
+        debug!( "Clearing shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
         *(entry.location as *mut usize) = entry.return_address;
     }
 
@@ -145,6 +150,8 @@ pub unsafe extern fn nwind_ret_trampoline_personality(
     exception: *const _Unwind_Exception,
     ctx: *const _Unwind_Context
 ) -> _Unwind_Reason_Code {
+    debug!( "Personality called!" );
+
     let ip = _Unwind_GetIP( ctx );
     assert_eq!( ip, nwind_ret_trampoline as usize );
 
@@ -242,7 +249,7 @@ impl Drop for ShadowStack {
             while index < tls.tail {
                 let entry = tls.slice[ index ];
                 let kind = if index < original_tail { "old" } else { "new" };
-                debug!( "Shadow stack ({}) #{}: 0x{:016X} at 0x{:016X} with stack pointer 0x{:016X}", kind, index, entry.return_address, entry.location, entry.stack_pointer );
+                debug!( "Shadow stack ({}) #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", kind, index, entry.return_address, entry.location, entry.stack_pointer );
                 index += 1;
             }
         }
@@ -267,21 +274,25 @@ impl ShadowStack {
         let tls = unsafe { &mut *self.tls };
 
         if *slot == nwind_ret_trampoline as usize {
-            debug!( "Found already set trampoline at 0x{:016X}", address_location );
+            debug!( "Found already set trampoline at slot 0x{:016X}", address_location );
 
             let index = tls.tail - 1;
-            let saved_address_location = tls.slice[ index ].location;
+            let entry = &tls.slice[ index ];
+            let saved_address_location = entry.location;
             if saved_address_location != address_location {
-                error!( "The address of the trampoline 0x{:016X} doesn't match the shadow stack value 0x{:016X}", saved_address_location, address_location );
-                panic!();
+                error!( "The address of the slot (0x{:016X}) doesn't match the slot address from the shadow stack (0x{:016X}) for shadow stack entry #{}", address_location, saved_address_location, index );
+                error!( "Shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
+
+                panic!( "The address of the slot doesn't match the slot address from the shadow stack" );
             }
 
             debug!( "Found shadow stack entry at #{} matching the trampoline", index );
             return Some( ShadowStackIter { slice: &tls.slice[..], index: tls.tail } );
         }
 
-        debug!( "Saving 0x{:016X} from 0x{:016X} to the shadow stack", *slot, address_location );
         self.index -= 1;
+
+        debug!( "Saving to shadow stack: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", *slot, address_location, stack_pointer );
         tls.slice[ self.index ] = ShadowEntry {
             return_address: *slot,
             location: address_location,
