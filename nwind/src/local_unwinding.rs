@@ -464,7 +464,7 @@ impl LocalAddressSpace {
             let mut shadow_stack_iter = None;
             if self.use_shadow_stack {
                 if let Some( next_address_location ) = ctx.next_address_location() {
-                    let stack_pointer = ctx.stack_pointer();
+                    let stack_pointer = ctx.next_stack_pointer();
                     shadow_stack_iter = shadow_stack.push( stack_pointer as usize, next_address_location as usize )
                 }
             }

@@ -135,19 +135,25 @@ impl< 'a, A: Architecture > UnwindHandle< 'a, A > {
 
     #[cfg(feature = "local-unwinding")]
     #[inline]
-    pub fn next_address_location( &mut self ) -> Option< u64 > {
-        self.ctx.ra_address
-    }
-
-    #[cfg(feature = "local-unwinding")]
-    #[inline]
-    pub fn stack_pointer( &self ) -> u64 {
+    fn next_regs( &self ) -> &A::Regs {
         let regs = if self.ctx.nth_frame & 1 == 0 {
             &self.ctx.regs_1
         } else {
             &self.ctx.regs_2
         };
 
-        A::get_stack_pointer( regs ).unwrap()
+        &regs
+    }
+
+    #[cfg(feature = "local-unwinding")]
+    #[inline]
+    pub fn next_address_location( &mut self ) -> Option< u64 > {
+        self.ctx.ra_address
+    }
+
+    #[cfg(feature = "local-unwinding")]
+    #[inline]
+    pub fn next_stack_pointer( &self ) -> u64 {
+        A::get_stack_pointer( self.next_regs() ).unwrap()
     }
 }
