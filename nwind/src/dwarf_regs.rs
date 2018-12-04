@@ -57,3 +57,22 @@ impl Registers for DwarfRegs {
         self.regs_list.clear();
     }
 }
+
+#[test]
+fn test_dwarf_regs() {
+    let mut regs = DwarfRegs::new();
+    assert_eq!( regs.iter().count(), 0 );
+
+    regs.append( 10, 1024 );
+    assert_eq!( regs.contains( 10 ), true );
+    assert_eq!( regs.contains( 11 ), false );
+    assert_eq!( regs.get( 10 ), Some( 1024 ) );
+    assert_eq!( regs.get( 11 ), None );
+
+    let vec: Vec< _ > = regs.iter().collect();
+    assert_eq!( vec, [(10, 1024)] );
+
+    regs.append( 50, 2048 );
+    let vec: Vec< _ > = regs.iter().collect();
+    assert_eq!( vec, [(10, 1024), (50, 2048)] );
+}
