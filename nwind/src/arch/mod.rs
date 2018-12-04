@@ -94,21 +94,18 @@ pub struct RegsIter< 'a > {
 impl< 'a > Iterator for RegsIter< 'a > {
     type Item = (u16, u64);
     fn next( &mut self ) -> Option< Self::Item > {
-        if self.index >= self.regs_list.len() {
-            return None;
-        }
-
-        let register = self.regs_list[ self.index ];
-        let value = self.regs[ register as usize ];
-        loop {
+        while self.index < self.regs_list.len() {
+            let register = self.regs_list[ self.index ];
             self.index += 1;
-            self.mask >>= 1;
-            if (self.mask & 1) != 0 || self.index >= self.regs_list.len() {
-                break;
+
+            let mask = 1_u64 << (register as u32);
+            if (self.mask & mask) != 0 {
+                let value = self.regs[ register as usize ];
+                return Some( (register, value) );
             }
         }
 
-        Some( (register, value) )
+        None
     }
 }
 
