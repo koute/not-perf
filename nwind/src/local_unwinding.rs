@@ -69,15 +69,14 @@ pub extern fn nwind_on_ret_trampoline( stack_pointer: usize ) -> usize {
     let stack = ShadowStack::get();
     let tls = unsafe { &mut *stack.tls };
 
-    while tls.tail > 0 {
-        tls.tail -= 1;
-        let index = tls.tail;
-        let entry = tls.slice[ index ];
-        if entry.stack_pointer == stack_pointer {
-            debug!( "Found trampoline entry at index #{}", index );
-            debug!( "Clearing shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
-            return entry.return_address;
-        }
+    tls.tail -= 1;
+    let index = tls.tail;
+    let entry = tls.slice[ index ];
+    if entry.stack_pointer == stack_pointer {
+       debug!( "Found trampoline entry at index #{}", index );
+       debug!( "Clearing shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
+
+       return entry.return_address;
     }
 
     error!( "Failed to find a matching trampoline entry" );
