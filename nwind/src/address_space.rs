@@ -403,6 +403,82 @@ pub trait BufferReader {
     fn get_u64_at_offset( &self, endianness: Endianness, offset: u64 ) -> Option< u64 >;
 }
 
+impl BufferReader for [u8] {
+    #[inline]
+    fn len( &self ) -> usize {
+        <[u8]>::len( self )
+    }
+
+    #[inline]
+    fn get_u32_at_offset( &self, endianness: Endianness, offset: u64 ) -> Option< u32 > {
+        if offset + mem::size_of::< u32 >() as u64 > self.len() as u64 {
+            return None;
+        }
+
+        Some( u32::read_from_slice( endianness, &self[ offset as usize.. ] ) )
+    }
+
+    #[inline]
+    fn get_u64_at_offset( &self, endianness: Endianness, offset: u64 ) -> Option< u64 > {
+        if offset + mem::size_of::< u64 >() as u64 > self.len() as u64 {
+            return None;
+        }
+
+        Some( u64::read_from_slice( endianness, &self[ offset as usize.. ] ) )
+    }
+}
+
+impl BufferReader for Vec< u8 > {
+    #[inline]
+    fn len( &self ) -> usize {
+        self.as_slice().len()
+    }
+
+    #[inline]
+    fn get_u32_at_offset( &self, endianness: Endianness, offset: u64 ) -> Option< u32 > {
+        self.as_slice().get_u32_at_offset( endianness, offset )
+    }
+
+    #[inline]
+    fn get_u64_at_offset( &self, endianness: Endianness, offset: u64 ) -> Option< u64 > {
+        self.as_slice().get_u64_at_offset( endianness, offset )
+    }
+}
+
+#[test]
+fn test_slice_buffer_reader() {
+    let slice = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xEF];
+    assert_eq!(
+        slice.get_u32_at_offset( Endianness::LittleEndian, 0 ),
+        Some( 0x78563412 )
+    );
+
+    assert_eq!(
+        slice.get_u32_at_offset( Endianness::BigEndian, 0 ),
+        Some( 0x12345678 )
+    );
+
+    assert_eq!(
+        slice.get_u32_at_offset( Endianness::LittleEndian, 1 ),
+        Some( 0x9A785634 )
+    );
+
+    assert_eq!(
+        slice.get_u32_at_offset( Endianness::LittleEndian, 2 ),
+        Some( 0xBC9A7856 )
+    );
+
+    assert_eq!(
+        slice.get_u32_at_offset( Endianness::LittleEndian, 5 ),
+        None
+    );
+
+    assert_eq!(
+        slice.get_u64_at_offset( Endianness::LittleEndian, 0 ),
+        Some( 0xEFDEBC9A78563412 )
+    );
+}
+
 pub trait MemoryReader< A: Architecture > {
     fn get_region_at_address( &self, address: u64 ) -> Option< &BinaryRegion< A > >;
     fn get_u32_at_address( &self, endianness: Endianness, address: u64 ) -> Option< u32 >;
