@@ -203,7 +203,8 @@ struct ShadowEntry {
 #[repr(C)]
 struct ShadowStackTls {
     tail: usize,
-    slice: [ShadowEntry; (SHADOW_STACK_SIZE - mem::size_of::< usize >()) / mem::size_of::< ShadowEntry >()]
+    is_enabled: usize,
+    slice: [ShadowEntry; (SHADOW_STACK_SIZE - mem::size_of::< usize >() * 2) / mem::size_of::< ShadowEntry >()]
 }
 
 struct ShadowStack {
@@ -465,6 +466,15 @@ impl LocalAddressSpace {
 
         let mut ctx = self.inner.ctx.start( &memory, LocalRegsInitializer::default() );
         let mut shadow_stack = ShadowStack::get();
+
+        unsafe {
+            if ((*shadow_stack.tls).is_enabled == 1) != self.use_shadow_stack {
+                (*shadow_stack.tls).is_enabled = if self.use_shadow_stack { 1 } else { 0 };
+                if !self.use_shadow_stack {
+                    shadow_stack.reset();
+                }
+            }
+        }
 
         loop {
             let mut shadow_stack_iter = None;
