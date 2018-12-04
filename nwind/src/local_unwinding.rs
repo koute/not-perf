@@ -124,16 +124,8 @@ extern {
 pub unsafe extern fn _Unwind_RaiseException( ctx: *mut libc::c_void ) -> libc::c_int {
     debug!( "Exception raised!" );
 
-    let stack = ShadowStack::get();
-    let tls = &mut *stack.tls;
-    while tls.tail > 0 {
-        tls.tail -= 1;
-        let index = tls.tail;
-        let entry = tls.slice[ index ];
-
-        debug!( "Clearing shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
-        *(entry.location as *mut usize) = entry.return_address;
-    }
+    let mut stack = ShadowStack::get();
+    stack.reset();
 
     let raise: extern fn( *mut libc::c_void ) -> libc::c_int = mem::transmute( libc::dlsym( libc::RTLD_NEXT, b"_Unwind_RaiseException\0".as_ptr() as *const _ ) );
     raise( ctx )
@@ -300,6 +292,21 @@ impl ShadowStack {
 
         *slot = nwind_ret_trampoline as usize;
         None
+    }
+
+    fn reset( &mut self ) {
+        debug!( "Clearing shadow stack..." );
+        let tls = unsafe { &mut *self.tls };
+        while tls.tail > 0 {
+            tls.tail -= 1;
+            let index = tls.tail;
+            let entry = tls.slice[ index ];
+
+            debug!( "Clearing shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
+            unsafe {
+                *(entry.location as *mut usize) = entry.return_address;
+            }
+        }
     }
 }
 
