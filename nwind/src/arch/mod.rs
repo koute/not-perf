@@ -1,6 +1,5 @@
 use std::fmt;
 use gimli;
-use dwarf_regs::DwarfRegs;
 use address_space::MemoryReader;
 use types::{Endianness, Bitness};
 
@@ -128,7 +127,7 @@ pub trait Registers: Clone + Default {
     fn iter< 'a >( &'a self ) -> RegsIter< 'a >;
     fn clear( &mut self );
 
-    fn from_dwarf_regs( &mut self, dwarf_regs: &DwarfRegs ) {
+    fn extend_from_regs< T: Registers >( &mut self, dwarf_regs: &T ) {
         self.clear();
         for (register, value) in dwarf_regs.iter() {
             self.append( register, value );

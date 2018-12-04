@@ -941,7 +941,7 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
         self.ctx.set_panic_on_partial_backtrace( self.panic_on_partial_backtrace );
 
         let mut ctx = self.ctx.start( &memory, |regs: &mut A::Regs| {
-            regs.from_dwarf_regs( dwarf_regs );
+            regs.extend_from_regs( dwarf_regs );
         });
 
         loop {
