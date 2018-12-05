@@ -84,11 +84,9 @@ nwind_ret_trampoline:
     move $4, $sp
 
     /* Save the return value of the original function. */
-    daddiu $sp, $sp, -8
-    sd $2, ($sp)
-
-    daddiu $sp, $sp, -8
-    sd $3, ($sp)
+    daddiu $sp, $sp, -16
+    sd $2, 0($sp)
+    sd $3, 8($sp)
 
     /*
         Load the address of our handler. This will be patched at runtime
@@ -109,15 +107,12 @@ nwind_ret_trampoline:
     move $31, $2
 
     /* Restore the original return value. */
-    ld      $3, 0($sp)
-    daddiu  $sp, $sp, 8
-
+    ld      $3, 8($sp)
     ld      $2, 0($sp)
-    daddiu  $sp, $sp, 8
 
     /* Jump to the outer frame. */
     jr $31
-    nop
+    daddiu  $sp, $sp, 16
 
     .set    macro
     .set    reorder
