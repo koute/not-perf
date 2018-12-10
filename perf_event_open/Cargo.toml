@@ -6,5 +6,5 @@ authors = ["Jan Bujak <jan.bujak@nokia.com>"]
 [dependencies]
 libc = "0.2"
 byteorder = "1"
-parking_lot = "0.6"
+parking_lot = "0.7"
 log = "0.4"
