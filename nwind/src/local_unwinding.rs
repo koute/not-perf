@@ -270,12 +270,16 @@ impl ShadowStack {
 
             let index = tls.tail - 1;
             let entry = &tls.slice[ index ];
-            let saved_address_location = entry.location;
-            if saved_address_location != address_location {
-                error!( "The address of the slot (0x{:016X}) doesn't match the slot address from the shadow stack (0x{:016X}) for shadow stack entry #{}", address_location, saved_address_location, index );
+            if entry.location != address_location {
+                debug!( "The address of the slot (0x{:016X}) doesn't match the slot address from the shadow stack (0x{:016X}) for shadow stack entry #{}", address_location, entry.location, index );
+                debug!( "Shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
+            }
+
+            if entry.stack_pointer != stack_pointer {
+                error!( "The stack pointer (0x{:016X}) doesn't match the stack pointer from the shadow stack (0x{:016X}) for shadow stack entry #{}", stack_pointer, entry.stack_pointer, index );
                 error!( "Shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
 
-                panic!( "The address of the slot doesn't match the slot address from the shadow stack" );
+                panic!( "The stack pointer doesn't match the stack pointer from the shadow stack" );
             }
 
             debug!( "Found shadow stack entry at #{} matching the trampoline", index );
