@@ -286,6 +286,16 @@ impl ShadowStack {
             return Some( ShadowStackIter { slice: &tls.slice[..], index: tls.tail } );
         }
 
+        if self.index == tls.tail {
+            error!(
+                "Shadow stack overflow: has space for only {} entries, contains {} entries from the previous unwind and {} entries from the current one",
+                tls.slice.len(),
+                tls.tail,
+                tls.slice.len() - self.index
+            );
+            panic!( "Shadow stack overflow!" );
+        }
+
         self.index -= 1;
 
         debug!( "Saving to shadow stack: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", *slot, address_location, stack_pointer );
