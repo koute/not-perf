@@ -190,7 +190,7 @@ impl< 'a > Iterator for ShadowStackIter< 'a > {
     }
 }
 
-const SHADOW_STACK_SIZE: usize = 4096;
+const SHADOW_STACK_SIZE: usize = mem::size_of::< usize >() * 16384;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
