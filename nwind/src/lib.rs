@@ -77,6 +77,6 @@ pub use types::{
 pub use debug_info_index::DebugInfoIndex;
 
 #[cfg(feature = "local-unwinding")]
-pub use local_unwinding::{LocalAddressSpace, UnwindControl, nwind_on_ret_trampoline, nwind_ret_trampoline_personality, _Unwind_RaiseException};
+pub use local_unwinding::{LocalAddressSpace, UnwindControl, nwind_on_ret_trampoline, nwind_ret_trampoline_personality, nwind_on_raise_exception};
 
 pub use interner::{StringInterner, StringId};

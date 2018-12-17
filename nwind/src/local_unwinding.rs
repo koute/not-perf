@@ -121,16 +121,12 @@ extern {
 
 #[doc(hidden)]
 #[no_mangle]
-pub unsafe extern fn _Unwind_RaiseException( ctx: *mut libc::c_void ) -> libc::c_int {
+pub unsafe extern fn nwind_on_raise_exception() {
     debug!( "Exception raised!" );
 
     let mut stack = ShadowStack::get();
     stack.reset();
-
-    let raise: extern fn( *mut libc::c_void ) -> libc::c_int = mem::transmute( libc::dlsym( libc::RTLD_NEXT, b"_Unwind_RaiseException\0".as_ptr() as *const _ ) );
-    raise( ctx )
 }
-
 
 #[doc(hidden)]
 #[no_mangle]
