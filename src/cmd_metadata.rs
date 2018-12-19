@@ -1,5 +1,4 @@
 use std::fs;
-use std::ffi::OsStr;
 use std::error::Error;
 use std::collections::HashMap;
 
@@ -8,13 +7,10 @@ use serde_json;
 use nwind::BinaryId;
 use archive::{Packet, ArchiveReader};
 use metadata::{self, Metadata};
+use args;
 
-pub struct Args< 'a > {
-    pub input_path: &'a OsStr
-}
-
-pub fn main( args: Args ) -> Result< (), Box< Error > > {
-    let fp = fs::File::open( args.input_path ).map_err( |err| format!( "cannot open {:?}: {}", args.input_path, err ) )?;
+pub fn main( args: args::MetadataArgs ) -> Result< (), Box< Error > > {
+    let fp = fs::File::open( &args.input ).map_err( |err| format!( "cannot open {:?}: {}", args.input, err ) )?;
     let mut reader = ArchiveReader::new( fp ).validate_header().unwrap().skip_unknown();
 
     let mut binary_id_to_index = HashMap::new();
@@ -68,7 +64,7 @@ pub fn main( args: Args ) -> Result< (), Box< Error > > {
     }
 
     if !is_valid {
-        return Err( format!( "input {:?} is not a valid archive", args.input_path ).into() )
+        return Err( format!( "input {:?} is not a valid archive", args.input ).into() )
     }
 
     println!( "{}", serde_json::to_string_pretty( &metadata ).unwrap() );

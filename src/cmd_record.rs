@@ -27,7 +27,8 @@ use nwind::{
     BinaryId
 };
 
-use perf_event_open::{Event, CommEvent, Mmap2Event, EventSource};
+use args;
+use perf_event_open::{Event, CommEvent, Mmap2Event};
 use perf_group::PerfGroup;
 use perf_arch;
 use utils::{SigintHandler, read_string_lossy, get_major, get_minor, get_ms};
@@ -539,11 +540,12 @@ impl PacketWriter {
 
 fn initialize(
     sigint_handler: &SigintHandler,
-    args: Args
+    args: args::RecordArgs
 ) -> Result< (u32, RangeMap< Region >, PerfGroup, AddressSpace< arch::native::Arch >, ExecutionQueue< PacketWriter >, Option< PathResolver >), Box< Error > >
 {
     let offline = args.offline;
-    let pid = match args.target_process {
+    let target_process = args.process_filter.into();
+    let pid = match target_process {
         TargetProcess::ByPid( pid ) => pid,
         TargetProcess::ByName( name ) => {
             if let Some( pid ) = find_process( &name ).unwrap() {
@@ -594,7 +596,7 @@ fn initialize(
         dev_minor: get_minor( exec_metadata.dev() )
     };
 
-    let output_path = if let Some( output_path ) = args.output_path {
+    let output_path = if let Some( output_path ) = args.output {
         output_path.to_os_string()
     } else {
         let executable = executable.to_string_lossy();
@@ -677,20 +679,6 @@ fn initialize(
     Ok( (pid, maps, perf, address_space, writer, path_resolver) )
 }
 
-pub struct Args< 'a > {
-    pub target_process: TargetProcess,
-    pub frequency: u64,
-    pub event_source: EventSource,
-    pub stack_size: u32,
-    pub discard_all: bool,
-    pub sample_count_limit: Option< u64 >,
-    pub time_limit: Option< u64 >,
-    pub output_path: Option< &'a OsStr >,
-    pub lock_memory: bool,
-    pub offline: bool,
-    pub panic_on_partial_backtrace: bool
-}
-
 fn handle_comm_event( event: CommEvent, writer: &ExecutionQueue< PacketWriter > ) {
     let packet = Packet::ThreadName {
         pid: event.pid,
@@ -734,8 +722,8 @@ fn handle_mmap2_event( event: Mmap2Event, new_maps: &mut Vec< Region > ) -> bool
     }
 }
 
-pub fn main( args: Args ) -> Result< (), Box< Error > > {
-    let sample_count_limit = args.sample_count_limit;
+pub fn main( args: args::RecordArgs ) -> Result< (), Box< Error > > {
+    let sample_count_limit = args.sample_count;
     let time_limit = args.time_limit;
     let discard_all = args.discard_all;
     let offline = args.offline;

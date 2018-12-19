@@ -1,5 +1,5 @@
 use std::fs;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::io::{self, Write};
 use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
@@ -30,6 +30,7 @@ use nwind::{
     DebugInfoIndex
 };
 
+use args;
 use archive::{Packet, Inode, Bitness, UserFrame, ArchiveReader};
 use utils::StableIndex;
 use kallsyms::{self, KernelSymbol};
@@ -200,16 +201,6 @@ fn get_basename( path: &str ) -> String {
 pub enum CollateFormat {
     Collapsed,
     PerfLike
-}
-
-pub struct Args< 'a > {
-    pub input_path: &'a OsStr,
-    pub debug_symbols: Vec< OsString >,
-    pub force_stack_size: Option< u32 >,
-    pub omit_symbols: Vec< String >,
-    pub only_sample: Option< u64 >,
-    pub without_kernel_callstacks: bool,
-    pub format: CollateFormat
 }
 
 struct CollateArgs< 'a > {
@@ -765,18 +756,18 @@ fn write_frame< T: fmt::Write >( collation: &Collation, interner: &StringInterne
     }
 }
 
-pub fn main( args: Args ) -> Result< (), Box< Error > > {
-    let omit_regex = if args.omit_symbols.is_empty() {
+pub fn main( args: args::CollateArgs ) -> Result< (), Box< Error > > {
+    let omit_regex = if args.omit.is_empty() {
         None
     } else {
-        let regex = args.omit_symbols.join( "|" );
+        let regex = args.omit.join( "|" );
         let regex = Regex::new( &regex ).expect( "invalid regexp passed in `--omit`" );
         Some( regex )
     };
 
     let debug_symbols: Vec< _ > = args.debug_symbols.iter().map( |path| path.as_os_str() ).collect();
     let collate_args = CollateArgs {
-        input_path: args.input_path,
+        input_path: &args.input,
         debug_symbols: &debug_symbols,
         force_stack_size: args.force_stack_size,
         only_sample: args.only_sample,
