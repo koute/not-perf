@@ -1,5 +1,5 @@
 use std::fs;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
 use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
@@ -196,6 +196,7 @@ fn get_basename( path: &str ) -> String {
     path[ path.rfind( "/" ).map( |index| index + 1 ).unwrap_or( 0 ).. ].to_owned()
 }
 
+#[derive(Debug)]
 pub enum CollateFormat {
     Collapsed,
     PerfLike
@@ -203,9 +204,9 @@ pub enum CollateFormat {
 
 pub struct Args< 'a > {
     pub input_path: &'a OsStr,
-    pub debug_symbols: Vec< &'a OsStr >,
+    pub debug_symbols: Vec< OsString >,
     pub force_stack_size: Option< u32 >,
-    pub omit_symbols: Vec< &'a str >,
+    pub omit_symbols: Vec< String >,
     pub only_sample: Option< u64 >,
     pub without_kernel_callstacks: bool,
     pub format: CollateFormat
@@ -773,9 +774,10 @@ pub fn main( args: Args ) -> Result< (), Box< Error > > {
         Some( regex )
     };
 
+    let debug_symbols: Vec< _ > = args.debug_symbols.iter().map( |path| path.as_os_str() ).collect();
     let collate_args = CollateArgs {
         input_path: args.input_path,
-        debug_symbols: &args.debug_symbols,
+        debug_symbols: &debug_symbols,
         force_stack_size: args.force_stack_size,
         only_sample: args.only_sample,
         without_kernel_callstacks: args.without_kernel_callstacks
