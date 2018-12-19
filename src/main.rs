@@ -42,6 +42,7 @@ mod ps;
 mod stack_reader;
 mod metadata;
 mod mount_info;
+mod profiler;
 mod cmd_record;
 mod cmd_collate;
 mod cmd_metadata;
@@ -61,7 +62,7 @@ fn main_impl() -> Result< (), Box< Error >  > {
     let opt = args::Opt::from_args();
     match opt {
         args::Opt::Record( args ) => {
-            if args.panic_on_partial_backtrace {
+            if args.profiler_args.panic_on_partial_backtrace {
                 warn!( "Will panic on partial backtraces!" );
                 if env::var( "RUST_BACKTRACE" ).is_err() {
                     env::set_var( "RUST_BACKTRACE", "1" );

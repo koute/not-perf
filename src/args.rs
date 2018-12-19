@@ -3,7 +3,7 @@ use structopt::StructOpt;
 
 use perf_event_open::EventSource;
 
-use cmd_record::TargetProcess;
+use profiler::TargetProcess;
 use cmd_collate::CollateFormat;
 
 fn parse_event_source( source: &str ) -> EventSource {
@@ -25,7 +25,7 @@ fn parse_collate_format( format: &str ) -> CollateFormat {
     }
 }
 
-#[derive(StructOpt, Debug)]
+#[derive(StructOpt, Clone, Debug)]
 pub struct ProcessFilter {
     /// Profiles a process with a given PID (conflicts with --process)
     #[structopt(
@@ -74,10 +74,41 @@ impl From< ProcessFilter > for TargetProcess {
 
 #[derive(StructOpt, Debug)]
 #[structopt(rename_all = "kebab-case")]
+pub struct GenericProfilerArgs {
+    /// The file to which the profiling data will be written
+    #[structopt(long, short = "o", parse(from_os_str))]
+    pub output: Option< OsString >,
+
+    /// The number of samples to gather; unlimited by default
+    #[structopt(long)]
+    pub sample_count: Option< u64 >,
+
+    /// Determines for how many seconds the measurements will be gathered
+    #[structopt(long, short = "l")]
+    pub time_limit: Option< u64 >,
+
+    /// Prevents anything in the profiler's address space from being swapped out; might increase memory usage significantly
+    #[structopt(long)]
+    pub lock_memory: bool,
+
+    /// Disable online backtracing
+    #[structopt(long)]
+    pub offline: bool,
+
+    #[structopt(long, raw(hidden = "true"))]
+    pub panic_on_partial_backtrace: bool,
+
+    #[structopt(flatten)]
+    pub process_filter: ProcessFilter
+}
+
+#[derive(StructOpt, Debug)]
+#[structopt(rename_all = "kebab-case")]
 pub struct RecordArgs {
     /// The frequency with which the measurements will be gathered
     #[structopt(long, short = "F", default_value = "900")]
     pub frequency: u64,
+
     /// The source of perf events
     #[structopt(
         long,
@@ -93,33 +124,17 @@ pub struct RecordArgs {
         ]"#)
     )]
     pub event_source: EventSource,
+
     /// Size of the gathered stack payloads (in bytes)
     #[structopt(long, default_value = "24576")]
     pub stack_size: u32,
-    /// The file to which the profiling data will be written
-    #[structopt(long, short = "o", parse(from_os_str))]
-    pub output: Option< OsString >,
-    /// The number of samples to gather; unlimited by default
-    #[structopt(long)]
-    pub sample_count: Option< u64 >,
-    /// Determines for how many seconds the measurements will be gathered
-    #[structopt(long, short = "l")]
-    pub time_limit: Option< u64 >,
+
     /// Gather data but do not do anything with it; useful only for testing
     #[structopt(long)]
     pub discard_all: bool,
-    /// Prevents anything in the profiler's address space from being swapped out; might increase memory usage significantly
-    #[structopt(long)]
-    pub lock_memory: bool,
 
     #[structopt(flatten)]
-    pub process_filter: ProcessFilter,
-
-    /// Disable online backtracing
-    #[structopt(long)]
-    pub offline: bool,
-    #[structopt(long, raw(hidden = "true"))]
-    pub panic_on_partial_backtrace: bool
+    pub profiler_args: GenericProfilerArgs
 }
 
 #[derive(StructOpt, Debug)]
