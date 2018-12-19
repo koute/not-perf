@@ -83,7 +83,8 @@ fn main_impl() -> Result< (), Box< Error >  > {
                             "hw_cpu_cycles",
                             "hw_ref_cpu_cycles",
                             "sw_cpu_clock",
-                            "sw_page_faults"
+                            "sw_page_faults",
+                            "sw_dummy"
                         ])
                         .default_value( "hw_cpu_cycles" )
                         .help( "The source of perf events" )
@@ -274,6 +275,7 @@ fn main_impl() -> Result< (), Box< Error >  > {
             "hw_ref_cpu_cycles" => EventSource::HwRefCpuCycles,
             "sw_cpu_clock" => EventSource::SwCpuClock,
             "sw_page_faults" => EventSource::SwPageFaults,
+            "sw_dummy" => EventSource::SwDummy,
             _ => unreachable!()
         };
 
