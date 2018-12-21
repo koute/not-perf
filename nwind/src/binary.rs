@@ -64,6 +64,7 @@ pub struct BinaryData {
     data_range: Option< Range< usize > >,
     text_range: Option< Range< usize > >,
     eh_frame_range: Option< Range< usize > >,
+    eh_frame_hdr_range: Option< Range< usize > >,
     debug_frame_range: Option< Range< usize > >,
     gnu_debuglink_range: Option< Range< usize > >,
     arm_extab_range: Option< Range< usize > >,
@@ -132,6 +133,7 @@ impl BinaryData {
         let mut data_range = None;
         let mut text_range = None;
         let mut eh_frame_range = None;
+        let mut eh_frame_hdr_range = None;
         let mut debug_frame_range = None;
         let mut gnu_debuglink_range = None;
         let mut arm_extab_range = None;
@@ -217,6 +219,7 @@ impl BinaryData {
                         ".data" => Some( &mut data_range ),
                         ".text" => Some( &mut text_range ),
                         ".eh_frame" => Some( &mut eh_frame_range ),
+                        ".eh_frame_hdr" => Some( &mut eh_frame_hdr_range ),
                         ".debug_frame" => Some( &mut debug_frame_range ),
                         ".gnu_debuglink" => Some( &mut gnu_debuglink_range ),
                         ".ARM.extab" => Some( &mut arm_extab_range ),
@@ -279,6 +282,7 @@ impl BinaryData {
             data_range,
             text_range,
             eh_frame_range,
+            eh_frame_hdr_range,
             debug_frame_range,
             gnu_debuglink_range,
             arm_extab_range,
@@ -354,6 +358,11 @@ impl BinaryData {
     #[inline]
     pub fn eh_frame_range( &self ) -> Option< Range< usize > > {
         self.eh_frame_range.clone()
+    }
+
+    #[inline]
+    pub fn eh_frame_hdr_range( &self ) -> Option< Range< usize > > {
+        self.eh_frame_hdr_range.clone()
     }
 
     #[inline]
