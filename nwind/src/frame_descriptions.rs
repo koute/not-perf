@@ -37,13 +37,13 @@ pub struct ContextCache< E: Endianity > {
     cached_debug_frame: Vec< UninitializedUnwindContext< DebugFrame< DataReader< E > >, DataReader< E > > >
 }
 
-trait CachableSection< 'a, E: Endianity >: UnwindSection< DataReader< E > > where <Self as UnwindSection< DataReader< E > >>::Offset: UnwindOffset {
+trait CachableSection< E: Endianity >: UnwindSection< DataReader< E > > where <Self as UnwindSection< DataReader< E > >>::Offset: UnwindOffset {
     fn get( ctx_cache: &mut ContextCache< E > ) -> UninitializedUnwindContext< Self, DataReader< E > >;
     fn cache( ctx_cache: &mut ContextCache< E >, uuc: UninitializedUnwindContext< Self, DataReader< E > > );
     fn wrap_context( iuc: UnsafeCell< InitializedUnwindContext< Self, DataReader< E > > > ) -> IUC< E >;
 }
 
-impl< 'a, E: Endianity > CachableSection< 'a, E > for EhFrame< DataReader< E > > {
+impl< E: Endianity > CachableSection< E > for EhFrame< DataReader< E > > {
     fn get( ctx_cache: &mut ContextCache< E > ) -> UninitializedUnwindContext< Self, DataReader< E > > {
         let uuc = ctx_cache.cached_eh_frame.pop().unwrap_or_else( || Default::default() );
         unsafe { mem::transmute( uuc ) }
@@ -58,7 +58,7 @@ impl< 'a, E: Endianity > CachableSection< 'a, E > for EhFrame< DataReader< E > >
     }
 }
 
-impl< 'a, E: Endianity > CachableSection< 'a, E > for DebugFrame< DataReader< E > > {
+impl< E: Endianity > CachableSection< E > for DebugFrame< DataReader< E > > {
     fn get( ctx_cache: &mut ContextCache< E > ) -> UninitializedUnwindContext< Self, DataReader< E > > {
         let uuc = ctx_cache.cached_debug_frame.pop().unwrap_or_else( || Default::default() );
         unsafe { mem::transmute( uuc ) }
@@ -83,7 +83,7 @@ impl< E: Endianity > ContextCache< E > {
     }
 
     #[inline]
-    fn cache< 'a, U: CachableSection< 'a, E > >( &mut self, iuc: InitializedUnwindContext< U, DataReader< E > > )
+    fn cache< U: CachableSection< E > >( &mut self, iuc: InitializedUnwindContext< U, DataReader< E > > )
         where <U as UnwindSection< DataReader< E > >>::Offset: UnwindOffset
     {
         U::cache( self, iuc.reset() );
@@ -129,7 +129,7 @@ impl UnwindInfoCache {
         }
     }
 
-    pub fn lookup< 'a, E: Endianity >( &'a mut self, absolute_address: u64 ) -> Option< UnwindInfo< 'a, E > > {
+    pub fn lookup< E: Endianity >( &mut self, absolute_address: u64 ) -> Option< UnwindInfo< E > > {
         let info = match self.cache.get( &absolute_address ) {
             Some( info ) => info,
             None => return None
@@ -309,32 +309,43 @@ impl< E: Endianity > FrameDescriptions< E > {
             absolute_address
         };
 
-        // HACK: Returning the first `info` invalidates the `ctx_cache` mutable reference,
-        //       so we keep a raw pointer to use it again.
-        let ctx_cache_ptr = ctx_cache as *mut _;
-        {
-            let info = Self::find_unwind_info_impl( &self.debug_descriptions, ctx_cache, absolute_address, address );
-            if info.is_some() {
-                return info;
+        let mut info = None;
+
+        if !self.debug_descriptions.is_empty() {
+            if let Some( fde ) = self.debug_descriptions.get_value( address ) {
+                info = Self::find_unwind_info_impl( fde, ctx_cache, address );
             }
         }
 
-        Self::find_unwind_info_impl( &self.eh_descriptions, unsafe { &mut *ctx_cache_ptr }, absolute_address, address )
-    }
-
-    fn find_unwind_info_impl< 'a, U: CachableSection< 'a, E > >(
-        descriptions: &RangeMap< FrameDescriptionEntry< U, DataReader< E > > >,
-        ctx_cache: &'a mut ContextCache< E >,
-        absolute_address: u64,
-        address: u64
-    ) -> Option< UnwindInfo< 'a, E > >
-        where <U as UnwindSection< DataReader< E > >>::Offset: UnwindOffset
-    {
-        if descriptions.is_empty() {
-            return None;
+        if info.is_none() && !self.eh_descriptions.is_empty() {
+            if let Some( fde ) = self.eh_descriptions.get_value( address ) {
+                info = Self::find_unwind_info_impl( fde, ctx_cache, address );
+            }
         }
 
-        let fde = descriptions.get_value( address )?;
+        if let Some( (initial_address, info) ) = info {
+            Some( UnwindInfo {
+                initial_address,
+                address,
+                absolute_address,
+                kind: UnwindInfoKind::Uncached {
+                    iuc: info.iuc,
+                    row: info.row,
+                    cache: ctx_cache
+                }
+            })
+        } else {
+            None
+        }
+    }
+
+    fn find_unwind_info_impl< U: CachableSection< E > >(
+        fde: &FrameDescriptionEntry< U, DataReader< E > >,
+        ctx_cache: &mut ContextCache< E >,
+        address: u64
+    ) -> Option< (u64, UncachedUnwindInfo< E >) >
+        where <U as UnwindSection< DataReader< E > >>::Offset: UnwindOffset
+    {
         let ctx = U::get( ctx_cache );
         let ctx = match ctx.initialize( fde.cie() ) {
             Ok( ctx ) => ctx,
@@ -359,16 +370,10 @@ impl< E: Endianity > FrameDescriptions< E > {
 
             if row.contains( address ) {
                 let row = row.clone();
-                return Some( UnwindInfo {
-                    initial_address,
-                    address,
-                    absolute_address,
-                    kind: UnwindInfoKind::Uncached {
-                        iuc: ManuallyDrop::new( U::wrap_context( ctx ) ),
-                        row: ManuallyDrop::new( row ),
-                        cache: ctx_cache
-                    }
-                });
+                return Some( (initial_address, UncachedUnwindInfo {
+                    iuc: ManuallyDrop::new( U::wrap_context( ctx ) ),
+                    row: ManuallyDrop::new( row )
+                }));
             }
         }
 
@@ -382,6 +387,11 @@ impl< E: Endianity > FrameDescriptions< E > {
 enum IUC< E: Endianity > {
     EhFrame( UnsafeCell< InitializedUnwindContext< EhFrame< DataReader< E > >, DataReader< E > > > ),
     DebugFrame( UnsafeCell< InitializedUnwindContext< DebugFrame< DataReader< E > >, DataReader< E > > > )
+}
+
+struct UncachedUnwindInfo< E: Endianity > {
+    iuc: ManuallyDrop< IUC< E > >,
+    row: ManuallyDrop< UnwindTableRow< DataReader< E > > >
 }
 
 enum UnwindInfoKind< 'a, E: Endianity + 'a > {
