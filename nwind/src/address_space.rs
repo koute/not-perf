@@ -30,7 +30,15 @@ use types::{Bitness, Inode, UserFrame, Endianness, BinaryId};
 mod addr2line {
     use std::marker::PhantomData;
     use std::borrow::Cow;
+    use std::fmt;
     use gimli;
+
+    pub struct UnsupportedError;
+    impl fmt::Display for UnsupportedError {
+        fn fmt( &self, fmt: &mut fmt::Formatter ) -> fmt::Result {
+            write!( fmt, "unsupported" )
+        }
+    }
 
     pub struct Context< T >( PhantomData< T > );
     pub struct Frame< T > {
@@ -59,8 +67,8 @@ mod addr2line {
     pub struct FrameIter< T >( PhantomData< T > );
 
     impl< T > FrameIter< T > {
-        pub fn next( &mut self ) -> Result< Option< Frame< T > >, () > {
-            Err(())
+        pub fn next( &mut self ) -> Result< Option< Frame< T > >, UnsupportedError > {
+            Err( UnsupportedError )
         }
     }
 
