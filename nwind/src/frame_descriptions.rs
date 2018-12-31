@@ -452,6 +452,12 @@ impl< E: Endianity > FrameDescriptions< E > {
             }
         }
 
+        if info.is_none() && !self.eh_descriptions.is_empty() {
+            if let Some( fde ) = self.eh_descriptions.get_value( address ) {
+                info = Self::find_unwind_info_impl( fde, ctx_cache, address );
+            }
+        }
+
         if info.is_none() {
             if let Some( &(ref bases, ref eh_bases, ref eh_frame_hdr) ) = self.eh_frame_hdr.as_ref() {
                 let eh_frame = self.eh_frame.as_ref().unwrap();
@@ -477,12 +483,6 @@ impl< E: Endianity > FrameDescriptions< E > {
                         debug!( "FDE not found in .eh_frame_hdr for 0x{:016X}: {}", absolute_address, error );
                     }
                 }
-            }
-        }
-
-        if info.is_none() && !self.eh_descriptions.is_empty() {
-            if let Some( fde ) = self.eh_descriptions.get_value( address ) {
-                info = Self::find_unwind_info_impl( fde, ctx_cache, address );
             }
         }
 
