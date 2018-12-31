@@ -23,7 +23,7 @@ use range_map::RangeMap;
 use unwind_context::UnwindContext;
 use binary::{BinaryData, LoadHeader, BinaryDataReader};
 use symbols::Symbols;
-use frame_descriptions::{FrameDescriptions, ContextCache, UnwindInfo, AddressMapping};
+use frame_descriptions::{FrameDescriptions, ContextCache, UnwindInfo, AddressMapping, LoadHint};
 use types::{Bitness, Inode, UserFrame, Endianness, BinaryId};
 
 #[cfg(not(feature = "addr2line"))]
@@ -556,6 +556,9 @@ pub struct LoadHandle {
     debug_binary: Option< Arc< BinaryData > >,
     symbols: Vec< Symbols >,
     mappings: Vec< LoadHeader >,
+    use_eh_frame_hdr: bool,
+    load_eh_frame: LoadHint,
+    load_debug_frame: bool,
     load_frame_descriptions: bool,
     load_symbols: bool
 }
@@ -579,6 +582,18 @@ impl LoadHandle {
 
     pub fn should_load_frame_descriptions( &mut self, value: bool ) {
         self.load_frame_descriptions = value;
+    }
+
+    pub fn should_use_eh_frame_hdr( &mut self, value: bool ) {
+        self.use_eh_frame_hdr = value;
+    }
+
+    pub fn should_load_debug_frame( &mut self, value: bool ) {
+        self.load_debug_frame = value;
+    }
+
+    pub fn should_load_eh_frame( &mut self, value: LoadHint ) {
+        self.load_eh_frame = value;
     }
 
     pub fn should_load_symbols( &mut self, value: bool ) {
@@ -694,6 +709,9 @@ fn reload< A: Architecture >(
         frame_descriptions: Option< FrameDescriptions< E > >,
         regions: Vec< (Region, bool) >,
         load_symbols: bool,
+        use_eh_frame_hdr: bool,
+        load_eh_frame: LoadHint,
+        load_debug_frame: bool,
         load_frame_descriptions: bool,
         is_old: bool,
         context: Option< addr2line::Context< BinaryDataReader > >
@@ -743,6 +761,9 @@ fn reload< A: Architecture >(
                     frame_descriptions,
                     regions: Vec::new(),
                     load_symbols: false,
+                    use_eh_frame_hdr: true,
+                    load_eh_frame: LoadHint::WhenNecessary,
+                    load_debug_frame: true,
                     load_frame_descriptions: false,
                     is_old: true,
                     context
@@ -755,6 +776,9 @@ fn reload< A: Architecture >(
                     debug_binary: None,
                     symbols: Vec::new(),
                     mappings: Vec::new(),
+                    use_eh_frame_hdr: true,
+                    load_eh_frame: LoadHint::WhenNecessary,
+                    load_debug_frame: true,
                     load_frame_descriptions: true,
                     load_symbols: true
                 };
@@ -787,6 +811,9 @@ fn reload< A: Architecture >(
                     frame_descriptions: None,
                     regions: Vec::new(),
                     load_symbols: handle.load_symbols,
+                    use_eh_frame_hdr: handle.use_eh_frame_hdr,
+                    load_eh_frame: handle.load_eh_frame,
+                    load_debug_frame: handle.load_debug_frame,
                     load_frame_descriptions: handle.load_frame_descriptions,
                     is_old: false,
                     context: None
@@ -874,7 +901,11 @@ fn reload< A: Architecture >(
             Some( frame_descriptions ) => Some( frame_descriptions ),
             None if data.load_frame_descriptions => {
                 if let Some( binary_data ) = data.binary_data.as_ref() {
-                    FrameDescriptions::load( &binary_data )
+                    FrameDescriptions::new( &binary_data )
+                        .should_use_eh_frame_hdr( data.use_eh_frame_hdr )
+                        .should_load_eh_frame( data.load_eh_frame )
+                        .should_load_debug_frame( data.load_debug_frame )
+                        .load()
                 } else {
                     None
                 }

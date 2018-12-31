@@ -27,7 +27,8 @@ use nwind::{
     BinaryId,
     StringInterner,
     StringId,
-    DebugInfoIndex
+    DebugInfoIndex,
+    LoadHint
 };
 
 use args;
@@ -58,8 +59,14 @@ struct Process {
     address_space_needs_reload: bool
 }
 
+struct FdeHints {
+    use_eh_frame_hdr: bool,
+    load_eh_frame: LoadHint,
+    load_debug_frame: bool
+}
+
 impl Process {
-    fn reload_if_necessary( &mut self, debug_info_index: &DebugInfoIndex, binary_by_id: &mut HashMap< BinaryId, Binary > ) {
+    fn reload_if_necessary( &mut self, debug_info_index: &DebugInfoIndex, binary_by_id: &mut HashMap< BinaryId, Binary >, fde_hints: &FdeHints ) {
         if !self.address_space_needs_reload {
             return;
         }
@@ -106,6 +113,10 @@ impl Process {
                     handle.set_debug_binary( data.clone() );
                 }
             }
+
+            handle.should_use_eh_frame_hdr( fde_hints.use_eh_frame_hdr );
+            handle.should_load_eh_frame( fde_hints.load_eh_frame );
+            handle.should_load_debug_frame( fde_hints.load_debug_frame );
         });
     }
 }
@@ -209,6 +220,7 @@ struct CollateArgs< 'a > {
     force_stack_size: Option< u32 >,
     only_sample: Option< u64 >,
     without_kernel_callstacks: bool,
+    fde_hints: FdeHints
 }
 
 struct Collation {
@@ -482,7 +494,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                     continue;
                 }
 
-                collation.processes[ 0 ].reload_if_necessary( &debug_info_index, &mut collation.binary_by_id );
+                collation.processes[ 0 ].reload_if_necessary( &debug_info_index, &mut collation.binary_by_id, &args.fde_hints );
 
                 if args.without_kernel_callstacks {
                     kernel_backtrace = Vec::new().into();
@@ -513,7 +525,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
 
                 let user_backtrace = {
                     let mut process = &mut collation.processes[ 0 ];
-                    process.reload_if_necessary( &debug_info_index, &mut collation.binary_by_id );
+                    process.reload_if_necessary( &debug_info_index, &mut collation.binary_by_id, &args.fde_hints );
 
                     let mut dwarf_regs = DwarfRegs::new();
                     for reg in regs.iter() {
@@ -771,7 +783,12 @@ pub fn main( args: args::CollateArgs ) -> Result< (), Box< Error > > {
         debug_symbols: &debug_symbols,
         force_stack_size: args.force_stack_size,
         only_sample: args.only_sample,
-        without_kernel_callstacks: args.without_kernel_callstacks
+        without_kernel_callstacks: args.without_kernel_callstacks,
+        fde_hints: FdeHints {
+            use_eh_frame_hdr: false,
+            load_eh_frame: LoadHint::Always,
+            load_debug_frame: true
+        }
     };
 
     match args.format {
@@ -837,7 +854,8 @@ pub fn main( args: args::CollateArgs ) -> Result< (), Box< Error > > {
 
 #[cfg(test)]
 mod test {
-    use super::{StringInterner, CollateArgs, FrameKind, Collation, collate, collapse_frames};
+    use super::{StringInterner, CollateArgs, FrameKind, Collation, FdeHints, collate, collapse_frames};
+    use nwind::LoadHint;
     use std::path::Path;
     use std::collections::HashMap;
     use env_logger;
@@ -849,6 +867,14 @@ mod test {
     }
 
     fn load( filename: &str ) -> Data {
+        load_with_fde_hints( filename, FdeHints {
+            use_eh_frame_hdr: false,
+            load_eh_frame: LoadHint::Always,
+            load_debug_frame: true
+        })
+    }
+
+    fn load_with_fde_hints( filename: &str, fde_hints: FdeHints ) -> Data {
         let _ = env_logger::try_init();
         let mut interner = StringInterner::new();
         let path = Path::new( env!( "CARGO_MANIFEST_DIR" ) ).join( "test-data" ).join( "artifacts" ).join( filename );
@@ -857,7 +883,8 @@ mod test {
             debug_symbols: &[],
             force_stack_size: None,
             only_sample: None,
-            without_kernel_callstacks: false
+            without_kernel_callstacks: false,
+            fde_hints
         };
 
         let mut stacks: HashMap< Vec< FrameKind >, u64 > = HashMap::new();

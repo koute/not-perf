@@ -4,6 +4,7 @@ use std::mem::{self, ManuallyDrop};
 use std::ptr;
 use std::cell::UnsafeCell;
 use std::time::Instant;
+use std::marker::PhantomData;
 
 use lru::LruCache;
 
@@ -182,8 +183,55 @@ impl< T: ::gimli::Reader > Into< RegisterRule< T > > for SimpleRegisterRule {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum LoadHint {
+    WhenNecessary,
+    Always,
+    Never
+}
+
+pub struct FrameDescriptionsBuilder< E: Endianity > {
+    binary: Arc< BinaryData >,
+    use_eh_frame_hdr: bool,
+    load_eh_frame: LoadHint,
+    load_debug_frame: bool,
+    phantom: PhantomData< E >
+}
+
+impl< E: Endianity > FrameDescriptionsBuilder< E > {
+    pub fn load( self ) -> Option< FrameDescriptions< E > > {
+        FrameDescriptions::< E >::load_with_options( self )
+    }
+
+    pub fn should_use_eh_frame_hdr( mut self, value: bool ) -> Self {
+        self.use_eh_frame_hdr = value;
+        self
+    }
+
+    pub fn should_load_eh_frame( mut self, value: LoadHint ) -> Self {
+        self.load_eh_frame = value;
+        self
+    }
+
+    pub fn should_load_debug_frame( mut self, value: bool ) -> Self {
+        self.load_debug_frame = value;
+        self
+    }
+}
+
 impl< E: Endianity > FrameDescriptions< E > {
-    pub fn load( binary: &Arc< BinaryData > ) -> Option< Self > {
+    pub fn new( binary: &Arc< BinaryData > ) -> FrameDescriptionsBuilder< E > {
+        FrameDescriptionsBuilder {
+            binary: binary.clone(),
+            use_eh_frame_hdr: true,
+            load_eh_frame: LoadHint::WhenNecessary,
+            load_debug_frame: true,
+            phantom: PhantomData
+        }
+    }
+
+    fn load_with_options( builder: FrameDescriptionsBuilder< E > ) -> Option< Self > {
+        let binary = &builder.binary;
         let eh_frame;
         if let Some( range ) = binary.eh_frame_range() {
             let eh_frame_data: &[u8] = &binary.as_bytes()[ range ];
@@ -193,18 +241,28 @@ impl< E: Endianity > FrameDescriptions< E > {
             eh_frame = None;
         }
 
-        let eh_frame_hdr = Self::load_eh_frame_hdr( binary );
+        let eh_frame_hdr;
+        if builder.use_eh_frame_hdr {
+            eh_frame_hdr = Self::load_eh_frame_hdr( binary );
+        } else {
+            eh_frame_hdr = None;
+        }
 
-        let debug_descriptions: RangeMap< DebugFrameDescription< E > > = Self::load_debug_frame( binary );
-        let debug_descriptions: RangeMap< DebugFrameDescription< 'static, E > > = unsafe { mem::transmute( debug_descriptions ) };
+        let debug_descriptions: RangeMap< DebugFrameDescription< E > >;
+        if builder.load_debug_frame {
+            debug_descriptions = Self::load_debug_frame( binary );
+        } else {
+            debug_descriptions = RangeMap::new();
+        }
 
         let eh_descriptions: RangeMap< EhFrameDescription< E > >;
-        if eh_frame_hdr.is_none() {
+        if builder.load_eh_frame == LoadHint::Always || (builder.load_eh_frame == LoadHint::WhenNecessary && eh_frame_hdr.is_none()) {
             eh_descriptions = Self::load_eh_frame( binary );
         } else {
             eh_descriptions = RangeMap::new();
         }
 
+        let debug_descriptions: RangeMap< DebugFrameDescription< 'static, E > > = unsafe { mem::transmute( debug_descriptions ) };
         let eh_descriptions: RangeMap< EhFrameDescription< 'static, E > > = unsafe { mem::transmute( eh_descriptions ) };
 
         Some( FrameDescriptions {
