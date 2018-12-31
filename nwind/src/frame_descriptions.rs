@@ -331,8 +331,10 @@ impl< E: Endianity > FrameDescriptions< E > {
         // Is this a bug in gimli?
         bases = bases.set_data( eh_frame_hdr_base );
 
+        let eh_bases = hdr_bases.set_cfi( eh_frame_base );
+
         debug!( "Loaded .eh_frame_hdr for '{}'", binary.name() );
-        Some( (bases, BaseAddresses::default(), eh_frame_hdr) )
+        Some( (bases, eh_bases, eh_frame_hdr) )
     }
 
     fn load_debug_frame< 'a >( binary: &'a Arc< BinaryData > ) -> RangeMap< FrameDescriptionEntry< DebugFrame< DataReader< E > >, DataReader< E > > > {
