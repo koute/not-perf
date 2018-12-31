@@ -1202,6 +1202,52 @@ mod test {
     }
 
     #[test]
+    fn collate_amd64_perfect_unwinding_usleep_in_a_loop_fp_only_eh_frame_hdr() {
+        let data = load_with_fde_hints(
+            "amd64-usleep_in_a_loop_fp.nperf",
+            FdeHints {
+                use_eh_frame_hdr: true,
+                load_eh_frame: LoadHint::Never,
+                load_debug_frame: false
+            }
+        );
+
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
+                "[process:amd64-usleep_in_a_loop_fp]",
+                "[main_thread]",
+                "_start:amd64-usleep_in_a_loop_fp",
+                "__libc_start_main:libc-2.26.so",
+                "main:amd64-usleep_in_a_loop_fp",
+                "**"
+            ]);
+        }
+    }
+
+    #[test]
+    fn collate_amd64_perfect_unwinding_usleep_in_a_loop_fp_only_loaded_eh_frame() {
+        let data = load_with_fde_hints(
+            "amd64-usleep_in_a_loop_fp.nperf",
+            FdeHints {
+                use_eh_frame_hdr: false,
+                load_eh_frame: LoadHint::Always,
+                load_debug_frame: false
+            }
+        );
+
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
+                "[process:amd64-usleep_in_a_loop_fp]",
+                "[main_thread]",
+                "_start:amd64-usleep_in_a_loop_fp",
+                "__libc_start_main:libc-2.26.so",
+                "main:amd64-usleep_in_a_loop_fp",
+                "**"
+            ]);
+        }
+    }
+
+    #[test]
     fn collate_amd64_pthread_cond_wait() {
         let data = load( "amd64-pthread_cond_wait.nperf" );
 
