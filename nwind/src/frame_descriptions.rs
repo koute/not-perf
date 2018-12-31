@@ -127,18 +127,19 @@ impl< E: Endianity > Drop for FrameDescriptions< E > {
 }
 
 pub struct UnwindInfoCache {
-    cache: LruCache< u64, CachedUnwindInfo >
+    cache: Option< LruCache< u64, CachedUnwindInfo > >
 }
 
 impl UnwindInfoCache {
     pub fn new() -> Self {
         UnwindInfoCache {
-            cache: LruCache::new( 2000 )
+            cache: None
         }
     }
 
     pub fn lookup< E: Endianity >( &mut self, absolute_address: u64 ) -> Option< UnwindInfo< E > > {
-        let info = match self.cache.get( &absolute_address ) {
+        let cache = self.cache.as_mut()?;
+        let info = match cache.get( &absolute_address ) {
             Some( info ) => info,
             None => return None
         };
@@ -638,9 +639,11 @@ impl< 'a, E: Endianity > UnwindInfo< 'a, E > {
             _ => return
         };
 
+        let cache = unwind_cache.cache.get_or_insert_with( || LruCache::new( 2000 ) );
+
         let mut rules = Vec::new();
-        if unwind_cache.cache.len() == unwind_cache.cache.cap() {
-            rules = unwind_cache.cache.pop_lru().map( |(_, old)| old.rules ).unwrap();
+        if cache.len() == cache.cap() {
+            rules = cache.pop_lru().map( |(_, old)| old.rules ).unwrap();
             rules.clear();
         } else {
             rules.reserve( 16 );
@@ -664,7 +667,7 @@ impl< 'a, E: Endianity > UnwindInfo< 'a, E > {
         }
 
         let info = CachedUnwindInfo { rules, cfa, initial_address: self.initial_address, address: self.address };
-        unwind_cache.cache.put( self.absolute_address, info );
+        cache.put( self.absolute_address, info );
     }
 }
 
