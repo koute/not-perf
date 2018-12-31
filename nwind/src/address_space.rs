@@ -187,22 +187,24 @@ fn process_frame< R: gimli::Reader >( raw_frame: addr2line::Frame< R >, frame: &
 }
 
 struct SymbolDecodeCache {
-    cache: LruCache< u64, (String, Option< String >) >
+    cache: Option< LruCache< u64, (String, Option< String >) > >
 }
 
 impl SymbolDecodeCache {
     pub fn new() -> Self {
         SymbolDecodeCache {
-            cache: LruCache::new( 2000 )
+            cache: None
         }
     }
 
     pub fn get( &mut self, address: u64 ) -> Option< (&str, Option< &str >) > {
-        self.cache.get( &address ).map( |&(ref raw_name, ref name)| (raw_name.as_str(), name.as_ref().map( |name| name.as_str() )) )
+        let cache = self.cache.as_mut()?;
+        cache.get( &address ).map( |&(ref raw_name, ref name)| (raw_name.as_str(), name.as_ref().map( |name| name.as_str() )) )
     }
 
     pub fn put( &mut self, address: u64, raw_name: String, name: Option< String > ) {
-        self.cache.put( address, (raw_name, name) );
+        let cache = self.cache.get_or_insert_with( || LruCache::new( 2000 ) );
+        cache.put( address, (raw_name, name) );
     }
 }
 
