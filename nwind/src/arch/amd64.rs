@@ -3,7 +3,7 @@ use std::mem;
 use gimli::{RegisterRule, CfaRule, LittleEndian};
 
 use arch::{Architecture, Registers, UnwindStatus};
-use address_space::{MemoryReader, BinaryHandle, lookup_binary};
+use address_space::{MemoryReader, Binary, lookup_binary};
 use frame_descriptions::{ContextCache, UnwindInfoCache};
 use types::{Endianness, Bitness};
 use dwarf::dwarf_unwind;
@@ -90,7 +90,7 @@ impl_local_regs!( Regs, "x86_64", get_regs_amd64 );
 #[allow(dead_code)]
 pub struct Arch {}
 
-fn guess_ebp< M: MemoryReader< Arch > >( nth_frame: usize, memory: &M, ctx_cache: &mut ContextCache< LittleEndian >, regs: &<Arch as Architecture>::Regs, binary: &BinaryHandle< Arch > ) -> Option< u64 > {
+fn guess_ebp< M: MemoryReader< Arch > >( nth_frame: usize, memory: &M, ctx_cache: &mut ContextCache< LittleEndian >, regs: &<Arch as Architecture>::Regs, binary: &Binary< Arch > ) -> Option< u64 > {
     // This is a hacky workaround for the fact that Linux's perf events tend to return us
     // invalid RBP values (all FFs) if the call chain goes through the kernel space -> user space
     // boundary, so we try to figure it out some other way.

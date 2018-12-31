@@ -139,9 +139,9 @@ pub struct Binary< A: Architecture > {
     symbol_decode_cache: Option< Mutex< SymbolDecodeCache > >
 }
 
-pub type BinaryHandle< A > = Arc< Binary< A > >;
+type BinaryHandle< A > = Arc< Binary< A > >;
 
-pub fn lookup_binary< 'a, A: Architecture, M: MemoryReader< A > >( nth_frame: usize, memory: &'a M, regs: &A::Regs ) -> Option< &'a BinaryHandle< A > > {
+pub fn lookup_binary< 'a, A: Architecture, M: MemoryReader< A > >( nth_frame: usize, memory: &'a M, regs: &A::Regs ) -> Option< &'a Binary< A > > {
     let address = A::get_instruction_pointer( regs ).unwrap();
     let region = match memory.get_region_at_address( address ) {
         Some( region ) => region,
@@ -339,7 +339,7 @@ pub struct BinaryRegion< A: Architecture > {
 
 impl< A: Architecture > BinaryRegion< A > {
     #[inline]
-    pub fn binary( &self ) -> &BinaryHandle< A > {
+    fn binary( &self ) -> &Binary< A > {
         &self.binary
     }
 
@@ -349,7 +349,7 @@ impl< A: Architecture > BinaryRegion< A > {
     }
 
     #[inline]
-    pub fn file_offset( &self ) -> u64 {
+    fn file_offset( &self ) -> u64 {
         self.memory_region.file_offset
     }
 }
