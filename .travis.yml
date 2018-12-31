@@ -7,6 +7,8 @@ rust:
 script:
   - cd nwind
   - cargo test --features local-unwinding --verbose
+  - cargo check --no-default-features --verbose
+  - cargo check --no-default-features --features logging --verbose
   - cd ..
   - cargo test -p perf_event_open --verbose
   - cargo test -p proc-maps --verbose
