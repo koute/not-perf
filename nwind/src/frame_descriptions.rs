@@ -429,12 +429,27 @@ impl< E: Endianity > FrameDescriptions< E > {
         if info.is_none() {
             if let Some( &(ref bases, ref eh_bases, ref eh_frame_hdr) ) = self.eh_frame_hdr.as_ref() {
                 let eh_frame = self.eh_frame.as_ref().unwrap();
+
+                if log_enabled!( ::log::Level::Debug ) {
+                    match eh_frame_hdr.table().unwrap().lookup( address, bases ) {
+                        Ok( gimli::Pointer::Direct( pointer ) ) => {
+                            debug!( "FDE pointer for {:016X} from .eh_frame_hdr: {:016X} (relative: 0x{:X})", address, pointer, pointer - bases.cfi.unwrap() );
+                        },
+                        _ => {}
+                    }
+                }
+
                 let fde = eh_frame_hdr.table().unwrap().lookup_and_parse( address, bases, eh_frame.clone(), |offset| {
                     eh_frame.cie_from_offset( eh_bases, offset )
                 });
 
-                if let Ok( fde ) = fde {
-                    info = Self::find_unwind_info_impl( &fde, ctx_cache, address );
+                match fde {
+                    Ok( fde ) => {
+                        info = Self::find_unwind_info_impl( &fde, ctx_cache, address );
+                    },
+                    Err( error ) => {
+                        debug!( "FDE not found in .eh_frame_hdr for 0x{:016X}: {}", absolute_address, error );
+                    }
                 }
             }
         }

@@ -36,6 +36,9 @@ macro_rules! info { ($($token:tt)*) => {} }
 #[cfg(not(feature = "logging"))]
 macro_rules! error { ($($token:tt)*) => {} }
 
+#[cfg(not(feature = "logging"))]
+macro_rules! log_enabled { ($($token:tt)*) => { false } }
+
 #[macro_use]
 mod elf;
 
