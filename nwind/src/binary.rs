@@ -7,7 +7,6 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::fmt;
-use std::collections::HashMap;
 
 use memmap::Mmap;
 use goblin::elf::header as elf_header;
@@ -69,7 +68,6 @@ pub struct BinaryData {
     gnu_debuglink_range: Option< Range< usize > >,
     arm_extab_range: Option< Range< usize > >,
     arm_exidx_range: Option< Range< usize > >,
-    sections: HashMap< String, Range< usize > >,
     is_shared_object: bool,
     symbol_tables: Vec< SymbolTable >,
     load_headers: Vec< LoadHeader >,
@@ -140,7 +138,6 @@ impl BinaryData {
         let mut arm_exidx_range = None;
         let mut build_id_range = None;
         let mut build_id = None;
-        let mut sections = HashMap::new();
         let mut is_shared_object = false;
         let mut symbol_tables = Vec::new();
         let mut load_headers = Vec::new();
@@ -235,8 +232,6 @@ impl BinaryData {
                         if let Some( out_range ) = out_range {
                             *out_range = Some( range.clone() );
                         }
-
-                        sections.insert( section_name.to_owned(), range );
                     }
                 }
 
@@ -287,7 +282,6 @@ impl BinaryData {
             gnu_debuglink_range,
             arm_extab_range,
             arm_exidx_range,
-            sections,
             is_shared_object,
             symbol_tables,
             load_headers,
@@ -385,13 +379,41 @@ impl BinaryData {
         self.arm_exidx_range.clone()
     }
 
+    fn get_section_range( &self, name: &str ) -> Option< Range< usize > > {
+        let elf = elf::parse( &self.blob ).map_err( |err| io::Error::new( io::ErrorKind::Other, err ) ).unwrap();
+        parse_elf!( elf, |elf| {
+            let name_strtab_header = elf.get_section_header( elf.header().e_shstrndx as usize ).unwrap();
+            let name_strtab = elf.get_strtab( &name_strtab_header ).unwrap();
+
+            for header in elf.section_headers() {
+                let section_name = match name_strtab.get( header.sh_name ) {
+                    Some( Ok( name ) ) => name,
+                    _ => continue
+                };
+
+                if section_name != name {
+                    continue;
+                }
+
+                let offset = header.sh_offset as usize;
+                let length = header.sh_size as usize;
+                let range = offset..offset + length;
+                if let Some( _ ) = self.blob.get( range.clone() ) {
+                    return Some( range );
+                }
+            }
+
+            None
+        })
+    }
+
     #[inline]
     pub fn get_section_or_empty< S >( data: &Arc< BinaryData > ) -> S
         where S: From< gimli::EndianReader< gimli::RunTimeEndian, BinaryDataSlice > > +
                  gimli::Section< gimli::EndianReader< gimli::RunTimeEndian, BinaryDataSlice > >
 
     {
-        let range = match data.sections.get( S::section_name() ) {
+        let range = match data.get_section_range( S::section_name() ) {
             Some( range ) => range.clone(),
             None => 0..0
         };
