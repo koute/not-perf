@@ -449,6 +449,8 @@ impl LocalAddressSpace {
         let regions = proc_maps::parse( &data );
 
         self.inner.reload( regions, &mut |region, handle| {
+            handle.should_load_debug_frame( false );
+
             if region.name == "[vdso]" {
                 return;
             }
