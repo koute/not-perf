@@ -338,7 +338,8 @@ fn unwind_cached< F: FnMut( &UserFrame ) -> UnwindControl >( iter: ShadowStackIt
 
 pub struct LocalAddressSpace {
     inner: AddressSpace< arch::native::Arch >,
-    use_shadow_stack: bool
+    use_shadow_stack: bool,
+    should_load_symbols: bool
 }
 
 struct LocalRegsInitializer< A: Architecture >( PhantomData< A > );
@@ -423,14 +424,37 @@ unsafe fn patch_trampoline() {
     debug!( "Trampoline successfully patched!" );
 }
 
+#[derive(Debug)]
+pub struct LocalAddressSpaceOptions {
+    should_load_symbols: bool
+}
+
+impl LocalAddressSpaceOptions {
+    pub fn new() -> Self {
+        LocalAddressSpaceOptions {
+            should_load_symbols: true
+        }
+    }
+
+    pub fn should_load_symbols( mut self, value: bool ) -> Self {
+        self.should_load_symbols = value;
+        self
+    }
+}
+
 impl LocalAddressSpace {
     pub fn new() -> Result< Self, io::Error > {
+        Self::new_with_opts( LocalAddressSpaceOptions::new() )
+    }
+
+    pub fn new_with_opts( opts: LocalAddressSpaceOptions ) -> Result< Self, io::Error > {
         debug!( "Initializing local address space..." );
         debug!( "Trampoline address: 0x{:016X}", nwind_ret_trampoline as usize );
 
         let mut address_space = LocalAddressSpace {
             inner: AddressSpace::new(),
-            use_shadow_stack: true
+            use_shadow_stack: true,
+            should_load_symbols: opts.should_load_symbols
         };
 
         address_space.reload()?;
@@ -448,8 +472,10 @@ impl LocalAddressSpace {
         trace!( "Parsing maps..." );
         let regions = proc_maps::parse( &data );
 
+        let should_load_symbols = self.should_load_symbols;
         self.inner.reload( regions, &mut |region, handle| {
             handle.should_load_debug_frame( false );
+            handle.should_load_symbols( should_load_symbols );
 
             if region.name == "[vdso]" {
                 return;

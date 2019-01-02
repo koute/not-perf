@@ -81,6 +81,13 @@ pub use debug_info_index::DebugInfoIndex;
 pub use frame_descriptions::LoadHint;
 
 #[cfg(feature = "local-unwinding")]
-pub use local_unwinding::{LocalAddressSpace, UnwindControl, nwind_on_ret_trampoline, nwind_ret_trampoline_personality, nwind_on_raise_exception};
+pub use local_unwinding::{
+    LocalAddressSpace,
+    LocalAddressSpaceOptions,
+    UnwindControl,
+    nwind_on_ret_trampoline,
+    nwind_ret_trampoline_personality,
+    nwind_on_raise_exception
+};
 
 pub use interner::{StringInterner, StringId};
