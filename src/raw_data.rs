@@ -66,3 +66,9 @@ impl< 'a > From< &'a CowRawData< 'a > > for RawData< 'a > {
         }
     }
 }
+
+impl< 'a > From< &'a [u8] > for CowRawData< 'a > {
+    fn from( data: &'a [u8] ) -> Self {
+        CowRawData::Borrowed( data.into() )
+    }
+}
