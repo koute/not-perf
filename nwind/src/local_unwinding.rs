@@ -69,6 +69,7 @@ pub extern fn nwind_on_ret_trampoline( stack_pointer: usize ) -> usize {
     let stack = ShadowStack::get();
     let tls = unsafe { &mut *stack.tls };
 
+    tls.entries_popped_since_last_unwind += 1;
     tls.tail -= 1;
     let index = tls.tail;
     let entry = tls.slice[ index ];
@@ -142,24 +143,22 @@ pub unsafe extern fn nwind_ret_trampoline_personality(
     let ip = _Unwind_GetIP( ctx );
     assert_eq!( ip, nwind_ret_trampoline as usize );
 
-    let stack = ShadowStack::get();
-    let tls = &mut *stack.tls;
-
-    if tls.tail == 0 {
-        error!( "Shadow stack underrun!" );
-        loop {}
-    }
-
+    let mut stack = ShadowStack::get();
     {
-        let address = tls.slice[ tls.tail - 1 ].return_address;
-        _Unwind_SetIP( ctx, address as usize );
+        let tls = &mut *stack.tls;
+
+        if tls.tail == 0 {
+            error!( "Shadow stack underrun!" );
+            loop {}
+        }
+
+        {
+            let address = tls.slice[ tls.tail - 1 ].return_address;
+            _Unwind_SetIP( ctx, address as usize );
+        }
     }
 
-    while tls.tail > 0 {
-        tls.tail -= 1;
-        let entry = tls.slice[ tls.tail ];
-        *(entry.location as *mut usize) = entry.return_address;
-    }
+    stack.reset();
 
     __gxx_personality_v0( version, action, exception_class, exception, ctx )
 }
@@ -199,8 +198,10 @@ struct ShadowEntry {
 #[repr(C)]
 struct ShadowStackTls {
     tail: usize,
+    entries_popped_since_last_unwind: usize,
+    last_unwind_address: usize,
     is_enabled: usize,
-    slice: [ShadowEntry; (SHADOW_STACK_SIZE - mem::size_of::< usize >() * 2) / mem::size_of::< ShadowEntry >()]
+    slice: [ShadowEntry; (SHADOW_STACK_SIZE - mem::size_of::< usize >() * 4) / mem::size_of::< ShadowEntry >()]
 }
 
 struct ShadowStack {
@@ -254,6 +255,12 @@ impl ShadowStack {
         };
 
         stack
+    }
+
+    #[inline]
+    fn is_trampoline_set( address_location: usize ) -> bool {
+        let slot = unsafe { &mut *(address_location as *mut usize) };
+        *slot == nwind_ret_trampoline as usize
     }
 
     #[inline]
@@ -318,6 +325,10 @@ impl ShadowStack {
                 *(entry.location as *mut usize) = entry.return_address;
             }
         }
+
+        tls.is_enabled = 0;
+        tls.entries_popped_since_last_unwind = 0;
+        tls.last_unwind_address = 0;
     }
 }
 
@@ -506,12 +517,18 @@ impl LocalAddressSpace {
 
         let mut ctx = self.inner.ctx.start( &memory, LocalRegsInitializer::default() );
         let mut shadow_stack = ShadowStack::get();
+        {
+            let tls = unsafe { &mut *shadow_stack.tls };
+            tls.entries_popped_since_last_unwind = 0;
+            tls.last_unwind_address = ctx.current_address() as usize;
+        }
 
         unsafe {
             if ((*shadow_stack.tls).is_enabled == 1) != self.use_shadow_stack {
-                (*shadow_stack.tls).is_enabled = if self.use_shadow_stack { 1 } else { 0 };
                 if !self.use_shadow_stack {
                     shadow_stack.reset();
+                } else {
+                    (*shadow_stack.tls).is_enabled = 1;
                 }
             }
         }
@@ -546,6 +563,78 @@ impl LocalAddressSpace {
         }
     }
 
+    /// Unwinds only through frames which changed since the last unwind.
+    ///
+    /// This only works when the shadow stack is enabled; when it is
+    /// disabled it will unwind through the whole stack trace.
+    ///
+    /// Returns the number of frames from the last unwind on this thread
+    /// from which the code returned from, or `None` in case this is
+    /// a completely fresh stack trace.
+    #[inline(always)]
+    pub fn unwind_through_fresh_frames< F: FnMut( &UserFrame ) -> UnwindControl >( &mut self, mut callback: F ) -> Option< usize > {
+        let memory = LocalMemory {
+            regions: &self.inner.regions
+        };
+
+        let mut ctx = self.inner.ctx.start( &memory, LocalRegsInitializer::default() );
+        let mut shadow_stack = ShadowStack::get();
+        let entries_popped_since_last_unwind;
+        let last_unwind_address;
+        {
+            let tls = unsafe { &mut *shadow_stack.tls };
+            entries_popped_since_last_unwind = mem::replace( &mut tls.entries_popped_since_last_unwind, 0 );
+            last_unwind_address = mem::replace( &mut tls.last_unwind_address, ctx.current_address() as usize );
+        }
+
+        unsafe {
+            if ((*shadow_stack.tls).is_enabled == 1) != self.use_shadow_stack {
+                if !self.use_shadow_stack {
+                    shadow_stack.reset();
+                } else {
+                    (*shadow_stack.tls).is_enabled = 1;
+                }
+            }
+        }
+
+        if entries_popped_since_last_unwind == 0 && last_unwind_address == ctx.current_address() as usize {
+            if let Some( next_address_location ) = ctx.next_address_location() {
+                if ShadowStack::is_trampoline_set( next_address_location as usize ) {
+                    // The stack trace is exactly the same.
+                    return Some( 0 );
+                }
+            }
+        }
+
+        loop {
+            let mut is_end_of_fresh_frames = false;
+            if self.use_shadow_stack {
+                if let Some( next_address_location ) = ctx.next_address_location() {
+                    let stack_pointer = ctx.next_stack_pointer();
+                    is_end_of_fresh_frames = shadow_stack.push( stack_pointer as usize, next_address_location as usize ).is_some();
+                }
+            }
+
+            let frame = UserFrame {
+                address: ctx.current_address(),
+                initial_address: ctx.current_initial_address()
+            };
+
+            let stop = match callback( &frame ).into() {
+                UnwindControl::Continue => false,
+                UnwindControl::Stop => true
+            };
+
+            if is_end_of_fresh_frames {
+                return Some( entries_popped_since_last_unwind + 1 );
+            }
+
+            if stop || ctx.unwind( &memory ) == false {
+                return None;
+            }
+        }
+    }
+
     pub fn decode_symbol_once( &self, address: u64 ) -> Frame {
         self.inner.decode_symbol_once( address )
     }
@@ -575,6 +664,8 @@ fn test_self_unwind() {
 
     assert!( symbols.iter().next().unwrap().contains( "test_self_unwind" ) );
     assert_ne!( addresses[ addresses.len() - 1 ], addresses[ addresses.len() - 2 ] );
+
+    ShadowStack::get().reset();
 }
 
 #[test]
@@ -622,6 +713,174 @@ fn test_unwind_twice() {
     assert_eq!( &trace_4[ 0..2 ], &trace_2[ 0..2 ] );
     assert_ne!( &trace_4[ 2 ], &trace_2[ 2 ] );
     assert_eq!( &trace_4[ 3.. ], &trace_2[ 3.. ] );
+
+    ShadowStack::get().reset();
+}
+
+#[cfg(test)]
+fn clear_tls() {
+    // Make sure we clear the TLS data from any tests which might
+    // have had been previously launched on this thread.
+    let stack = ShadowStack::get();
+    unsafe {
+        let size = mem::size_of_val( &*stack.tls );
+        ptr::write_bytes( stack.tls as *mut u8, 0, size );
+    }
+}
+
+#[test]
+fn test_unwind_through_fresh_frames() {
+    let _ = ::env_logger::try_init();
+    let mut address_space = LocalAddressSpace::new().unwrap();
+
+    #[inline(never)]
+    fn func_normal_unwind( address_space: &mut LocalAddressSpace, output: &mut Vec< u64 > ) {
+        address_space.unwind( |frame| {
+            output.push( frame.address );
+            UnwindControl::Continue
+        });
+    }
+
+    #[inline(never)]
+    fn func_1( address_space: &mut LocalAddressSpace, output: &mut [&mut Vec< u64 >], counts: &mut Vec< Option< usize > > ) {
+        for output in output {
+            let count = address_space.unwind_through_fresh_frames( |frame| {
+                output.push( frame.address );
+                UnwindControl::Continue
+            });
+
+            counts.push( count );
+        }
+    }
+
+    #[inline(never)]
+    fn func_2( address_space: &mut LocalAddressSpace, output: &mut [&mut Vec< u64 >], counts: &mut Vec< Option< usize > > ) {
+        func_1( address_space, output, counts );
+    }
+
+    clear_tls();
+    address_space.use_shadow_stack( true );
+
+    {
+        let mut trace_1 = Vec::new();
+        let mut trace_2 = Vec::new();
+        let mut counts = Vec::new();
+        func_1( &mut address_space, &mut [&mut trace_1, &mut trace_2], &mut counts );
+
+        // The stack was unwound two times from exactly the same place,
+        // hence the second time nothing was collected.
+        assert_ne!( trace_1.len(), 0 );
+        assert_eq!( trace_2.len(), 0 );
+        assert_eq!( counts, &[None, Some( 0 )] );
+    }
+    {
+        let mut trace = Vec::new();
+        let mut counts = Vec::new();
+        func_1( &mut address_space, &mut [&mut trace], &mut counts );
+
+        // We got out of `func_1`, and the instruction pointer in this function changed,
+        // hence counts equals 2.
+        //
+        // The instruction pointer in this function changed, we went into `func_1`,
+        // hence we have 2 frames.
+        assert_eq!( trace.len(), 2 );
+        assert_eq!( counts, &[Some( 2 )] );
+    }
+    {
+        let mut trace = Vec::new();
+        let mut counts = Vec::new();
+        func_2( &mut address_space, &mut [&mut trace], &mut counts );
+
+        // We got out of `func_1` and the instruction pointer in this function changed,
+        // hence counts equals 2.
+        //
+        // The instruction pointer in this function changed, we went into `func_2`,
+        // and then we went into `func_1`, hence we have 3 frames.
+        assert_eq!( trace.len(), 3 );
+        assert_eq!( counts, &[Some( 2 )] );
+    }
+    {
+        let mut trace = Vec::new();
+        let mut counts = Vec::new();
+        func_1( &mut address_space, &mut [&mut trace], &mut counts );
+
+        // We got out of `func_1`, then out of `func_1`, and then the instruction
+        // pointer in this function changed, hence counts equals 3.
+        //
+        // The instruction pointer in this function changed and we went into `func_1`,
+        // hence we have 2 frames.
+        assert_eq!( trace.len(), 2 );
+        assert_eq!( counts, &[Some( 3 )] );
+    }
+    {
+        let mut trace_1 = Vec::new();
+        let mut trace_2 = Vec::new();
+        let mut counts = Vec::new();
+        func_normal_unwind( &mut address_space, &mut trace_1 );
+        func_1( &mut address_space, &mut [&mut trace_2], &mut counts );
+
+        // We got out of `func_normal_unwind` and the instruction pointer in this function changed,
+        // hence counts equals 2.
+        //
+        // The instruction pointer in this function changed and we went into `func_1`,
+        // hence we have 2 frames.
+        assert_eq!( counts, &[Some( 2 )] );
+        assert_eq!( trace_2.len(), 2 );
+    }
+    {
+        address_space.use_shadow_stack( false );
+
+        let mut trace_1 = Vec::new();
+        let mut trace_2 = Vec::new();
+        let mut counts = Vec::new();
+        func_1( &mut address_space, &mut [&mut trace_1], &mut counts );
+        func_normal_unwind( &mut address_space, &mut trace_2 );
+
+        // We disabled the shadow stack hence we'll always get full stack traces.
+        assert_eq!( counts, &[None] );
+        assert_eq!( trace_1.len(), trace_2.len() );
+    }
+
+    ShadowStack::get().reset();
+}
+
+#[test]
+fn test_double_unwind_through_fresh_frames() {
+    let _ = ::env_logger::try_init();
+    let mut address_space = LocalAddressSpace::new().unwrap();
+
+    #[inline(never)]
+    fn func_twice(
+        address_space: &mut LocalAddressSpace,
+        output_1: &mut Vec< u64 >,
+        output_2: &mut Vec< u64 >,
+        count_1: &mut Option< usize >,
+        count_2: &mut Option< usize >
+    ) {
+        *count_1 = address_space.unwind_through_fresh_frames( |frame| {
+            output_1.push( frame.address );
+            UnwindControl::Continue
+        });
+
+        *count_2 = address_space.unwind_through_fresh_frames( |frame| {
+            output_2.push( frame.address );
+            UnwindControl::Continue
+        });
+    }
+
+    clear_tls();
+    address_space.use_shadow_stack( true );
+
+    let mut trace_1 = Vec::new();
+    let mut trace_2 = Vec::new();
+    let mut count_1 = None;
+    let mut count_2 = None;
+    func_twice( &mut address_space, &mut trace_1, &mut trace_2, &mut count_1, &mut count_2 );
+
+    assert_ne!( trace_1.len(), 0 );
+    assert_eq!( count_1, None );
+    assert_eq!( trace_2.len(), 1 );
+    assert_eq!( count_2, Some( 1 ) );
 }
 
 #[test]
@@ -667,4 +926,6 @@ fn test_unwind_with_panic() {
     assert_eq!( &trace_1[ 0 ], &trace_3[ 0 ] );
     assert_eq!( &trace_1.last().unwrap(), &trace_2.last().unwrap() );
     assert_eq!( &trace_1.last().unwrap(), &trace_3.last().unwrap() );
+
+    ShadowStack::get().reset();
 }
