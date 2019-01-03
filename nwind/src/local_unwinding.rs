@@ -448,6 +448,8 @@ impl LocalAddressSpace {
     }
 
     pub fn new_with_opts( opts: LocalAddressSpaceOptions ) -> Result< Self, io::Error > {
+        assert!( mem::size_of::< ShadowStackTls >() <= SHADOW_STACK_SIZE );
+
         debug!( "Initializing local address space..." );
         debug!( "Trampoline address: 0x{:016X}", nwind_ret_trampoline as usize );
 
