@@ -1,6 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::fs::File;
+use std::io::Read;
 
 use binary::BinaryData;
 
@@ -23,7 +25,8 @@ impl DebugInfoIndex {
     }
 
     pub fn add< P: AsRef< Path > >( &mut self, path: P ) {
-        self.add_impl( path.as_ref() );
+        let mut done = HashSet::new();
+        self.add_impl( &mut done, path.as_ref(), true );
     }
 
     pub fn get( &self, basename: &str, debuglink: Option< &[u8] >, build_id: Option< &[u8] > ) -> Option< &Arc< BinaryData > > {
@@ -86,27 +89,72 @@ impl DebugInfoIndex {
         }
     }
 
-    fn add_impl( &mut self, path: &Path ) {
+    fn add_impl( &mut self, done: &mut HashSet< PathBuf >, path: &Path, is_toplevel: bool ) {
         if !path.exists() {
             return;
         }
+
+        let target_path;
+        let mut path: &Path = &path;
+
+        target_path = path.read_link();
+        let target_path: Result< &Path, _ > = target_path.as_ref().map( |target_path| target_path.as_ref() );
+        if let Ok( target_path ) = target_path {
+            path = target_path;
+        }
+
+        if done.contains( path ) {
+            return;
+        }
+
+        done.insert( path.into() );
 
         if path.is_dir() {
             let dir = match path.read_dir() {
                 Ok( dir ) => dir,
                 Err( error ) => {
-                    warn!( "Cannot read debug symbols from {:?}: {}", path, error );
+                    warn!( "Cannot read the contents of {:?}: {}", path, error );
                     return;
                 }
             };
 
             for entry in dir {
                 if let Ok( entry ) = entry {
-                    self.add_file( &entry.path() );
+                    let path = entry.path();
+                    self.add_impl( done, &path, false );
                 }
             }
-        } else {
-            self.add_file( path );
+        } else if path.is_file() {
+            match path.metadata() {
+                Ok( metadata ) => {
+                    if metadata.len() == 0 {
+                        return;
+                    }
+                },
+                Err( error ) => {
+                    warn!( "Cannot get the metadata of {:?}: {}", path, error );
+                    return;
+                }
+            };
+
+            let is_elf = File::open( &path ).and_then( |mut fp| {
+                let mut buffer = [0; 4];
+                fp.read_exact( &mut buffer )?;
+                Ok( buffer )
+            }).map( |buffer| {
+                &buffer == b"\x7FELF"
+            });
+            match is_elf {
+                Ok( false ) => return,
+                Ok( true ) => self.add_file( &path ),
+                Err( error ) => {
+                    if is_toplevel {
+                        warn!( "Cannot read the first four bytes of {:?}: {}", path, error );
+                    }
+
+                    return;
+                }
+            }
         }
     }
 
