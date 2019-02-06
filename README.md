@@ -1,8 +1,6 @@
 [![Build Status](https://api.travis-ci.org/nokia/nperf.svg)](https://travis-ci.org/nokia/nperf)
 
-# A sampling CPU profiler for Linux
-
-`nperf` is a sampling CPU profiler for Linux similar to `perf`.
+# A sampling CPU profiler for Linux similar to `perf`
 
 ## Features
 
@@ -41,7 +39,7 @@ Some of those are as follows:
 
         $ cargo build --release
 
-3. Grab the binary from `target/release/nperf`.
+3. Grab the binary from `target/release/`.
 
 ### Cross-compiling
 
@@ -66,23 +64,26 @@ rustflags = [
         $ cargo build --release --target=mips64-unknown-linux-gnuabi64
         $ cargo build --release --target=armv7-unknown-linux-gnueabihf
 
-3. Grab the binary from `target/mips64-unknown-linux-gnuabi64/nperf` or `target/armv7-unknown-linux-gnueabihf/nperf`.
+3. Grab the binary from `target/mips64-unknown-linux-gnuabi64/` or `target/armv7-unknown-linux-gnueabihf/`.
 
 ## Basic usage
 
 Profiling an already running process by its PID:
 
-    $ nperf record -p $PID_OF_YOUR_PROCESS -o datafile
+    $ cargo run record -p $PID_OF_YOUR_PROCESS -o datafile
 
 Profiling a process by its name and waiting if it isn't running yet:
 
-    $ nperf record -P cpu-hungry-program -w -o datafile
+    $ cargo run record -P cpu-hungry-program -w -o datafile
 
 Generating a CPU flame graph from the gathered data:
 
-    $ nperf collate datafile | flamegraph.pl > flame.svg
+    $ cargo run collate datafile | flamegraph.pl > flame.svg
 
 (Using [Brendan Gregg's flamegraph.pl](https://github.com/brendangregg/FlameGraph/blob/master/flamegraph.pl).)
+
+Replace `cargo run` with the path to the executable if you're running the profiler
+outside of its build directory.
 
 ## License
 
