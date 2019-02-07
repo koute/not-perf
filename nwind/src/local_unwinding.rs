@@ -640,6 +640,17 @@ impl LocalAddressSpace {
     }
 }
 
+// This is used to make sure that the compiler
+// won't make the functions which we've marked
+// as `#[inline(never)]` into tail recursive ones.
+#[cfg(test)]
+fn dummy_volatile_read() {
+    let local = 0;
+    unsafe {
+        std::ptr::read_volatile( &local );
+    }
+}
+
 #[test]
 fn test_self_unwind() {
     let _ = ::env_logger::try_init();
@@ -684,6 +695,7 @@ fn test_unwind_twice() {
     #[inline(never)]
     fn func_2( address_space: &mut LocalAddressSpace, output: &mut Vec< u64 > ) {
         func_1( address_space, output );
+        dummy_volatile_read();
     }
 
     address_space.use_shadow_stack( false );
@@ -756,6 +768,7 @@ fn test_unwind_through_fresh_frames() {
     #[inline(never)]
     fn func_2( address_space: &mut LocalAddressSpace, output: &mut [&mut Vec< u64 >], counts: &mut Vec< Option< usize > > ) {
         func_1( address_space, output, counts );
+        dummy_volatile_read();
     }
 
     clear_tls();
