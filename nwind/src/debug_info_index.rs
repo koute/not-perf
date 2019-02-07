@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::Read;
 
 use binary::BinaryData;
+use utils::HexString;
 
 pub struct DebugInfoIndex {
     by_filename: HashMap< Vec< u8 >, Vec< Arc< BinaryData > > >,
@@ -35,6 +36,7 @@ impl DebugInfoIndex {
     }
 
     pub fn get_pair( &self, basename: &str, debuglink: Option< &[u8] >, build_id: Option< &[u8] > ) -> (Option< &Arc< BinaryData > >, Option< &Arc< BinaryData > >) {
+        debug!( "Requested debug info for '{}'; debuglink = {:?}, build_id = {:?}", basename, debuglink.map( String::from_utf8_lossy ), build_id.map( HexString ) );
         let basename: &[u8] = basename.as_ref();
 
         let mut candidates = Vec::new();
@@ -77,16 +79,19 @@ impl DebugInfoIndex {
             candidates = matching;
         }
 
-        match candidates.len() {
-            0 => return (None, None),
-            1 => return (candidates.pop(), None),
+        let (bin, dbg) = match candidates.len() {
+            0 => (None, None),
+            1 => (candidates.pop(), None),
             _ => {
                 candidates.sort_by_key( |entry| entry.as_bytes().len() );
                 let dbg = candidates.pop();
                 let bin = candidates.pop();
                 (bin, dbg)
             }
-        }
+        };
+
+        debug!( "Debug info lookup result: bin = {:?}, dbg = {:?}", bin.map( |data| data.name() ), dbg.map( |data| data.name() ) );
+        (bin, dbg)
     }
 
     fn add_impl( &mut self, done: &mut HashSet< PathBuf >, path: &Path, is_toplevel: bool ) {
@@ -163,8 +168,12 @@ impl DebugInfoIndex {
             Ok( binary ) => {
                 let filename = path.file_name().unwrap();
                 let binary = Arc::new( binary );
-                self.by_filename.entry( filename.to_string_lossy().into_owned().into_bytes() ).or_default().push( binary.clone() );
+                let filename_key = filename.to_string_lossy().into_owned();
+                debug!( "Adding a new binary by filename: \"{}\"", filename_key );
+
+                self.by_filename.entry( filename_key.into_bytes() ).or_default().push( binary.clone() );
                 if let Some( build_id ) = binary.build_id() {
+                    debug!( "Adding a new binary by build_id: {:?}", HexString( build_id ) );
                     self.by_build_id.entry( build_id.to_owned() ).or_default().push( binary.clone() );
                 }
             },
