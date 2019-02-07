@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(feature = "local-unwinding"),
+    feature(unwind_attributes)
+)]
+
 extern crate byteorder;
 extern crate gimli;
 extern crate goblin;
@@ -87,7 +92,8 @@ pub use local_unwinding::{
     UnwindControl,
     nwind_on_ret_trampoline,
     nwind_ret_trampoline_personality,
-    nwind_on_raise_exception
+
+    _Unwind_RaiseException
 };
 
 pub use interner::{StringInterner, StringId};

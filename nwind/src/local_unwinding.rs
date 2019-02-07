@@ -121,12 +121,22 @@ extern {
 }
 
 #[doc(hidden)]
+#[allow(non_snake_case)]
+#[unwind(allowed)]
 #[no_mangle]
-pub unsafe extern fn nwind_on_raise_exception() {
+pub unsafe fn _Unwind_RaiseException( ctx: *mut libc::c_void ) -> libc::c_int {
     debug!( "Exception raised!" );
 
     let mut stack = ShadowStack::get();
     stack.reset();
+
+    union Union {
+        raw_ptr: *const libc::c_void,
+        function: unsafe extern fn( *mut libc::c_void ) -> libc::c_int
+    }
+
+    let ptr = libc::dlsym( libc::RTLD_NEXT, b"_Unwind_RaiseException\0".as_ptr() as *const libc::c_char );
+    (Union { raw_ptr: ptr }.function)( ctx )
 }
 
 #[doc(hidden)]
