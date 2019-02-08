@@ -104,12 +104,29 @@ fn strip_isra( string: &str ) -> &str {
     }
 }
 
+fn strip_global( string: &str ) -> Option< &str > {
+    if string.starts_with( "_GLOBAL__sub_I_" ) {
+        Some( &string[ 15.. ] )
+    } else {
+        None
+    }
+}
+
 #[test]
 fn test_strip_isra() {
     let symbol   = "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE12_M_constructIPcEEvT_S7_St20forward_iterator_tag.isra.90";
     let expected = "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE12_M_constructIPcEEvT_S7_St20forward_iterator_tag";
 
     assert_eq!( strip_isra( symbol ), expected );
+}
+
+#[test]
+fn test_strip_global() {
+    let symbol = "_GLOBAL__sub_I__ZN5xxxxx7xxxxxxx8xxxxxxxx2xx3yyyC2Ev";
+    let expected = "_ZN5xxxxx7xxxxxxx8xxxxxxxx2xx3yyyC2Ev";
+
+    assert_eq!( strip_global( symbol ), Some( expected ) );
+    assert_eq!( strip_global( expected ), None );
 }
 
 fn translate_address( mappings: &[AddressMapping], address: u64 ) -> u64 {
@@ -303,10 +320,21 @@ impl< A: Architecture > Binary< A > {
         for symbols in &self.symbols {
             if let Some( (_, symbol) ) = symbols.get_symbol( relative_address ) {
                 let symbol = strip_isra( symbol ); // TODO: Remove this once `cpp_demangle` will properly support these symbols.
+                let (symbol, is_global_init) = match strip_global( symbol ) {
+                    Some( symbol ) => (symbol, true),
+                    None => (symbol, false)
+                };
+
                 let demangled_name =
                     cpp_demangle::Symbol::new( symbol ).ok()
                         .and_then( |symbol| {
                             symbol.demangle( &cpp_demangle::DemangleOptions { no_params: false } ).ok()
+                    }).map( |name| {
+                        if is_global_init {
+                            format!( "global init {}", name )
+                        } else {
+                            name
+                        }
                     });
 
                 if let Some( symbol_decode_cache ) = self.symbol_decode_cache.as_ref() {
