@@ -1,4 +1,4 @@
-[![Build Status](https://api.travis-ci.org/nokia/nperf.svg)](https://travis-ci.org/nokia/nperf)
+[![Build Status](https://api.travis-ci.org/nokia/not-perf.svg)](https://travis-ci.org/nokia/not-perf)
 
 # A sampling CPU profiler for Linux similar to `perf`
 
