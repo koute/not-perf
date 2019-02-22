@@ -61,30 +61,32 @@ pub fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
 
     let cfa_value = match cfa {
         CfaRule::RegisterAndOffset { register: cfa_register, offset: cfa_offset } => {
-            let cfa_register_value = match regs.get( cfa_register as _ ) {
+            let cfa_register_value = match regs.get( cfa_register.0 ) {
                 Some( cfa_register_value ) => cfa_register_value,
                 None => {
-                    debug!( "Failed to fetch CFA for frame #{}: failed to fetch register {:?}", nth_frame, A::register_name( cfa_register as _ ) );
+                    debug!( "Failed to fetch CFA for frame #{}: failed to fetch register {:?}", nth_frame, A::register_name( cfa_register.0 ) );
                     return None;
                 }
             };
 
             let value: u64 = (cfa_register_value as i64 + cfa_offset) as u64;
-            debug!( "Got CFA for frame #{}: {:?} (0x{:016X}) + {} = 0x{:016X}", nth_frame, A::register_name( cfa_register as _ ), cfa_register_value, cfa_offset, value );
+            debug!( "Got CFA for frame #{}: {:?} (0x{:016X}) + {} = 0x{:016X}", nth_frame, A::register_name( cfa_register.0 ), cfa_register_value, cfa_offset, value );
             value
         },
         CfaRule::Expression( expr ) => {
-            // TODO: Is this always true?
-            let (address_size, format) = match A::BITNESS {
-                Bitness::B32 => {
-                    (4, Format::Dwarf32)
-                },
-                Bitness::B64 => {
-                    (8, Format::Dwarf64)
-                }
+            let address_size = match A::BITNESS {
+                Bitness::B32 => 4,
+                Bitness::B64 => 8,
+            };
+            let encoding = gimli::Encoding {
+                // TODO: use CIE format?
+                format: Format::Dwarf32,
+                // This doesn't currently matter for expressions.
+                version: 0,
+                address_size,
             };
 
-            let mut evaluation = expr.evaluation( address_size, format );
+            let mut evaluation = expr.evaluation( encoding );
             let mut result = evaluation.evaluate();
             let value;
             loop {
@@ -113,10 +115,10 @@ pub fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
                         }
                     },
                     Ok( EvaluationResult::RequiresRegister { register, .. } ) => {
-                        let reg_value = match regs.get( register as _ ) {
+                        let reg_value = match regs.get( register.0 ) {
                             Some( reg_value ) => reg_value,
                             None => {
-                                error!( "Failed to evaluate CFA rule due to a missing value of register {:?}", A::register_name( register as _ ) );
+                                error!( "Failed to evaluate CFA rule due to a missing value of register {:?}", A::register_name( register.0 ) );
                                 return None;
                             }
                         };
@@ -141,14 +143,14 @@ pub fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
 
     let mut cacheable = true;
     unwind_info.each_register( |(register, rule)| {
-        debug!( "  Register {:?}: {:?}", A::register_name( register as _ ), rule );
+        debug!( "  Register {:?}: {:?}", A::register_name( register.0 ), rule );
 
-        if let Some( (value_address, value) ) = dwarf_get_reg( nth_frame + 1, register as u16, memory, cfa_value, rule ) {
-            if register == A::RETURN_ADDRESS_REG as _ {
+        if let Some( (value_address, value) ) = dwarf_get_reg( nth_frame + 1, register.0, memory, cfa_value, rule ) {
+            if register.0 == A::RETURN_ADDRESS_REG {
                 *ra_address = Some( value_address );
             }
 
-            next_regs.push( (register as _, value) );
+            next_regs.push( (register.0, value) );
         } else {
             cacheable = false;
         }

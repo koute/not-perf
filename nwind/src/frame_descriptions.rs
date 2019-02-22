@@ -23,6 +23,7 @@ use gimli::{
     FrameDescriptionEntry,
     UnwindTable,
     UnwindTableRow,
+    Register,
     RegisterRule,
     EndianSlice,
     ParsedEhFrameHdr
@@ -110,7 +111,7 @@ pub struct FrameDescriptions< E: Endianity > {
     debug_descriptions: ManuallyDrop< RangeMap< DebugFrameDescription< 'static, E > > >,
 
     eh_frame: ManuallyDrop< Option< EhFrame< DataReader< E > > > >,
-    eh_frame_hdr: ManuallyDrop< Option< (BaseAddresses, BaseAddresses, ParsedEhFrameHdr< DataReader< E > >) > >
+    eh_frame_hdr: ManuallyDrop< Option< (BaseAddresses, ParsedEhFrameHdr< DataReader< E > >) > >
 }
 
 impl< E: Endianity > Drop for FrameDescriptions< E > {
@@ -159,14 +160,14 @@ enum SimpleRegisterRule {
     SameValue,
     Offset( i64 ),
     ValOffset( i64 ),
-    Register( u8 ),
+    Register( Register ),
     Architectural
 }
 
 #[derive(Clone)]
 struct CachedUnwindInfo {
-    cfa: (u8, i64),
-    rules: Vec< (u8, SimpleRegisterRule) >,
+    cfa: (Register, i64),
+    rules: Vec< (Register, SimpleRegisterRule) >,
     initial_address: u64,
     address: u64
 }
@@ -287,25 +288,22 @@ impl< E: Endianity > FrameDescriptions< E > {
         None
     }
 
-    fn load_eh_frame_hdr< 'a >( binary: &'a Arc< BinaryData > ) -> Option< (BaseAddresses, BaseAddresses, ParsedEhFrameHdr< DataReader< E > >) > {
-        let mut hdr_bases = BaseAddresses::default();
-
-        if let Some( base ) = Self::get_base( binary, binary.data_range() ) {
-            hdr_bases = hdr_bases.set_data( base );
-        }
+    fn load_eh_frame_hdr< 'a >( binary: &'a Arc< BinaryData > ) -> Option< (BaseAddresses, ParsedEhFrameHdr< DataReader< E > >) > {
+        let mut bases = BaseAddresses::default();
 
         if let Some( base ) = Self::get_base( binary, binary.text_range() ) {
-            hdr_bases = hdr_bases.set_text( base );
+            bases = bases.set_text( base );
         }
 
         let eh_frame_hdr_base = Self::get_base( binary, Some( binary.eh_frame_hdr_range()? ) )?;
         let eh_frame_base = Self::get_base( binary, Some( binary.eh_frame_range()? ) )?;
-        hdr_bases = hdr_bases.set_cfi( eh_frame_hdr_base );
+        bases = bases.set_eh_frame_hdr( eh_frame_hdr_base );
+        bases = bases.set_eh_frame( eh_frame_base );
 
         let eh_frame_hdr_data: &[u8] = &binary.as_bytes()[ binary.eh_frame_hdr_range()? ];
         let eh_frame_hdr_data: &'static [u8] = unsafe { mem::transmute( eh_frame_hdr_data ) };
         let eh_frame_hdr = EhFrameHdr::new( eh_frame_hdr_data, E::get() );
-        let eh_frame_hdr = match eh_frame_hdr.parse( &hdr_bases, mem::size_of::< usize >() as u8 ) {
+        let eh_frame_hdr = match eh_frame_hdr.parse( &bases, mem::size_of::< usize >() as u8 ) {
             Ok( eh_frame_hdr ) => eh_frame_hdr,
             Err( error ) => {
                 warn!( "Failed to load .eh_frame_hdr for {}: {}", binary.name(), error );
@@ -324,18 +322,8 @@ impl< E: Endianity > FrameDescriptions< E > {
 
         eh_frame_hdr.table()?;
 
-        let mut bases = BaseAddresses::default();
-        bases = bases.set_cfi( eh_frame_base );
-
-        // This is necessary for the EhHdrTable::lookup to find the proper address into the .eh_frame,
-        // but it looks very strange. Isn't this supposed to be the address of the `.data` section?
-        // Is this a bug in gimli?
-        bases = bases.set_data( eh_frame_hdr_base );
-
-        let eh_bases = hdr_bases.set_cfi( eh_frame_base );
-
         debug!( "Loaded .eh_frame_hdr for '{}'", binary.name() );
-        Some( (bases, eh_bases, eh_frame_hdr) )
+        Some( (bases, eh_frame_hdr) )
     }
 
     fn load_debug_frame< 'a >( binary: &'a Arc< BinaryData > ) -> RangeMap< FrameDescriptionEntry< DebugFrame< DataReader< E > >, DataReader< E > > > {
@@ -348,18 +336,7 @@ impl< E: Endianity > FrameDescriptions< E > {
 
         let start_timestamp = Instant::now();
 
-        let mut bases = BaseAddresses::default();
-        if let Some( base ) = Self::get_base( binary, binary.data_range() ) {
-            bases = bases.set_data( base );
-        }
-
-        if let Some( base ) = Self::get_base( binary, binary.text_range() ) {
-            bases = bases.set_text( base );
-        }
-
-        if let Some( base ) = Self::get_base( binary, Some( debug_frame_range.clone() ) ) {
-            bases = bases.set_cfi( base );
-        }
+        let bases = BaseAddresses::default();
 
         let debug_frame_data: &[u8] = &binary.as_bytes()[ debug_frame_range.clone() ];
         let debug_frame_data: &'static [u8] = unsafe { mem::transmute( debug_frame_data ) };
@@ -386,16 +363,12 @@ impl< E: Endianity > FrameDescriptions< E > {
         let start_timestamp = Instant::now();
 
         let mut bases = BaseAddresses::default();
-        if let Some( base ) = Self::get_base( binary, binary.data_range() ) {
-            bases = bases.set_data( base );
-        }
-
         if let Some( base ) = Self::get_base( binary, binary.text_range() ) {
             bases = bases.set_text( base );
         }
 
         if let Some( base ) = Self::get_base( binary, Some( eh_frame_range.clone() ) ) {
-            bases = bases.set_cfi( base );
+            bases = bases.set_eh_frame( base );
         }
 
         let eh_frame_data: &[u8] = &binary.as_bytes()[ eh_frame_range.clone() ];
@@ -460,20 +433,20 @@ impl< E: Endianity > FrameDescriptions< E > {
         }
 
         if info.is_none() {
-            if let Some( &(ref bases, ref eh_bases, ref eh_frame_hdr) ) = self.eh_frame_hdr.as_ref() {
+            if let Some( &(ref bases, ref eh_frame_hdr) ) = self.eh_frame_hdr.as_ref() {
                 let eh_frame = self.eh_frame.as_ref().unwrap();
 
                 if log_enabled!( ::log::Level::Debug ) {
                     match eh_frame_hdr.table().unwrap().lookup( address, bases ) {
                         Ok( gimli::Pointer::Direct( pointer ) ) => {
-                            debug!( "FDE pointer for {:016X} from .eh_frame_hdr: {:016X} (relative: 0x{:X})", address, pointer, pointer - bases.cfi.unwrap() );
+                            debug!( "FDE pointer for {:016X} from .eh_frame_hdr: {:016X} (relative: 0x{:X})", address, pointer, pointer - bases.eh_frame_hdr.section.unwrap() );
                         },
                         _ => {}
                     }
                 }
 
                 let fde = eh_frame_hdr.table().unwrap().lookup_and_parse( address, bases, eh_frame.clone(), |offset| {
-                    eh_frame.cie_from_offset( eh_bases, offset )
+                    eh_frame.cie_from_offset( bases, offset )
                 });
 
                 match fde {
@@ -596,7 +569,7 @@ impl< 'a, E: Endianity > UnwindInfo< 'a, E > {
     }
 
     #[inline]
-    pub fn register( &self, register: u8 ) -> RegisterRule< DataReader< E > > {
+    pub fn register( &self, register: Register ) -> RegisterRule< DataReader< E > > {
         match self.kind {
             UnwindInfoKind::Cached( ref info ) => {
                 if let Some( &(_, ref rule) ) = info.rules.iter().find( |rule| rule.0 == register ) {
@@ -612,7 +585,7 @@ impl< 'a, E: Endianity > UnwindInfo< 'a, E > {
     }
 
     #[inline]
-    pub fn each_register< F: FnMut( (u8, &RegisterRule< DataReader< E > >) ) >( &self, mut callback: F ) {
+    pub fn each_register< F: FnMut( (Register, &RegisterRule< DataReader< E > >) ) >( &self, mut callback: F ) {
         match self.kind {
             UnwindInfoKind::Uncached { ref row, .. } => {
                 for &(register, ref rule) in row.registers() {

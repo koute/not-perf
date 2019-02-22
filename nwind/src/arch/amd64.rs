@@ -101,18 +101,18 @@ fn guess_ebp< M: MemoryReader< Arch > >( nth_frame: usize, memory: &M, ctx_cache
     let unwind_info = binary.lookup_unwind_row( ctx_cache, rip )?;
 
     let cfa_offset = match unwind_info.cfa() {
-        CfaRule::RegisterAndOffset { register: cfa_register, offset: cfa_offset } if cfa_register as u16 == dwarf::RBP => cfa_offset,
+        CfaRule::RegisterAndOffset { register: cfa_register, offset: cfa_offset } if cfa_register == gimli::X86_64::RBP => cfa_offset,
         _ => return None
     };
 
     // What this rule means is that:
     //   previous.RBP == *(current.RBP + rbp_offset)
-    let rbp_offset = match unwind_info.register( dwarf::RBP as _ ) {
+    let rbp_offset = match unwind_info.register( gimli::X86_64::RBP ) {
         RegisterRule::Offset( offset ) => offset + cfa_offset,
         _ => return None
     };
 
-    let ra_offset = match unwind_info.register( dwarf::RETURN_ADDRESS as _ ) {
+    let ra_offset = match unwind_info.register( gimli::X86_64::RA ) {
         RegisterRule::Offset( offset ) => offset + cfa_offset,
         _ => return None
     };
