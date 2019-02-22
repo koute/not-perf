@@ -79,11 +79,15 @@ mod addr2line {
 
         pub fn from_sections(
             _: gimli::DebugAbbrev< T >,
+            _: gimli::DebugAddr< T >,
             _: gimli::DebugInfo< T >,
             _: gimli::DebugLine< T >,
+            _: gimli::DebugLineStr< T >,
             _: gimli::DebugRanges< T >,
             _: gimli::DebugRngLists< T >,
-            _: gimli::DebugStr< T >
+            _: gimli::DebugStr< T >,
+            _: gimli::DebugStrOffsets< T >,
+            _: T
         ) -> Result< Self, () > {
             Err(())
         }
@@ -914,7 +918,11 @@ fn reload< A: Architecture >(
                         BinaryData::get_section_or_empty( &binary_data ),
                         BinaryData::get_section_or_empty( &binary_data ),
                         BinaryData::get_section_or_empty( &binary_data ),
-                        BinaryData::get_section_or_empty( &binary_data )
+                        BinaryData::get_section_or_empty( &binary_data ),
+                        BinaryData::get_section_or_empty( &binary_data ),
+                        BinaryData::get_section_or_empty( &binary_data ),
+                        BinaryData::get_section_or_empty( &binary_data ),
+                        BinaryData::get_empty_section( &binary_data )
                     );
 
                     match ctx {

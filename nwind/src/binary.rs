@@ -408,6 +408,11 @@ impl BinaryData {
     }
 
     #[inline]
+    pub fn get_empty_section( data: &Arc< BinaryData > ) -> BinaryDataReader {
+        Self::get_range_reader( data, 0..0 )
+    }
+
+    #[inline]
     pub fn get_section_or_empty< S >( data: &Arc< BinaryData > ) -> S
         where S: From< gimli::EndianReader< gimli::RunTimeEndian, BinaryDataSlice > > +
                  gimli::Section< gimli::EndianReader< gimli::RunTimeEndian, BinaryDataSlice > >
@@ -417,7 +422,11 @@ impl BinaryData {
             Some( range ) => range.clone(),
             None => 0..0
         };
+        Self::get_range_reader( data, range ).into()
+    }
 
+    #[inline]
+    fn get_range_reader( data: &Arc< BinaryData >, range: Range< usize > ) -> BinaryDataReader {
         let endianness = match data.endianness() {
             Endianness::LittleEndian => gimli::RunTimeEndian::Little,
             Endianness::BigEndian => gimli::RunTimeEndian::Big
