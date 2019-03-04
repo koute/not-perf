@@ -26,6 +26,7 @@ fn parse_collate_format( format: &str ) -> CollateFormat {
 }
 
 #[derive(StructOpt, Clone, Debug)]
+#[structopt(rename_all = "kebab-case")]
 pub struct ProcessFilter {
     /// Profiles a process with a given PID (conflicts with --process)
     #[structopt(
@@ -54,13 +55,20 @@ pub struct ProcessFilter {
         "#)
     )]
     wait: bool,
+    /// Specifies the number of seconds which the profiler should wait
+    /// for the process to appear; makes sense only when used with the `--wait` option
+    #[structopt(
+        long,
+        default_value = "60"
+    )]
+    wait_timeout: u32,
 }
 
 impl From< ProcessFilter > for TargetProcess {
     fn from( args: ProcessFilter ) -> Self {
         if let Some( process ) = args.process {
             if args.wait {
-                TargetProcess::ByNameWaiting( process )
+                TargetProcess::ByNameWaiting( process, args.wait_timeout as u64 )
             } else {
                 TargetProcess::ByName( process )
             }

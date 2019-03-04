@@ -39,7 +39,7 @@ use raw_data::CowRawData;
 pub enum TargetProcess {
     ByPid( u32 ),
     ByName( String ),
-    ByNameWaiting( String )
+    ByNameWaiting( String, u64 )
 }
 
 fn get_vdso() -> Option< &'static [u8] > {
@@ -552,8 +552,8 @@ fn initialize(
                 return Err( format!( "no process named '{}' was found", name ).into() );
             }
         },
-        TargetProcess::ByNameWaiting( name ) => {
-            if let Some( pid ) = wait_for_process( sigint_handler, &name ).unwrap() {
+        TargetProcess::ByNameWaiting( name, wait_timeout ) => {
+            if let Some( pid ) = wait_for_process( sigint_handler, &name, wait_timeout ).unwrap() {
                 pid
             } else {
                 return Err( format!( "no process named '{}' was found", name ).into() );

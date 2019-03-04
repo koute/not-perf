@@ -60,7 +60,7 @@ pub fn find_process( pattern: &str ) -> io::Result< Option< u32 > > {
     Ok( result )
 }
 
-pub fn wait_for_process( sigint: &SigintHandler, process: &str ) -> io::Result< Option< u32 > > {
+pub fn wait_for_process( sigint: &SigintHandler, process: &str, duration: u64 ) -> io::Result< Option< u32 > > {
     info!( "Waiting for process named '{}'...", process );
 
     let timestamp = Instant::now();
@@ -76,7 +76,7 @@ pub fn wait_for_process( sigint: &SigintHandler, process: &str ) -> io::Result< 
         }
 
         sleep( Duration::from_millis( 50 ) );
-        if timestamp.elapsed() >= Duration::from_secs( 60 ) {
+        if timestamp.elapsed() >= Duration::from_secs( duration ) {
             return Err( io::Error::new( io::ErrorKind::Other, format!( "process '{}' not found", process ) ) );
         }
 
