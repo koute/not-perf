@@ -71,17 +71,38 @@ pub extern fn nwind_on_ret_trampoline( stack_pointer: usize ) -> usize {
 
     tls.entries_popped_since_last_unwind += 1;
     tls.tail -= 1;
-    let index = tls.tail;
-    let entry = tls.slice[ index ];
-    if entry.stack_pointer == stack_pointer {
-       debug!( "Found trampoline entry at index #{}", index );
-       debug!( "Clearing shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
 
-       return entry.return_address;
+    let expected_index = tls.tail;
+    let index =
+        if tls.slice[ expected_index ].stack_pointer == stack_pointer {
+            Some( expected_index )
+        } else {
+            loop {
+                if tls.tail == 0 {
+                    break None;
+                }
+
+                tls.entries_popped_since_last_unwind += 1;
+                tls.tail -= 1;
+
+                let index = tls.tail;
+                if tls.slice[ index ].stack_pointer == stack_pointer {
+                    warn!( "Found matching trampoline entry for stack pointer = 0x{:016X} at index #{} instead of at #{}; was `longjmp` used here?", stack_pointer, index, expected_index );
+                    break Some( index );
+                }
+            }
+        };
+
+    if let Some( index ) = index {
+        let entry = tls.slice[ index ];
+        debug!( "Found trampoline entry at index #{}", index );
+        debug!( "Clearing shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
+
+        return entry.return_address;
     }
 
-    error!( "Failed to find a matching trampoline entry for stack pointer = 0x{:016X} at index #{}", stack_pointer, index );
-    for index in 0..=tls.tail {
+    error!( "Failed to find a matching trampoline entry for stack pointer = 0x{:016X}", stack_pointer );
+    for index in 0..=expected_index {
         let entry = tls.slice[ index ];
         error!( "Shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
     }
