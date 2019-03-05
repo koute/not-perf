@@ -29,7 +29,7 @@ features = []
 default-features = false
 
 [dev-dependencies]
-quickcheck = "0.7"
+quickcheck = "0.8"
 criterion = "0.2"
 
 [profile.release]
