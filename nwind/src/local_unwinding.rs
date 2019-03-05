@@ -80,8 +80,15 @@ pub extern fn nwind_on_ret_trampoline( stack_pointer: usize ) -> usize {
        return entry.return_address;
     }
 
-    error!( "Failed to find a matching trampoline entry" );
-    panic!( "Failed to find a matching trampoline entry" );
+    error!( "Failed to find a matching trampoline entry for stack pointer = 0x{:016X} at index #{}", stack_pointer, index );
+    for index in 0..=tls.tail {
+        let entry = tls.slice[ index ];
+        error!( "Shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
+    }
+
+    unsafe {
+        libc::abort();
+    }
 }
 
 #[allow(non_camel_case_types)]
