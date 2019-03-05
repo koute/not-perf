@@ -25,7 +25,7 @@ perf_event_open = { version = "0.1", path = "perf_event_open" }
 [dependencies.nwind]
 version = "0.1"
 path = "nwind"
-features = ["logging", "addr2line"]
+features = []
 default-features = false
 
 [dev-dependencies]
@@ -37,7 +37,8 @@ lto = true
 panic = "abort"
 
 [features]
-default = []
+default = ["logging"]
+logging = ["nwind/logging", "nwind/addr2line"]
 
 [workspace]
 members = [".", "nwind", "proc-maps", "perf_event_open"]
