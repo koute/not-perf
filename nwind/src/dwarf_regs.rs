@@ -1,10 +1,24 @@
 use arch::{Registers, RegsIter};
+use std::fmt;
+use crate::utils::HexValue;
 
 #[derive(Clone)]
 pub struct DwarfRegs {
     regs: Vec< u64 >,
     regs_mask: u64,
     regs_list: Vec< u16 >
+}
+
+impl fmt::Debug for DwarfRegs {
+    fn fmt( &self, fmt: &mut fmt::Formatter ) -> fmt::Result {
+        let mut dbg = fmt.debug_struct( "DwarfRegs" );
+
+        for (register, value) in self.iter() {
+            dbg.field( &format!( "{}", register ), &HexValue( value ) );
+        }
+
+        dbg.finish()
+    }
 }
 
 impl Default for DwarfRegs {

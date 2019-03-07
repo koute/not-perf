@@ -86,6 +86,7 @@ pub struct Regs {
 
 unsafe_impl_registers!( Regs, REGS );
 impl_local_regs!( Regs, "x86_64", get_regs_amd64 );
+impl_regs_debug!( Regs, REGS, Arch );
 
 #[allow(dead_code)]
 pub struct Arch {}

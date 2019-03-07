@@ -121,6 +121,7 @@ pub struct Regs {
 
 unsafe_impl_registers!( Regs, REGS );
 impl_local_regs!( Regs, "mips64", get_regs_mips64 );
+impl_regs_debug!( Regs, REGS, Arch );
 
 #[allow(dead_code)]
 pub struct Arch {}

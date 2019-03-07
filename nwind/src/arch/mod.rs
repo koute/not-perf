@@ -58,7 +58,7 @@ pub trait Architecture: Sized {
 
     type Endianity: Endianity + 'static;
     type State;
-    type Regs: Registers;
+    type Regs: Registers + std::fmt::Debug;
 
     fn register_name( register: u16 ) -> RegName {
         if let Some( name ) = Self::register_name_str( register ) {
@@ -169,6 +169,28 @@ macro_rules! impl_local_regs {
             }
         }
 
+    }
+}
+
+macro_rules! impl_regs_debug {
+    ($regs_ty:ty, $regs_array:ident, $arch:ident) => {
+        impl ::std::fmt::Debug for $regs_ty {
+            fn fmt( &self, fmt: &mut ::std::fmt::Formatter ) -> ::std::fmt::Result {
+                use crate::utils::HexValue;
+                use std::borrow::Cow;
+
+                let mut dbg = fmt.debug_struct( stringify!( $regs_ty ) );
+                for &register in $regs_array {
+                    let name = $arch::register_name_str( register ).map( |name| Cow::Borrowed( name ) ).unwrap_or_else( || format!( "{}", register ).into() );
+                    if let Some( value ) = self.get( register ) {
+                        dbg.field( &name, &HexValue( value as u64 ) );
+                    } else {
+                        dbg.field( &name, &"None" );
+                    }
+                }
+                dbg.finish()
+            }
+        }
     }
 }
 
