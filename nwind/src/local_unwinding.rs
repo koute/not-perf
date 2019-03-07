@@ -176,28 +176,16 @@ pub unsafe extern fn nwind_ret_trampoline_personality(
     exception: *const _Unwind_Exception,
     ctx: *const _Unwind_Context
 ) -> _Unwind_Reason_Code {
-    debug!( "Personality called!" );
-
-    let ip = _Unwind_GetIP( ctx );
-    assert_eq!( ip, nwind_ret_trampoline as usize );
+    warn!( "Personality called!" );
 
     let mut stack = ShadowStack::get();
-    {
-        let tls = &mut *stack.tls;
-
-        if tls.tail == 0 {
-            error!( "Shadow stack underrun!" );
-            loop {}
-        }
-
-        {
-            let address = tls.slice[ tls.tail - 1 ].return_address;
-            _Unwind_SetIP( ctx, address as usize );
-        }
-    }
-
     stack.reset();
 
+    // TODO: This will most likely crash and burn since the instruction pointer
+    // in the unwind context still points to the trampoline.
+    //
+    // It'd be nice to figure out how to make this work, however since we hook
+    // into the `_Unwind_RaiseException` it's unlikely that we'll end up here.
     __gxx_personality_v0( version, action, exception_class, exception, ctx )
 }
 
