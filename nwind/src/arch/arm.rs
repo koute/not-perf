@@ -1,5 +1,4 @@
 use gimli::LittleEndian;
-use dwarf_regs::DwarfRegs;
 use arch::{Architecture, Registers, UnwindStatus};
 use address_space::{MemoryReader, lookup_binary};
 use types::{Endianness, Bitness};
@@ -27,6 +26,51 @@ pub mod dwarf {
     pub const R15: u16 = 15;
 }
 
+static REGS: &'static [u16] = &[
+    dwarf::R0,
+    dwarf::R1,
+    dwarf::R2,
+    dwarf::R3,
+    dwarf::R4,
+    dwarf::R5,
+    dwarf::R6,
+    dwarf::R7,
+    dwarf::R8,
+    dwarf::R9,
+    dwarf::R10,
+    dwarf::R11,
+    dwarf::R12,
+    dwarf::R13,
+    dwarf::R14,
+    dwarf::R15
+];
+
+#[repr(C)]
+#[derive(Clone, Default)]
+pub struct Regs {
+    r0: u32,
+    r1: u32,
+    r2: u32,
+    r3: u32,
+    r4: u32,
+    r5: u32,
+    r6: u32,
+    r7: u32,
+    r8: u32,
+    r9: u32,
+    r10: u32,
+    r11: u32,
+    r12: u32,
+    r13: u32,
+    r14: u32,
+    r15: u32,
+    mask: u64
+}
+
+unsafe_impl_registers!( Regs, REGS, u32 );
+impl_local_regs!( Regs, "arm", get_regs_arm );
+impl_regs_debug!( Regs, REGS, Arch );
+
 #[allow(dead_code)]
 pub struct Arch {}
 
@@ -38,7 +82,7 @@ impl Architecture for Arch {
 
     type Endianity = LittleEndian;
     type State = ();
-    type Regs = DwarfRegs;
+    type Regs = Regs;
 
     fn register_name_str( register: u16 ) -> Option< &'static str > {
         use self::dwarf::*;
@@ -141,7 +185,7 @@ impl Architecture for Arch {
         let mut vm = EhVm::new();
         let result = vm.unwind(
             memory,
-            &regs,
+            regs,
             &mut initial_address_u32,
             regs_next,
             exidx,

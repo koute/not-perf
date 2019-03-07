@@ -84,7 +84,7 @@ pub struct Regs {
     mask: u64
 }
 
-unsafe_impl_registers!( Regs, REGS );
+unsafe_impl_registers!( Regs, REGS, u64 );
 impl_local_regs!( Regs, "x86_64", get_regs_amd64 );
 impl_regs_debug!( Regs, REGS, Arch );
 

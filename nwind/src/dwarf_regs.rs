@@ -39,6 +39,8 @@ impl DwarfRegs {
 }
 
 impl Registers for DwarfRegs {
+    type RegTy = u64;
+
     #[inline]
     fn get( &self, register: u16 ) -> Option< u64 > {
         if !self.contains( register ) {
@@ -61,7 +63,7 @@ impl Registers for DwarfRegs {
     }
 
     #[inline]
-    fn iter< 'a >( &'a self ) -> RegsIter< 'a > {
+    fn iter< 'a >( &'a self ) -> RegsIter< 'a, u64 > {
         RegsIter::new( &self.regs_list, &self.regs, 0xFFFFFFFFFFFFFFFF )
     }
 

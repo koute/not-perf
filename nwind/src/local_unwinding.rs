@@ -532,6 +532,11 @@ impl LocalAddressSpace {
     }
 
     pub fn is_shadow_stack_enabled( &self ) -> bool {
+        if cfg!( target_arch = "arm" ) {
+            // TODO: Remove this once this is supported on ARM.
+            return false;
+        }
+
         self.use_shadow_stack
     }
 
@@ -541,6 +546,7 @@ impl LocalAddressSpace {
             regions: &self.inner.regions
         };
 
+        let use_shadow_stack = self.is_shadow_stack_enabled();
         let mut ctx = self.inner.ctx.start( &memory, LocalRegsInitializer::default() );
         let mut shadow_stack = ShadowStack::get();
         {
@@ -550,8 +556,8 @@ impl LocalAddressSpace {
         }
 
         unsafe {
-            if ((*shadow_stack.tls).is_enabled == 1) != self.use_shadow_stack {
-                if !self.use_shadow_stack {
+            if ((*shadow_stack.tls).is_enabled == 1) != use_shadow_stack {
+                if !use_shadow_stack {
                     shadow_stack.reset();
                 } else {
                     (*shadow_stack.tls).is_enabled = 1;
@@ -561,7 +567,7 @@ impl LocalAddressSpace {
 
         loop {
             let mut shadow_stack_iter = None;
-            if self.use_shadow_stack {
+            if use_shadow_stack {
                 if let Some( next_address_location ) = ctx.next_address_location() {
                     let stack_pointer = ctx.next_stack_pointer();
                     shadow_stack_iter = shadow_stack.push( stack_pointer as usize, next_address_location as usize )
@@ -603,6 +609,7 @@ impl LocalAddressSpace {
             regions: &self.inner.regions
         };
 
+        let use_shadow_stack = self.is_shadow_stack_enabled();
         let mut ctx = self.inner.ctx.start( &memory, LocalRegsInitializer::default() );
         let mut shadow_stack = ShadowStack::get();
         let entries_popped_since_last_unwind;
@@ -614,8 +621,8 @@ impl LocalAddressSpace {
         }
 
         unsafe {
-            if ((*shadow_stack.tls).is_enabled == 1) != self.use_shadow_stack {
-                if !self.use_shadow_stack {
+            if ((*shadow_stack.tls).is_enabled == 1) != use_shadow_stack {
+                if !use_shadow_stack {
                     shadow_stack.reset();
                 } else {
                     (*shadow_stack.tls).is_enabled = 1;
@@ -634,7 +641,7 @@ impl LocalAddressSpace {
 
         loop {
             let mut is_end_of_fresh_frames = false;
-            if self.use_shadow_stack {
+            if use_shadow_stack {
                 if let Some( next_address_location ) = ctx.next_address_location() {
                     let stack_pointer = ctx.next_stack_pointer();
                     is_end_of_fresh_frames = shadow_stack.push( stack_pointer as usize, next_address_location as usize ).is_some();

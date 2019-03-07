@@ -83,14 +83,14 @@ pub trait Architecture: Sized {
     ) -> Option< UnwindStatus >;
 }
 
-pub struct RegsIter< 'a > {
-    regs: &'a [u64],
+pub struct RegsIter< 'a, T: Copy + Into< u64 > > {
+    regs: &'a [T],
     regs_list: &'a [u16],
     index: usize,
     mask: u64
 }
 
-impl< 'a > Iterator for RegsIter< 'a > {
+impl< 'a, T > Iterator for RegsIter< 'a, T > where T: Copy + Into< u64 > {
     type Item = (u16, u64);
     fn next( &mut self ) -> Option< Self::Item > {
         while self.index < self.regs_list.len() {
@@ -100,7 +100,7 @@ impl< 'a > Iterator for RegsIter< 'a > {
             let mask = 1_u64 << (register as u32);
             if (self.mask & mask) != 0 {
                 let value = self.regs[ register as usize ];
-                return Some( (register, value) );
+                return Some( (register, value.into()) );
             }
         }
 
@@ -108,9 +108,9 @@ impl< 'a > Iterator for RegsIter< 'a > {
     }
 }
 
-impl< 'a > RegsIter< 'a > {
+impl< 'a, T > RegsIter< 'a, T > where T: Copy + Into< u64 > {
     #[inline]
-    pub fn new( ids: &'a [u16], values: &'a [u64], mask: u64 ) -> Self {
+    pub fn new( ids: &'a [u16], values: &'a [T], mask: u64 ) -> Self {
         RegsIter {
             regs: values,
             regs_list: ids,
@@ -121,10 +121,12 @@ impl< 'a > RegsIter< 'a > {
 }
 
 pub trait Registers: Clone + Default {
+    type RegTy: Copy + Into< u64 >;
+
     fn get( &self, register: u16 ) -> Option< u64 >;
     fn contains( &self, register: u16 ) -> bool;
     fn append( &mut self, register: u16, value: u64 );
-    fn iter< 'a >( &'a self ) -> RegsIter< 'a >;
+    fn iter< 'a >( &'a self ) -> RegsIter< 'a, Self::RegTy >;
     fn clear( &mut self );
 
     fn extend_from_regs< T: Registers >( &mut self, dwarf_regs: &T ) {
@@ -195,30 +197,34 @@ macro_rules! impl_regs_debug {
 }
 
 macro_rules! unsafe_impl_registers {
-    ($regs_ty:ty, $regs_array:ident) => {
+    ($regs_ty:ty, $regs_array:ident, $reg_ty:ty) => {
         impl $regs_ty {
             #[inline]
-            fn as_slice( &self ) -> &[u64] {
+            fn as_slice( &self ) -> &[$reg_ty] {
+                use ::std::mem::size_of;
                 unsafe {
                     ::std::slice::from_raw_parts(
-                        self as *const _ as *const u64,
-                        ::std::mem::size_of::< $regs_ty >() / ::std::mem::size_of::< u64 >() - 1
+                        self as *const _ as *const $reg_ty,
+                        (size_of::< $regs_ty >() - size_of::< u64 >()) / size_of::< $reg_ty >()
                     )
                 }
             }
 
             #[inline]
-            fn as_slice_mut( &mut self ) -> &mut [u64] {
+            fn as_slice_mut( &mut self ) -> &mut [$reg_ty] {
+                use ::std::mem::size_of;
                 unsafe {
                     ::std::slice::from_raw_parts_mut(
-                        self as *const _ as *mut u64,
-                        ::std::mem::size_of::< $regs_ty >() / ::std::mem::size_of::< u64 >() - 1
+                        self as *const _ as *mut $reg_ty,
+                        (size_of::< $regs_ty >() - size_of::< u64 >()) / size_of::< $reg_ty >() - 1
                     )
                 }
             }
         }
 
         impl Registers for $regs_ty {
+            type RegTy = $reg_ty;
+
             #[inline]
             fn get( &self, register: u16 ) -> Option< u64 > {
                 if !self.contains( register ) {
@@ -229,7 +235,7 @@ macro_rules! unsafe_impl_registers {
                     *self.as_slice().get_unchecked( register as usize )
                 };
 
-                Some( value )
+                Some( value as u64 )
             }
 
             #[inline]
@@ -241,12 +247,12 @@ macro_rules! unsafe_impl_registers {
             fn append( &mut self, register: u16, value: u64 ) {
                 self.mask |= 1_u64 << (register as u32);
                 unsafe {
-                    *self.as_slice_mut().get_unchecked_mut( register as usize ) = value;
+                    *self.as_slice_mut().get_unchecked_mut( register as usize ) = value as $reg_ty;
                 }
             }
 
             #[inline]
-            fn iter< 'a >( &'a self ) -> ::arch::RegsIter< 'a > {
+            fn iter< 'a >( &'a self ) -> ::arch::RegsIter< 'a, $reg_ty > {
                 ::arch::RegsIter::new( $regs_array, self.as_slice(), self.mask )
             }
 

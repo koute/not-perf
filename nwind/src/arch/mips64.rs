@@ -119,7 +119,7 @@ pub struct Regs {
     mask: u64
 }
 
-unsafe_impl_registers!( Regs, REGS );
+unsafe_impl_registers!( Regs, REGS, u64 );
 impl_local_regs!( Regs, "mips64", get_regs_mips64 );
 impl_regs_debug!( Regs, REGS, Arch );
 

@@ -9,7 +9,6 @@ use arch::arm;
 use arch::arm::dwarf;
 use arch::Registers;
 use address_space::MemoryReader;
-use dwarf_regs::DwarfRegs;
 use types::{Endianness, Bitness};
 
 struct RegsIter {
@@ -734,7 +733,7 @@ impl< 'a > Iterator for BytecodeIter< 'a > {
 }
 
 #[inline]
-fn get_register( previous_regs: &DwarfRegs, regs: &DwarfRegs, register: u16 ) -> Option< u64 > {
+fn get_register< T >( previous_regs: &T, regs: &T, register: u16 ) -> Option< u64 > where T: Registers {
     regs
         .get( register )
         .or_else( || previous_regs.get( register ) )
@@ -752,14 +751,14 @@ impl VirtualMachine {
         }
     }
 
-    fn run_bytecode< M, I >(
+    fn run_bytecode< R, M, I >(
         &mut self,
         memory: &M,
-        previous_regs: &DwarfRegs,
-        regs: &mut DwarfRegs,
+        previous_regs: &R,
+        regs: &mut R,
         regs_modified: &mut u32,
         bytecode: I
-    ) -> Result< (), Error > where M: MemoryReader< arm::Arch >, I: IntoIterator< Item = u8 > {
+    ) -> Result< (), Error > where R: Registers, M: MemoryReader< arm::Arch >, I: IntoIterator< Item = u8 > {
         let decoder = Decoder::new( bytecode.into_iter() );
         for instruction in decoder {
             let instruction = instruction?;
@@ -845,19 +844,19 @@ impl VirtualMachine {
         Some( (index, entry, range) )
     }
 
-    pub fn unwind< M >(
+    pub fn unwind< R, M >(
         &mut self,
         memory: &M,
-        previous_regs: &DwarfRegs,
+        previous_regs: &R,
         initial_address: &mut Option< u32 >,
-        regs: &mut DwarfRegs,
+        regs: &mut R,
         exidx: &[u8],
         extab: &[u8],
         exidx_base: u32,
         extab_base: u32,
         address: u32,
         is_first_frame: bool
-    ) -> Result< (), Error > where M: MemoryReader< arm::Arch > {
+    ) -> Result< (), Error > where R: Registers, M: MemoryReader< arm::Arch > {
         if address == 0 || exidx.is_empty() {
             return Err( Error::UnwindInfoMissing );
         }
