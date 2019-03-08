@@ -147,7 +147,7 @@ pub struct RecordArgs {
 
 #[derive(StructOpt, Debug)]
 #[structopt(rename_all = "kebab-case")]
-pub struct CollateArgs {
+pub struct SharedCollationArgs {
     /// A file or directory with extra debugging symbols; can be specified multiple times
     #[structopt(long, short = "d", parse(from_os_str))]
     pub debug_symbols: Vec< OsString >,
@@ -165,6 +165,24 @@ pub struct CollateArgs {
     #[structopt(long)]
     pub without_kernel_callstacks: bool,
 
+    /// The input file to use; record it with the `record` subcommand
+    #[structopt(parse(from_os_str))]
+    pub input: OsString
+}
+
+#[derive(StructOpt, Debug)]
+#[structopt(rename_all = "kebab-case")]
+pub struct FlamegraphArgs {
+    #[structopt(flatten)]
+    pub collation_args: SharedCollationArgs
+}
+
+#[derive(StructOpt, Debug)]
+#[structopt(rename_all = "kebab-case")]
+pub struct CollateArgs {
+    #[structopt(flatten)]
+    pub collation_args: SharedCollationArgs,
+
     /// Selects the output format
     #[structopt(
         long,
@@ -175,11 +193,7 @@ pub struct CollateArgs {
             "perf-like"
         ]"#)
     )]
-    pub format: CollateFormat,
-
-    /// The input file to use; record it with the `record` subcommand
-    #[structopt(parse(from_os_str))]
-    pub input: OsString
+    pub format: CollateFormat
 }
 
 #[derive(StructOpt, Debug)]
@@ -199,6 +213,11 @@ pub enum Opt {
     /// Records profiling information with perf_event_open
     #[structopt(name = "record")]
     Record( RecordArgs ),
+
+    /// Emits an SVG flamegraph
+    #[cfg(feature = "inferno")]
+    #[structopt(name = "flamegraph")]
+    Flamegraph( FlamegraphArgs ),
 
     /// Emits collated stack traces for use with Brendan Gregg's flamegraph script
     #[structopt(name = "collate")]

@@ -216,7 +216,7 @@ pub enum CollateFormat {
 
 struct CollateArgs< 'a > {
     input_path: &'a OsStr,
-    debug_symbols: &'a [&'a OsStr],
+    debug_symbols: Vec< &'a OsStr >,
     force_stack_size: Option< u32 >,
     only_sample: Option< u64 >,
     without_kernel_callstacks: bool,
@@ -768,7 +768,8 @@ fn write_frame< T: fmt::Write >( collation: &Collation, interner: &StringInterne
     }
 }
 
-pub fn main( args: args::CollateArgs ) -> Result< (), Box< Error > > {
+
+fn repack_cli_args( args: &args::SharedCollationArgs ) -> (Option< Regex >, CollateArgs) {
     let omit_regex = if args.omit.is_empty() {
         None
     } else {
@@ -780,7 +781,7 @@ pub fn main( args: args::CollateArgs ) -> Result< (), Box< Error > > {
     let debug_symbols: Vec< _ > = args.debug_symbols.iter().map( |path| path.as_os_str() ).collect();
     let collate_args = CollateArgs {
         input_path: &args.input,
-        debug_symbols: &debug_symbols,
+        debug_symbols,
         force_stack_size: args.force_stack_size,
         only_sample: args.only_sample,
         without_kernel_callstacks: args.without_kernel_callstacks,
@@ -791,46 +792,60 @@ pub fn main( args: args::CollateArgs ) -> Result< (), Box< Error > > {
         }
     };
 
+    (omit_regex, collate_args)
+}
+
+pub fn collapse_into_sorted_vec( args: &args::SharedCollationArgs ) -> Result< Vec< String >, Box< Error > > {
+    let (omit_regex, collate_args) = repack_cli_args( args );
+
+    let mut stacks: HashMap< Vec< FrameKind >, u64 > = HashMap::new();
+    let mut interner = StringInterner::new();
+    let collation = collate( collate_args, |collation, _timestamp, process, tid, _cpu, user_backtrace, kernel_backtrace| {
+        collapse_frames(
+            &omit_regex,
+            &collation,
+            process,
+            tid,
+            &user_backtrace,
+            &kernel_backtrace,
+            &mut interner,
+            &mut stacks
+        );
+    })?;
+
+    let mut output = Vec::with_capacity( stacks.len() );
+    for (ref frames, count) in &stacks {
+        let mut line = String::new();
+        let mut is_first = true;
+        for frame in frames.into_iter().rev() {
+            if is_first {
+                is_first = false;
+            } else {
+                line.push( ';' );
+            }
+
+            write_frame( &collation, &interner, &mut line, frame );
+        }
+
+        write!( &mut line, " {}", count ).unwrap();
+        output.push( line );
+    }
+
+    output.sort_unstable();
+    Ok( output )
+}
+
+pub fn main( args: args::CollateArgs ) -> Result< (), Box< Error > > {
     match args.format {
         CollateFormat::Collapsed => {
-            let mut stacks: HashMap< Vec< FrameKind >, u64 > = HashMap::new();
-            let mut interner = StringInterner::new();
-            let collation = collate( collate_args, |collation, _timestamp, process, tid, _cpu, user_backtrace, kernel_backtrace| {
-                collapse_frames(
-                    &omit_regex,
-                    &collation,
-                    process,
-                    tid,
-                    &user_backtrace,
-                    &kernel_backtrace,
-                    &mut interner,
-                    &mut stacks
-                );
-            })?;
-
+            let output = collapse_into_sorted_vec( &args.collation_args )?;
+            let output = output.join( "\n" );
             let stdout = io::stdout();
             let mut stdout = stdout.lock();
-
-            let mut line = String::new();
-            for (ref frames, count) in &stacks {
-                line.clear();
-
-                let mut is_first = true;
-                for frame in frames.into_iter().rev() {
-                    if is_first {
-                        is_first = false;
-                    } else {
-                        line.push( ';' );
-                    }
-
-                    write_frame( &collation, &interner, &mut line, frame );
-                }
-
-                write!( &mut line, " {}\n", count ).unwrap();
-                stdout.write_all( line.as_bytes() ).unwrap();
-            }
+            stdout.write_all( output.as_bytes() ).unwrap();
         },
         CollateFormat::PerfLike => {
+            let (omit_regex, collate_args) = repack_cli_args( &args.collation_args );
             let stdout = io::stdout();
             let mut stdout = stdout.lock();
             collate( collate_args, |collation, timestamp, process, tid, cpu, user_backtrace, kernel_backtrace| {
