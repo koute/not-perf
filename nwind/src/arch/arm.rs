@@ -191,6 +191,10 @@ impl Architecture for Arch {
             *initial_address = Some( initial_address_u32 as _ )
         }
 
+        if let Some( link_register_addr ) = vm.link_register_addr() {
+            *ra_address = Some( link_register_addr as u64 );
+        }
+
         match result {
             Ok( () ) => return Some( UnwindStatus::InProgress ),
             Err( EhError::EndOfStack ) => {

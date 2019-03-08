@@ -54,7 +54,21 @@ nwind_ret_trampoline_start:
 .global nwind_ret_trampoline
 .type nwind_ret_trampoline, %function
 nwind_ret_trampoline:
-    nop
+    /* Save the original return value. */
+    push {r0, r1}
+
+    mov r0, sp
+    add r0, r0, #8
+    bl nwind_on_ret_trampoline
+
+    /* Restore the original return address. */
+    mov lr, r0
+
+    /* Restore the original return value. */
+    pop {r0, r1}
+
+    /* Return. */
+    bx lr
 
     .fnend
     .size nwind_ret_trampoline, .-nwind_ret_trampoline

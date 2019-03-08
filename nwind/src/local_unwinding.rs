@@ -532,11 +532,6 @@ impl LocalAddressSpace {
     }
 
     pub fn is_shadow_stack_enabled( &self ) -> bool {
-        if cfg!( target_arch = "arm" ) {
-            // TODO: Remove this once this is supported on ARM.
-            return false;
-        }
-
         self.use_shadow_stack
     }
 

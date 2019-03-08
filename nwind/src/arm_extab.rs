@@ -734,13 +734,15 @@ impl< 'a > Iterator for BytecodeIter< 'a > {
 
 #[derive(Default)]
 pub struct VirtualMachine {
-    vsp: u32
+    vsp: u32,
+    link_register_addr: Option< u32 >
 }
 
 impl VirtualMachine {
     pub fn new() -> Self {
         VirtualMachine {
-            vsp: 0
+            vsp: 0,
+            link_register_addr: None
         }
     }
 
@@ -780,6 +782,10 @@ impl VirtualMachine {
                                 debug!( "op:   {:?} = *(0x{:08X}) = 0x{:08X}", reg, self.vsp, value );
                                 regs.append( reg.0 as u16, value as u64 );
                                 *regs_modified |= 1 << reg.0;
+
+                                if reg.0 == dwarf::R14 as u8 {
+                                    self.link_register_addr = Some( self.vsp );
+                                }
                             },
                             None => {
                                 debug!( "op:   {:?} = *(0x{:08X}) = unaccessible", reg, self.vsp );
@@ -836,6 +842,10 @@ impl VirtualMachine {
         Some( (index, entry, range) )
     }
 
+    pub fn link_register_addr( &self ) -> Option< u32 > {
+        self.link_register_addr
+    }
+
     pub fn unwind< R, M >(
         &mut self,
         memory: &M,
@@ -848,6 +858,8 @@ impl VirtualMachine {
         address: u32,
         is_first_frame: bool
     ) -> Result< (), Error > where R: Registers, M: MemoryReader< arm::Arch > {
+        self.link_register_addr = None;
+
         if address == 0 || exidx.is_empty() {
             return Err( Error::UnwindInfoMissing );
         }
