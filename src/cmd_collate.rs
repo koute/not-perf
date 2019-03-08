@@ -895,7 +895,7 @@ mod test {
         let path = Path::new( env!( "CARGO_MANIFEST_DIR" ) ).join( "test-data" ).join( "artifacts" ).join( filename );
         let args = CollateArgs {
             input_path: path.as_os_str(),
-            debug_symbols: &[],
+            debug_symbols: Vec::new(),
             force_stack_size: None,
             only_sample: None,
             without_kernel_callstacks: false,
