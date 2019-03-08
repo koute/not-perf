@@ -995,3 +995,44 @@ impl VirtualMachine {
         Ok(())
     }
 }
+
+#[test]
+fn test_decode_everything_from_a_binary() {
+    use crate::binary::BinaryData;
+    use std::path::PathBuf;
+    let _ = ::env_logger::try_init();
+
+    let mut target = PathBuf::from( env!( "CARGO_MANIFEST_DIR" ) )
+        .join( ".." )
+        .join( "test-data" )
+        .join( "bin" )
+        .join( "arm-usleep_in_a_loop_fp" );
+
+    // This is here to make it possible to easily run this test on an arbitrary binary.
+    if let Some( new_target ) = std::env::var_os( "TEST_DECODE_EVERYTHING_OVERRIDE" ) {
+        target = PathBuf::from( new_target );
+    }
+
+    let binary = BinaryData::load_from_fs( target ).unwrap();
+    let exidx_range = binary.arm_exidx_range().unwrap();
+    let exidx_base = exidx_range.start as u32;
+    let extab_range = binary.arm_extab_range().unwrap();
+    let extab_base = extab_range.start as u32;
+    let exidx = &binary[ exidx_range.start as u64..exidx_range.end as u64 ];
+    let extab = &binary[ extab_range.start as u64..extab_range.end as u64 ];
+
+    let exidx: &[IndexEntry] = unsafe {
+        slice::from_raw_parts( exidx.as_ptr() as *const IndexEntry, exidx.len() / mem::size_of::< IndexEntry >() )
+    };
+
+    for (index, entry) in exidx.iter().enumerate() {
+        if entry.value() == EXIDX_CANTUNWIND {
+            continue;
+        }
+
+        let function_start = exidx_offset( exidx_base, index as u32, entry.offset_to_function() );
+        let iter = get_bytecode_iter( function_start, index, entry, exidx_base, extab_base, extab ).unwrap();
+        let mut decoder = Decoder::new( iter );
+        assert!( decoder.all( |instruction| instruction.is_ok() ) );
+    }
+}
