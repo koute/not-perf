@@ -130,7 +130,6 @@ impl Architecture for Arch {
         memory: &M,
         _state: &mut Self::State,
         regs: &mut Self::Regs,
-        regs_next: &mut Self::Regs,
         initial_address: &mut Option< u64 >,
         ra_address: &mut Option< u64 >
     ) -> Option< UnwindStatus > {
@@ -173,21 +172,12 @@ impl Architecture for Arch {
             b""
         };
 
-        for (register, value) in regs.iter() {
-            match register {
-                dwarf::R15 |
-                dwarf::R13 => continue,
-                _ => regs_next.append( register ,value )
-            }
-        }
-
         let mut initial_address_u32 = None;
         let mut vm = EhVm::new();
         let result = vm.unwind(
             memory,
-            regs,
             &mut initial_address_u32,
-            regs_next,
+            regs,
             exidx,
             extab,
             exidx_base as u32,

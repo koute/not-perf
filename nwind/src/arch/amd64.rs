@@ -210,7 +210,6 @@ impl Architecture for Arch {
         memory: &M,
         state: &mut Self::State,
         regs: &mut Self::Regs,
-        regs_next: &mut Self::Regs,
         initial_address: &mut Option< u64 >,
         ra_address: &mut Option< u64 >
     ) -> Option< UnwindStatus > {
@@ -218,7 +217,6 @@ impl Architecture for Arch {
             let binary = lookup_binary( nth_frame, memory, regs )?;
             if let Some( rbp ) = guess_ebp( nth_frame, memory, &mut state.ctx_cache, regs, binary ) {
                 regs.append( dwarf::RBP, rbp );
-                regs_next.append( dwarf::RBP, rbp );
             }
         }
 
@@ -230,13 +228,11 @@ impl Architecture for Arch {
         let mut recovered_return_address = false;
         for &(register, value) in &state.new_regs {
             regs.append( register, value );
-            regs_next.append( register, value );
 
             recovered_return_address = recovered_return_address || register == dwarf::RETURN_ADDRESS;
         }
 
         regs.append( dwarf::RSP, cfa );
-        regs_next.append( dwarf::RSP, cfa );
 
         debug!( "Register {:?} at frame #{} is equal to 0x{:016X}", Self::register_name( dwarf::RSP ), nth_frame + 1, cfa );
 

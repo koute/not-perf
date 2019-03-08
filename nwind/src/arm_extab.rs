@@ -732,13 +732,6 @@ impl< 'a > Iterator for BytecodeIter< 'a > {
     }
 }
 
-#[inline]
-fn get_register< T >( previous_regs: &T, regs: &T, register: u16 ) -> Option< u64 > where T: Registers {
-    regs
-        .get( register )
-        .or_else( || previous_regs.get( register ) )
-}
-
 #[derive(Default)]
 pub struct VirtualMachine {
     vsp: u32
@@ -754,7 +747,6 @@ impl VirtualMachine {
     fn run_bytecode< R, M, I >(
         &mut self,
         memory: &M,
-        previous_regs: &R,
         regs: &mut R,
         regs_modified: &mut u32,
         bytecode: I
@@ -768,7 +760,7 @@ impl VirtualMachine {
                     self.vsp = (self.vsp as i32 + offset) as u32;
                 },
                 Instruction::VspSet( reg ) => {
-                    let value = get_register( previous_regs, regs, reg.0 as u16 );
+                    let value = regs.get( reg.0 as u16 );
                     match value {
                         Some( value ) => {
                             debug!( "op: VSP = {:?} = 0x{:08X}", reg, value );
@@ -847,7 +839,6 @@ impl VirtualMachine {
     pub fn unwind< R, M >(
         &mut self,
         memory: &M,
-        previous_regs: &R,
         initial_address: &mut Option< u32 >,
         regs: &mut R,
         exidx: &[u8],
@@ -861,25 +852,20 @@ impl VirtualMachine {
             return Err( Error::UnwindInfoMissing );
         }
 
+        let original_sp = regs.get( dwarf::R13 );
+        let original_pc = regs.get( dwarf::R15 );
+
         let (index, entry, function_range) = match Self::find_entry( exidx, exidx_base, if is_first_frame { address } else { address - 1 } ) {
             Some( result ) => result,
             None => {
                 debug!( "Address 0x{:08X} has no unwinding information", address );
 
                 if is_first_frame {
-                    let link_register = get_register( previous_regs, regs, dwarf::R14 ).unwrap();
+                    let link_register = regs.get( dwarf::R14 ).unwrap();
                     let program_counter = link_register & !1;
 
-                    if previous_regs.get( dwarf::R15 ).unwrap() == program_counter as u64 {
+                    if original_pc.unwrap() == program_counter as u64 {
                         return Err( Error::UnwindingFailed );
-                    }
-
-                    for (register, value) in previous_regs.iter() {
-                        if register == dwarf::R15 {
-                            continue;
-                        }
-
-                        regs.append( register, value );
                     }
 
                     regs.append( dwarf::R15, program_counter as u64 );
@@ -898,17 +884,17 @@ impl VirtualMachine {
             return Err( Error::EndOfStack );
         }
 
-        self.vsp = match previous_regs.get( dwarf::R13 ) { // R13 is the stack pointer.
+        self.vsp = match original_sp {
             Some( value ) => value as u32,
             None => return Err( Error::MissingRegisterValue( Reg( 13 ) ) )
         };
 
         if is_first_frame && address == function_start {
             debug!( "Address 0x{:08X} starts on the first instruction of its entry (index: {}) in .ARM.extab at: 0x{:08X}", address, index, extab_base );
-            let link_register = get_register( previous_regs, regs, dwarf::R14 ).unwrap();
+            let link_register = regs.get( dwarf::R14 ).unwrap();
             let program_counter = link_register & !1;
 
-            if previous_regs.get( dwarf::R15 ).unwrap() == program_counter as u64 {
+            if original_pc.unwrap() == program_counter as u64 {
                 return Err( Error::UnwindingFailed );
             }
 
@@ -924,7 +910,7 @@ impl VirtualMachine {
             debug!( "Entry for 0x{:08X} (index: {}) is defined inline: 0x{:08X}", address, index, value );
 
             let iter = BytecodeIter::new( value, 1, &[] );
-            self.run_bytecode( memory, previous_regs, regs, &mut regs_modified, iter )?;
+            self.run_bytecode( memory, regs, &mut regs_modified, iter )?;
         } else {
             let extab_address = exidx_offset( exidx_base, index as u32, entry.value() ) + mem::size_of_val( &entry.raw_offset_to_function ) as u32;
 
@@ -954,7 +940,7 @@ impl VirtualMachine {
 
                 let data_bytes = &extab_bytes[ 8..8 + count * 4 ];
                 let iter = BytecodeIter::new( data, 1, data_bytes );
-                self.run_bytecode( memory, previous_regs, regs, &mut regs_modified, iter )?;
+                self.run_bytecode( memory, regs, &mut regs_modified, iter )?;
             } else {
                 // ARM compact model.
                 let personality_routine =
@@ -971,7 +957,7 @@ impl VirtualMachine {
 
                         let data_bytes = &extab_bytes[ 4..4 + count * 4 ];
                         let iter = BytecodeIter::new( header, 2, data_bytes );
-                        self.run_bytecode( memory, previous_regs, regs, &mut regs_modified, iter )?;
+                        self.run_bytecode( memory, regs, &mut regs_modified, iter )?;
                     },
                     _ => {
                         return Err( Error::UnsupportedPersonality( personality_routine as u8 ) );
@@ -980,12 +966,12 @@ impl VirtualMachine {
             }
         }
 
-        let link_register = get_register( previous_regs, regs, dwarf::R14 ).unwrap();
+        let link_register = regs.get( dwarf::R14 ).unwrap();
         let program_counter = link_register & !1;
 
         {
             let r14_modified = regs_modified & (1 << dwarf::R14) != 0;
-            if previous_regs.get( dwarf::R15 ).unwrap() == program_counter as u64 && !r14_modified {
+            if original_pc.unwrap() == program_counter as u64 && !r14_modified {
                 return Err( Error::UnwindingFailed );
             }
         }

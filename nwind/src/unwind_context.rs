@@ -7,8 +7,7 @@ pub struct UnwindContext< A: Architecture > {
     initial_address: Option< u64 >,
     ra_address: Option< u64 >,
     address: u64,
-    regs_1: A::Regs,
-    regs_2: A::Regs,
+    regs: A::Regs,
     state: A::State,
     is_done: bool,
     panic_on_partial_backtrace: bool,
@@ -41,8 +40,7 @@ impl< A: Architecture > UnwindContext< A > {
             initial_address: None,
             ra_address: None,
             address: 0,
-            regs_1: Default::default(),
-            regs_2: Default::default(),
+            regs: Default::default(),
             state: A::initial_state(),
             panic_on_partial_backtrace: false,
             is_done: true,
@@ -56,19 +54,18 @@ impl< A: Architecture > UnwindContext< A > {
 
     #[inline(always)]
     pub fn start< 'a, M: MemoryReader< A >, T: InitializeRegs< A > >( &'a mut self, memory: &M, initializer: T ) -> UnwindHandle< 'a, A > {
-        initializer.initialize_regs( &mut self.regs_1 );
+        initializer.initialize_regs( &mut self.regs );
         self.start_impl( memory )
     }
 
     fn start_impl< 'a, M: MemoryReader< A > >( &'a mut self, memory: &M ) -> UnwindHandle< 'a, A > {
         self.is_done = false;
         self.nth_frame = 0;
-        self.regs_2 = self.regs_1.clone();
 
-        self.address = A::get_instruction_pointer( &self.regs_1 ).unwrap();
+        self.address = A::get_instruction_pointer( &self.regs ).unwrap();
         debug!( "Starting unwinding at: 0x{:016X}", self.address );
 
-        let result = A::unwind( 0, memory, &mut self.state, &mut self.regs_1, &mut self.regs_2, &mut self.initial_address, &mut self.ra_address );
+        let result = A::unwind( 0, memory, &mut self.state, &mut self.regs, &mut self.initial_address, &mut self.ra_address );
         match result {
             None => {
                 if self.panic_on_partial_backtrace {
@@ -94,18 +91,13 @@ impl< 'a, A: Architecture > UnwindHandle< 'a, A > {
         }
 
         self.ctx.nth_frame += 1;
-        let (regs, next_regs) = if self.ctx.nth_frame & 1 == 0 {
-            (&mut self.ctx.regs_1, &mut self.ctx.regs_2)
-        } else {
-            (&mut self.ctx.regs_2, &mut self.ctx.regs_1)
-        };
 
-        self.ctx.address = A::get_instruction_pointer( regs ).unwrap();
-        debug!( "Unwinding #{} -> #{} at: 0x{:016X}", self.ctx.nth_frame - 1, self.ctx.nth_frame, A::get_instruction_pointer( &regs ).unwrap() );
+        self.ctx.address = A::get_instruction_pointer( &self.ctx.regs ).unwrap();
+        debug!( "Unwinding #{} -> #{} at: 0x{:016X}", self.ctx.nth_frame - 1, self.ctx.nth_frame, A::get_instruction_pointer( &self.ctx.regs ).unwrap() );
 
         self.ctx.initial_address = None;
         self.ctx.ra_address = None;
-        let result = A::unwind( self.ctx.nth_frame, memory, &mut self.ctx.state, regs, next_regs, &mut self.ctx.initial_address, &mut self.ctx.ra_address );
+        let result = A::unwind( self.ctx.nth_frame, memory, &mut self.ctx.state, &mut self.ctx.regs, &mut self.ctx.initial_address, &mut self.ctx.ra_address );
         match result {
             None => {
                 if self.ctx.panic_on_partial_backtrace {
@@ -135,18 +127,6 @@ impl< 'a, A: Architecture > UnwindHandle< 'a, A > {
 
     #[cfg(feature = "local-unwinding")]
     #[inline]
-    fn next_regs( &self ) -> &A::Regs {
-        let regs = if self.ctx.nth_frame & 1 == 0 {
-            &self.ctx.regs_1
-        } else {
-            &self.ctx.regs_2
-        };
-
-        &regs
-    }
-
-    #[cfg(feature = "local-unwinding")]
-    #[inline]
     pub fn next_address_location( &mut self ) -> Option< u64 > {
         self.ctx.ra_address
     }
@@ -154,6 +134,6 @@ impl< 'a, A: Architecture > UnwindHandle< 'a, A > {
     #[cfg(feature = "local-unwinding")]
     #[inline]
     pub fn next_stack_pointer( &self ) -> u64 {
-        A::get_stack_pointer( self.next_regs() ).unwrap()
+        A::get_stack_pointer( &self.ctx.regs ).unwrap()
     }
 }

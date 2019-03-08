@@ -211,7 +211,6 @@ impl Architecture for Arch {
         memory: &M,
         state: &mut Self::State,
         regs: &mut Self::Regs,
-        regs_next: &mut Self::Regs,
         initial_address: &mut Option< u64 >,
         ra_address: &mut Option< u64 >
     ) -> Option< UnwindStatus > {
@@ -223,19 +222,16 @@ impl Architecture for Arch {
         let mut recovered_return_address = false;
         for &(register, value) in &state.new_regs {
             regs.append( register, value );
-            regs_next.append( register, value );
 
             recovered_return_address = recovered_return_address || register == dwarf::R31;
         }
 
         regs.append( dwarf::R29, cfa );
-        regs_next.append( dwarf::R29, cfa );
 
         debug!( "Register {:?} at frame #{} is equal to 0x{:016X}", Self::register_name( dwarf::R29 ), nth_frame + 1, cfa );
 
         if recovered_return_address || nth_frame == 0 {
             regs.pc = regs.r31;
-            regs_next.pc = regs.r31;
             Some( UnwindStatus::InProgress )
         } else {
             debug!( "Previous frame not found: failed to determine the return address of frame #{}", nth_frame + 1 );

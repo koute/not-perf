@@ -77,7 +77,6 @@ pub trait Architecture: Sized {
         memory: &M,
         state: &mut Self::State,
         regs: &mut Self::Regs,
-        regs_next: &mut Self::Regs,
         initial_address: &mut Option< u64 >,
         ra_address: &mut Option< u64 >
     ) -> Option< UnwindStatus >;
