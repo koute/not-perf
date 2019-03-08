@@ -4,9 +4,10 @@ use crate::utils::HexValue;
 
 #[derive(Clone)]
 pub struct DwarfRegs {
-    regs: Vec< u64 >,
+    regs: Box< [u64] >,
     regs_mask: u64,
-    regs_list: Vec< u16 >
+    regs_list: Box< [u16] >,
+    regs_count: usize
 }
 
 impl fmt::Debug for DwarfRegs {
@@ -26,10 +27,14 @@ impl Default for DwarfRegs {
         let mut regs = Vec::new();
         regs.resize( 64, 0 );
 
+        let mut regs_list = Vec::new();
+        regs_list.resize( 64, 0 );
+
         DwarfRegs {
-            regs,
+            regs: regs.into_boxed_slice(),
             regs_mask: 0,
-            regs_list: Vec::with_capacity( 64 )
+            regs_list: regs_list.into_boxed_slice(),
+            regs_count: 0
         }
     }
 }
@@ -65,19 +70,20 @@ impl Registers for DwarfRegs {
         let mask = 1_u64 << (register as u32);
         if self.regs_mask & mask == 0 {
             self.regs_mask |= mask;
-            self.regs_list.push( register );
+            self.regs_list[ self.regs_count ] = register;
+            self.regs_count += 1;
         }
     }
 
     #[inline]
     fn iter< 'a >( &'a self ) -> RegsIter< 'a, u64 > {
-        RegsIter::new( &self.regs_list, &self.regs, 0xFFFFFFFFFFFFFFFF )
+        RegsIter::new( &self.regs_list[ 0..self.regs_count ], &self.regs, 0xFFFFFFFFFFFFFFFF )
     }
 
     #[inline]
     fn clear( &mut self ) {
         self.regs_mask = 0;
-        self.regs_list.clear();
+        self.regs_count = 0;
     }
 }
 
@@ -92,7 +98,7 @@ fn test_dwarf_regs() {
     assert_eq!( regs.get( 10 ), Some( 1024 ) );
     assert_eq!( regs.get( 11 ), None );
     assert_eq!( regs.iter().count(), 1 );
-    assert_eq!( regs.regs_list.len(), 1 );
+    assert_eq!( regs.regs_count, 1 );
 
     let vec: Vec< _ > = regs.iter().collect();
     assert_eq!( vec, [(10, 1024)] );
@@ -104,5 +110,5 @@ fn test_dwarf_regs() {
     regs.append( 10, 100 );
     assert_eq!( regs.get( 10 ), Some( 100 ) );
     assert_eq!( regs.iter().count(), 2 );
-    assert_eq!( regs.regs_list.len(), 2 );
+    assert_eq!( regs.regs_count, 2 );
 }
