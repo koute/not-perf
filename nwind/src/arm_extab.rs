@@ -732,6 +732,66 @@ impl< 'a > Iterator for BytecodeIter< 'a > {
     }
 }
 
+fn get_bytecode_iter< 'a >( address: u32, index: usize, entry: &IndexEntry, exidx_base: u32, extab_base: u32, extab: &'a [u8] ) -> Result< BytecodeIter< 'a >, Error > {
+    if entry.value() & EXIDX_INLINE_MASK != 0 {
+        let value = entry.value() & !EXIDX_INLINE_MASK;
+
+        debug!( "Entry for 0x{:08X} (index: {}) is defined inline: 0x{:08X}", address, index, value );
+        return Ok( BytecodeIter::new( value, 1, &[] ) );
+    }
+
+    let extab_address = exidx_offset( exidx_base, index as u32, entry.value() ) + mem::size_of_val( &entry.raw_offset_to_function ) as u32;
+
+    debug!( "Entry for 0x{:08X} (index: {}) is defined in .ARM.extab at: 0x{:08X}", address, index, extab_address );
+    let offset = extab_address - extab_base;
+    let extab_bytes = &extab[ offset as usize.. ];
+    if extab_bytes.len() < 4 {
+        return Err( Error::DecodeError( DecodeError::UnexpectedEnd ) );
+    }
+
+    let extab_entry = LittleEndian::read_u32( extab_bytes );
+    if extab_entry & EXTAB_HEADER_MODEL_MASK == 0 {
+        // Generic model.
+        let personality_offset = extab_entry & !EXTAB_HEADER_MODEL_MASK;
+        debug!( "0x{:08X} uses the generic model with personality at offset 0x{:08X}", extab_address, personality_offset );
+
+        if extab_bytes.len() < 8 {
+            return Err( Error::DecodeError( DecodeError::UnexpectedEnd ) );
+        }
+
+        let data = LittleEndian::read_u32( &extab_bytes[ 4..8 ] );
+        let count = ((data >> 24) & 0xFF) as usize;
+
+        if extab_bytes.len() < (8 + count * 4) {
+            return Err( Error::DecodeError( DecodeError::UnexpectedEnd ) );
+        }
+
+        let data_bytes = &extab_bytes[ 8..8 + count * 4 ];
+        Ok( BytecodeIter::new( data, 1, data_bytes ) )
+    } else {
+        // ARM compact model.
+        let personality_routine =
+            (extab_entry & EXTAB_HEADER_PERSONALITY_ROUTINE_MASK) >> EXTAB_HEADER_PERSONALITY_ROUTINE_SHIFT;
+
+        debug!( "0x{:08X} uses the ARM compact model with personality equal to {}", extab_address, personality_routine );
+        let header = extab_entry & EXTAB_HEADER_DATA_MASK;
+        match personality_routine {
+            1 => {
+                let count = ((header >> 16) & 0xff) as usize;
+                if extab_bytes.len() < (4 + count * 4) {
+                    return Err( Error::DecodeError( DecodeError::UnexpectedEnd ) );
+                }
+
+                let data_bytes = &extab_bytes[ 4..4 + count * 4 ];
+                Ok( BytecodeIter::new( header, 2, data_bytes ) )
+            },
+            _ => {
+                Err( Error::UnsupportedPersonality( personality_routine as u8 ) )
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct VirtualMachine {
     vsp: u32,
@@ -916,67 +976,8 @@ impl VirtualMachine {
         }
 
         let mut regs_modified = 0;
-        if entry.value() & EXIDX_INLINE_MASK != 0 {
-            let value = entry.value() & !EXIDX_INLINE_MASK;
-
-            debug!( "Entry for 0x{:08X} (index: {}) is defined inline: 0x{:08X}", address, index, value );
-
-            let iter = BytecodeIter::new( value, 1, &[] );
-            self.run_bytecode( memory, regs, &mut regs_modified, iter )?;
-        } else {
-            let extab_address = exidx_offset( exidx_base, index as u32, entry.value() ) + mem::size_of_val( &entry.raw_offset_to_function ) as u32;
-
-            debug!( "Entry for 0x{:08X} (index: {}) is defined in .ARM.extab at: 0x{:08X}", address, index, extab_address );
-            let offset = extab_address - extab_base;
-            let extab_bytes = &extab[ offset as usize.. ];
-            if extab_bytes.len() < 4 {
-                return Err( Error::DecodeError( DecodeError::UnexpectedEnd ) );
-            }
-
-            let extab_entry = LittleEndian::read_u32( extab_bytes );
-            if extab_entry & EXTAB_HEADER_MODEL_MASK == 0 {
-                // Generic model.
-                let personality_offset = extab_entry & !EXTAB_HEADER_MODEL_MASK;
-                debug!( "0x{:08X} uses the generic model with personality at offset 0x{:08X}", extab_address, personality_offset );
-
-                if extab_bytes.len() < 8 {
-                    return Err( Error::DecodeError( DecodeError::UnexpectedEnd ) );
-                }
-
-                let data = LittleEndian::read_u32( &extab_bytes[ 4..8 ] );
-                let count = ((data >> 24) & 0xFF) as usize;
-
-                if extab_bytes.len() < (8 + count * 4) {
-                    return Err( Error::DecodeError( DecodeError::UnexpectedEnd ) );
-                }
-
-                let data_bytes = &extab_bytes[ 8..8 + count * 4 ];
-                let iter = BytecodeIter::new( data, 1, data_bytes );
-                self.run_bytecode( memory, regs, &mut regs_modified, iter )?;
-            } else {
-                // ARM compact model.
-                let personality_routine =
-                    (extab_entry & EXTAB_HEADER_PERSONALITY_ROUTINE_MASK) >> EXTAB_HEADER_PERSONALITY_ROUTINE_SHIFT;
-
-                debug!( "0x{:08X} uses the ARM compact model with personality equal to {}", extab_address, personality_routine );
-                let header = extab_entry & EXTAB_HEADER_DATA_MASK;
-                match personality_routine {
-                    1 => {
-                        let count = ((header >> 16) & 0xff) as usize;
-                        if extab_bytes.len() < (4 + count * 4) {
-                            return Err( Error::DecodeError( DecodeError::UnexpectedEnd ) );
-                        }
-
-                        let data_bytes = &extab_bytes[ 4..4 + count * 4 ];
-                        let iter = BytecodeIter::new( header, 2, data_bytes );
-                        self.run_bytecode( memory, regs, &mut regs_modified, iter )?;
-                    },
-                    _ => {
-                        return Err( Error::UnsupportedPersonality( personality_routine as u8 ) );
-                    }
-                }
-            }
-        }
+        let iter = get_bytecode_iter( address, index, entry, exidx_base, extab_base, extab )?;
+        self.run_bytecode( memory, regs, &mut regs_modified, iter )?;
 
         let link_register = regs.get( dwarf::R14 ).unwrap();
         let program_counter = link_register & !1;
