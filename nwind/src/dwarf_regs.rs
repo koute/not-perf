@@ -57,9 +57,16 @@ impl Registers for DwarfRegs {
 
     #[inline]
     fn append( &mut self, register: u16, value: u64 ) {
-        self.regs_mask |= 1_u64 << (register as u32);
-        self.regs[ register as usize ] = value;
-        self.regs_list.push( register );
+        let index = register as usize;
+        assert!( index < self.regs.len() );
+
+        self.regs[ index ] = value;
+
+        let mask = 1_u64 << (register as u32);
+        if self.regs_mask & mask == 0 {
+            self.regs_mask |= mask;
+            self.regs_list.push( register );
+        }
     }
 
     #[inline]
@@ -84,6 +91,8 @@ fn test_dwarf_regs() {
     assert_eq!( regs.contains( 11 ), false );
     assert_eq!( regs.get( 10 ), Some( 1024 ) );
     assert_eq!( regs.get( 11 ), None );
+    assert_eq!( regs.iter().count(), 1 );
+    assert_eq!( regs.regs_list.len(), 1 );
 
     let vec: Vec< _ > = regs.iter().collect();
     assert_eq!( vec, [(10, 1024)] );
@@ -91,4 +100,9 @@ fn test_dwarf_regs() {
     regs.append( 50, 2048 );
     let vec: Vec< _ > = regs.iter().collect();
     assert_eq!( vec, [(10, 1024), (50, 2048)] );
+
+    regs.append( 10, 100 );
+    assert_eq!( regs.get( 10 ), Some( 100 ) );
+    assert_eq!( regs.iter().count(), 2 );
+    assert_eq!( regs.regs_list.len(), 2 );
 }
