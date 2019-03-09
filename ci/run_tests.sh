@@ -19,6 +19,7 @@ if [ "$IS_NIGHTLY" = "1" ]; then
     cargo test --features local-unwinding --verbose
     cargo test --features local-unwinding --release --verbose
 fi
+cargo build --verbose
 cargo test --verbose
 cargo check --no-default-features --verbose
 cargo check --no-default-features --features logging --verbose
