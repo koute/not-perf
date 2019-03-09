@@ -26,6 +26,7 @@ cargo check --no-default-features --features logging --verbose
 cd ..
 cargo test -p perf_event_open --verbose
 cargo test -p proc-maps --verbose
+cargo build -p nperf --verbose
 cargo test -p nperf --verbose
 rustup target add mips64-unknown-linux-gnuabi64
 rustup target add armv7-unknown-linux-gnueabihf
