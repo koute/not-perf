@@ -12,6 +12,7 @@
       * using `.ARM.exidx` + `.ARM.extab` based unwinding (which is ARM specific and is used instead of `.eh_frame`)
    * Support for cross-architectural data analysis
    * Fully architecture-agnostic data format
+   * Built-in flamegraph generation
 
 ## Why should I use this instead of `perf`?
 
@@ -78,9 +79,7 @@ Profiling a process by its name and waiting if it isn't running yet:
 
 Generating a CPU flame graph from the gathered data:
 
-    $ cargo run collate datafile | flamegraph.pl > flame.svg
-
-(Using [Brendan Gregg's flamegraph.pl](https://github.com/brendangregg/FlameGraph/blob/master/flamegraph.pl).)
+    $ cargo run flamegraph datafile > flame.svg
 
 Replace `cargo run` with the path to the executable if you're running the profiler
 outside of its build directory.
