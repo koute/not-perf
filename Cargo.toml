@@ -38,7 +38,7 @@ lto = true
 panic = "abort"
 
 [features]
-default = ["logging"]
+default = ["logging", "inferno"]
 logging = ["nwind/logging", "nwind/addr2line"]
 
 [workspace]
