@@ -18,7 +18,7 @@ serde = "1"
 serde_json = "1"
 serde_derive = "1"
 structopt = "0.2"
-# inferno = { version = "0.4", optional = true }
+inferno = { version = "0.6", default-features = false, optional = true }
 
 proc-maps = { version = "0.1", path = "proc-maps" }
 perf_event_open = { version = "0.1", path = "perf_event_open" }
