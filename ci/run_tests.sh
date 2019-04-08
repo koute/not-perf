@@ -22,7 +22,7 @@ fi
 cargo build --verbose
 cargo test --verbose
 cargo check --no-default-features --verbose
-cargo check --no-default-features --features logging --verbose
+cargo check --no-default-features --features "log" --verbose
 cd ..
 cargo test -p perf_event_open --verbose
 cargo test -p proc-maps --verbose

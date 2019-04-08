@@ -39,7 +39,7 @@ panic = "abort"
 
 [features]
 default = ["logging", "inferno"]
-logging = ["nwind/logging", "nwind/addr2line"]
+logging = ["nwind/log", "nwind/addr2line"]
 
 [workspace]
 members = [".", "nwind", "proc-maps", "perf_event_open"]

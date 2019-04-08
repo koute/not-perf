@@ -3,7 +3,7 @@
     feature(unwind_attributes)
 )]
 
-#[cfg(feature = "logging")]
+#[cfg(feature = "log")]
 #[macro_use]
 extern crate log;
 #[macro_use]
@@ -13,22 +13,22 @@ extern crate addr2line;
 
 pub extern crate proc_maps;
 
-#[cfg(not(feature = "logging"))]
+#[cfg(not(feature = "log"))]
 macro_rules! trace { ($($token:tt)*) => {} }
 
-#[cfg(not(feature = "logging"))]
+#[cfg(not(feature = "log"))]
 macro_rules! debug { ($($token:tt)*) => {} }
 
-#[cfg(not(feature = "logging"))]
+#[cfg(not(feature = "log"))]
 macro_rules! warn { ($($token:tt)*) => {} }
 
-#[cfg(not(feature = "logging"))]
+#[cfg(not(feature = "log"))]
 macro_rules! info { ($($token:tt)*) => {} }
 
-#[cfg(not(feature = "logging"))]
+#[cfg(not(feature = "log"))]
 macro_rules! error { ($($token:tt)*) => {} }
 
-#[cfg(not(feature = "logging"))]
+#[cfg(not(feature = "log"))]
 macro_rules! log_enabled { ($($token:tt)*) => { false } }
 
 #[macro_use]

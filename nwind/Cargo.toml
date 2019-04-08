@@ -27,6 +27,5 @@ cc = { version = "1", optional = true }
 env_logger = "0.6"
 
 [features]
-default = ["logging", "addr2line"]
+default = ["log", "addr2line"]
 local-unwinding = ["cc"]
-logging = ["log"]
