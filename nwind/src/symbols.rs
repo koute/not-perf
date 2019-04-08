@@ -4,11 +4,11 @@ use std::sync::Arc;
 use std::mem::{self, ManuallyDrop};
 use std::time::Instant;
 
-use range_map::RangeMap;
-use elf::{self, Strtab, Endian};
-use utils::{StableIndex, get_ms};
-use types::{Bitness, Endianness};
-use binary::{BinaryData, SymbolTable};
+use crate::range_map::RangeMap;
+use crate::elf::{self, Strtab, Endian};
+use crate::utils::{StableIndex, get_ms};
+use crate::types::{Bitness, Endianness};
+use crate::binary::{BinaryData, SymbolTable};
 
 trait ByteContainer: StableIndex + Index< Range< u64 >, Output = [u8] > + 'static {}
 impl< T > ByteContainer for T where T: StableIndex + Index< Range< u64 >, Output = [u8] > + 'static {}

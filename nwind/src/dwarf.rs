@@ -9,10 +9,10 @@ use gimli::{
     Piece
 };
 
-use arch::{Architecture, Registers};
-use address_space::{MemoryReader, lookup_binary};
-use frame_descriptions::{UnwindInfo, ContextCache, UnwindInfoCache};
-use types::Bitness;
+use crate::arch::{Architecture, Registers};
+use crate::address_space::{MemoryReader, lookup_binary};
+use crate::frame_descriptions::{UnwindInfo, ContextCache, UnwindInfoCache};
+use crate::types::Bitness;
 
 pub struct DwarfResult {
     pub initial_address: u64,

@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::fs::File;
 use std::io::Read;
 
-use binary::BinaryData;
-use utils::HexString;
+use crate::binary::BinaryData;
+use crate::utils::HexString;
 
 pub struct DebugInfoIndex {
     by_filename: HashMap< Vec< u8 >, Vec< Arc< BinaryData > > >,

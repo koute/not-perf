@@ -3,28 +3,15 @@
     feature(unwind_attributes)
 )]
 
-extern crate byteorder;
-extern crate gimli;
-extern crate goblin;
 #[cfg(feature = "logging")]
 #[macro_use]
 extern crate log;
-extern crate memmap;
-extern crate scroll;
-extern crate lru;
-extern crate speedy;
 #[macro_use]
 extern crate speedy_derive;
-extern crate string_interner;
-extern crate cpp_demangle;
 #[cfg(feature = "addr2line")]
 extern crate addr2line;
-extern crate libc;
 
 pub extern crate proc_maps;
-
-#[cfg(test)]
-extern crate env_logger;
 
 #[cfg(not(feature = "logging"))]
 macro_rules! trace { ($($token:tt)*) => {} }
@@ -64,29 +51,29 @@ mod debug_info_index;
 mod local_unwinding;
 mod interner;
 
-pub use address_space::{
+pub use crate::address_space::{
     BufferReader,
     Primitive,
     IAddressSpace,
     AddressSpace,
     Frame
 };
-pub use dwarf_regs::DwarfRegs;
-pub use range_map::RangeMap;
-pub use binary::{BinaryData, BinaryDataReader, SymbolTable, LoadHeader};
-pub use symbols::Symbols;
-pub use types::{
+pub use crate::dwarf_regs::DwarfRegs;
+pub use crate::range_map::RangeMap;
+pub use crate::binary::{BinaryData, BinaryDataReader, SymbolTable, LoadHeader};
+pub use crate::symbols::Symbols;
+pub use crate::types::{
     Inode,
     Bitness,
     UserFrame,
     BinaryId
 };
 
-pub use debug_info_index::DebugInfoIndex;
-pub use frame_descriptions::LoadHint;
+pub use crate::debug_info_index::DebugInfoIndex;
+pub use crate::frame_descriptions::LoadHint;
 
 #[cfg(feature = "local-unwinding")]
-pub use local_unwinding::{
+pub use crate::local_unwinding::{
     LocalAddressSpace,
     LocalAddressSpaceOptions,
     UnwindControl,
@@ -96,4 +83,4 @@ pub use local_unwinding::{
     _Unwind_RaiseException
 };
 
-pub use interner::{StringInterner, StringId};
+pub use crate::interner::{StringInterner, StringId};

@@ -1,5 +1,6 @@
-use arch::{Registers, RegsIter};
 use std::fmt;
+
+use crate::arch::{Registers, RegsIter};
 use crate::utils::HexValue;
 
 #[derive(Clone)]

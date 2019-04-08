@@ -2,11 +2,11 @@ use std::mem;
 
 use gimli::{RegisterRule, CfaRule, LittleEndian};
 
-use arch::{Architecture, Registers, UnwindStatus};
-use address_space::{MemoryReader, Binary, lookup_binary};
-use frame_descriptions::{ContextCache, UnwindInfoCache};
-use types::{Endianness, Bitness};
-use dwarf::dwarf_unwind;
+use crate::arch::{Architecture, Registers, UnwindStatus};
+use crate::address_space::{MemoryReader, Binary, lookup_binary};
+use crate::frame_descriptions::{ContextCache, UnwindInfoCache};
+use crate::types::{Endianness, Bitness};
+use crate::dwarf::dwarf_unwind;
 
 // Source: https://github.com/hjl-tools/x86-psABI/wiki/X86-psABI
 pub mod dwarf {

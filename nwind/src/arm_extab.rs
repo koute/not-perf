@@ -5,11 +5,11 @@ use std::ops::Range;
 
 use byteorder::{ByteOrder, LittleEndian, BigEndian};
 
-use arch::arm;
-use arch::arm::dwarf;
-use arch::Registers;
-use address_space::MemoryReader;
-use types::{Endianness, Bitness};
+use crate::arch::arm;
+use crate::arch::arm::dwarf;
+use crate::arch::Registers;
+use crate::address_space::MemoryReader;
+use crate::types::{Endianness, Bitness};
 
 struct RegsIter {
     mask: u16,

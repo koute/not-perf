@@ -7,12 +7,12 @@ use std::mem;
 use libc;
 use proc_maps;
 
-use address_space::{IAddressSpace, AddressSpace, BinaryRegion, MemoryReader, Frame};
-use binary::BinaryData;
-use range_map::RangeMap;
-use types::{Endianness, UserFrame};
-use arch::{self, LocalRegs, Architecture};
-use unwind_context::InitializeRegs;
+use crate::address_space::{IAddressSpace, AddressSpace, BinaryRegion, MemoryReader, Frame};
+use crate::binary::BinaryData;
+use crate::range_map::RangeMap;
+use crate::types::{Endianness, UserFrame};
+use crate::arch::{self, LocalRegs, Architecture};
+use crate::unwind_context::InitializeRegs;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum UnwindControl {

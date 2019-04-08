@@ -14,9 +14,9 @@ use goblin::elf::section_header::{SHT_SYMTAB, SHT_DYNSYM, SHT_STRTAB};
 use goblin::elf::program_header::PT_LOAD;
 use gimli;
 
-use elf::{self, Endian};
-use utils::{StableIndex, get_major, get_minor};
-use types::{Inode, Bitness, Endianness};
+use crate::elf::{self, Endian};
+use crate::utils::{StableIndex, get_major, get_minor};
+use crate::types::{Inode, Bitness, Endianness};
 
 enum Blob {
     Mmap( Mmap ),

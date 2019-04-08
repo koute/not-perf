@@ -27,10 +27,10 @@ use gimli::{
     ParsedEhFrameHdr
 };
 
-use utils::get_ms;
-use binary::{BinaryData};
-use arch::Endianity;
-use range_map::RangeMap;
+use crate::utils::get_ms;
+use crate::binary::{BinaryData};
+use crate::arch::Endianity;
+use crate::range_map::RangeMap;
 
 type DataReader< E > = EndianSlice< 'static, E >;
 

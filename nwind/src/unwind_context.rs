@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
-use arch::{Architecture, UnwindStatus};
-use address_space::MemoryReader;
+use crate::arch::{Architecture, UnwindStatus};
+use crate::address_space::MemoryReader;
 
 pub struct UnwindContext< A: Architecture > {
     nth_frame: usize,
@@ -23,7 +23,7 @@ pub struct UnwindHandle< 'a, A: Architecture + 'a > {
 // on the register fetching callback to guarantee that we won't
 // produce any extra frames when unwinding locally.
 pub trait InitializeRegs< A: Architecture > {
-    fn initialize_regs( self, &mut A::Regs );
+    fn initialize_regs( self, regs: &mut A::Regs );
 }
 
 impl< T, A: Architecture > InitializeRegs< A > for T where T: FnOnce( &mut A::Regs ) {

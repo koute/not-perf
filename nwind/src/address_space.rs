@@ -17,14 +17,14 @@ use lru::LruCache;
 
 use proc_maps::Region;
 
-use arch::{Architecture, Registers, Endianity};
-use dwarf_regs::DwarfRegs;
-use range_map::RangeMap;
-use unwind_context::UnwindContext;
-use binary::{BinaryData, LoadHeader, BinaryDataReader};
-use symbols::Symbols;
-use frame_descriptions::{FrameDescriptions, ContextCache, UnwindInfo, AddressMapping, LoadHint};
-use types::{Bitness, Inode, UserFrame, Endianness, BinaryId};
+use crate::arch::{Architecture, Registers, Endianity};
+use crate::dwarf_regs::DwarfRegs;
+use crate::range_map::RangeMap;
+use crate::unwind_context::UnwindContext;
+use crate::binary::{BinaryData, LoadHeader, BinaryDataReader};
+use crate::symbols::Symbols;
+use crate::frame_descriptions::{FrameDescriptions, ContextCache, UnwindInfo, AddressMapping, LoadHint};
+use crate::types::{Bitness, Inode, UserFrame, Endianness, BinaryId};
 
 #[cfg(not(feature = "addr2line"))]
 mod addr2line {
@@ -1071,7 +1071,7 @@ fn test_reload() {
     use std::env;
     use std::fs::File;
     use std::io::Read;
-    use arch;
+    use crate::arch;
 
     let _ = ::env_logger::try_init();
 

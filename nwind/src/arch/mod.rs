@@ -1,17 +1,17 @@
 use std::fmt;
 use gimli;
-use address_space::MemoryReader;
-use types::{Endianness, Bitness};
+use crate::address_space::MemoryReader;
+use crate::types::{Endianness, Bitness};
 
 pub mod native {
     #[cfg(target_arch = "x86_64")]
-    pub use arch::amd64::*;
+    pub use crate::arch::amd64::*;
 
     #[cfg(target_arch = "mips64")]
-    pub use arch::mips64::*;
+    pub use crate::arch::mips64::*;
 
     #[cfg(target_arch = "arm")]
-    pub use arch::arm::*;
+    pub use crate::arch::arm::*;
 }
 
 pub enum RegName {
@@ -150,7 +150,7 @@ macro_rules! impl_local_regs {
 macro_rules! impl_local_regs {
     ($regs_ty:ident, $arch:tt, $get_regs:ident) => {
         #[cfg(all(target_arch = $arch, feature = "local-unwinding"))]
-        impl ::arch::LocalRegs for $regs_ty {
+        impl crate::arch::LocalRegs for $regs_ty {
             #[inline(always)]
             fn get_local_regs( &mut self ) {
                 extern "C" {
@@ -251,8 +251,8 @@ macro_rules! unsafe_impl_registers {
             }
 
             #[inline]
-            fn iter< 'a >( &'a self ) -> ::arch::RegsIter< 'a, $reg_ty > {
-                ::arch::RegsIter::new( $regs_array, self.as_slice(), self.mask )
+            fn iter< 'a >( &'a self ) -> crate::arch::RegsIter< 'a, $reg_ty > {
+                crate::arch::RegsIter::new( $regs_array, self.as_slice(), self.mask )
             }
 
             #[inline]
