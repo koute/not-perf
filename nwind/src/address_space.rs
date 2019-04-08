@@ -858,7 +858,7 @@ fn reload< A: Architecture >(
         }
 
         let is_new = !old_regions.remove( &region );
-        let mut data = new_binary_map.get_mut( &id ).unwrap();
+        let data = new_binary_map.get_mut( &id ).unwrap();
 
         if region.file_offset == 0 {
             if let Some( load_header ) = data.load_headers.iter().find( |header| header.file_offset == 0 ) {
