@@ -423,7 +423,7 @@ impl< E: Endianity > FrameDescriptions< E > {
             if let Some( &(ref bases, ref eh_frame_hdr) ) = self.eh_frame_hdr.as_ref() {
                 let eh_frame = self.eh_frame.as_ref().unwrap();
 
-                if log_enabled!( ::log::Level::Debug ) {
+                if debug_logs_enabled!() {
                     match eh_frame_hdr.table().unwrap().lookup( address, bases ) {
                         Ok( gimli::Pointer::Direct( pointer ) ) => {
                             debug!( "FDE pointer for {:016X} from .eh_frame_hdr: {:016X} (relative: 0x{:X})", address, pointer, pointer - bases.eh_frame_hdr.section.unwrap() );

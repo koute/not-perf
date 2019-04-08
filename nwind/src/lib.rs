@@ -4,8 +4,8 @@
 )]
 
 #[cfg(feature = "log")]
-#[macro_use]
 extern crate log;
+
 #[macro_use]
 extern crate speedy_derive;
 #[cfg(feature = "addr2line")]
@@ -13,23 +13,46 @@ extern crate addr2line;
 
 pub extern crate proc_maps;
 
-#[cfg(not(feature = "log"))]
+#[allow(unused_macros)]
+#[cfg(any(not(feature = "log"), not(feature = "debug-logs")))]
 macro_rules! trace { ($($token:tt)*) => {} }
 
-#[cfg(not(feature = "log"))]
+#[cfg(any(not(feature = "log"), not(feature = "debug-logs")))]
 macro_rules! debug { ($($token:tt)*) => {} }
+
+#[allow(unused_macros)]
+#[cfg(not(feature = "log"))]
+macro_rules! info { ($($token:tt)*) => {} }
 
 #[cfg(not(feature = "log"))]
 macro_rules! warn { ($($token:tt)*) => {} }
 
 #[cfg(not(feature = "log"))]
-macro_rules! info { ($($token:tt)*) => {} }
-
-#[cfg(not(feature = "log"))]
 macro_rules! error { ($($token:tt)*) => {} }
 
-#[cfg(not(feature = "log"))]
-macro_rules! log_enabled { ($($token:tt)*) => { false } }
+#[cfg(any(not(feature = "log"), not(feature = "debug-logs")))]
+macro_rules! debug_logs_enabled { () => { false } }
+
+
+#[allow(unused_macros)]
+#[cfg(all(feature = "log", feature = "debug-logs"))]
+macro_rules! trace { ($($token:tt)*) => { log::trace!( $($token)* ) } }
+
+#[cfg(all(feature = "log", feature = "debug-logs"))]
+macro_rules! debug { ($($token:tt)*) => { log::debug!( $($token)* ) } }
+
+#[allow(unused_macros)]
+#[cfg(feature = "log")]
+macro_rules! info { ($($token:tt)*) => { log::info!( $($token)* ) } }
+
+#[cfg(feature = "log")]
+macro_rules! warn { ($($token:tt)*) => { log::warn!( $($token)* ) } }
+
+#[cfg(feature = "log")]
+macro_rules! error { ($($token:tt)*) => { log::error!( $($token)* ) } }
+
+#[cfg(all(feature = "log", feature = "debug-logs"))]
+macro_rules! debug_logs_enabled { () => { log::log_enabled!( log::Level::Debug ) } }
 
 #[macro_use]
 mod elf;
