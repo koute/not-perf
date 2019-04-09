@@ -14,7 +14,6 @@ fn build() {
 
     let mut build = cc::Build::new();
     build.file( source );
-    build.file( "src/arch/shadow_stack.c" );
     build.compile( "get_regs.a" );
 }
 

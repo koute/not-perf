@@ -3,6 +3,8 @@ use std::fs;
 use std::ptr;
 use std::marker::PhantomData;
 use std::mem;
+use std::slice;
+use std::cell::UnsafeCell;
 
 use libc;
 use proc_maps;
@@ -57,7 +59,6 @@ impl< 'a > MemoryReader< arch::native::Arch > for LocalMemory< 'a > {
 }
 
 extern "C" {
-    pub fn nwind_get_shadow_stack() -> *mut usize;
     pub fn nwind_ret_trampoline();
 }
 
@@ -74,7 +75,7 @@ pub extern fn nwind_on_ret_trampoline( stack_pointer: usize ) -> usize {
 
     let expected_index = tls.tail;
     let index =
-        if tls.slice[ expected_index ].stack_pointer == stack_pointer {
+        if tls.slice()[ expected_index ].stack_pointer == stack_pointer {
             Some( expected_index )
         } else {
             loop {
@@ -86,7 +87,7 @@ pub extern fn nwind_on_ret_trampoline( stack_pointer: usize ) -> usize {
                 tls.tail -= 1;
 
                 let index = tls.tail;
-                if tls.slice[ index ].stack_pointer == stack_pointer {
+                if tls.slice()[ index ].stack_pointer == stack_pointer {
                     warn!( "Found matching trampoline entry for stack pointer = 0x{:016X} at index #{} instead of at #{}; was `longjmp` used here?", stack_pointer, index, expected_index );
                     break Some( index );
                 }
@@ -94,7 +95,7 @@ pub extern fn nwind_on_ret_trampoline( stack_pointer: usize ) -> usize {
         };
 
     if let Some( index ) = index {
-        let entry = tls.slice[ index ];
+        let entry = tls.slice()[ index ];
         debug!( "Found trampoline entry at index #{}", index );
         debug!( "Clearing shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
 
@@ -103,7 +104,7 @@ pub extern fn nwind_on_ret_trampoline( stack_pointer: usize ) -> usize {
 
     error!( "Failed to find a matching trampoline entry for stack pointer = 0x{:016X}", stack_pointer );
     for index in 0..=expected_index {
-        let entry = tls.slice[ index ];
+        let entry = tls.slice()[ index ];
         error!( "Shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
     }
 
@@ -211,8 +212,6 @@ impl< 'a > Iterator for ShadowStackIter< 'a > {
     }
 }
 
-const SHADOW_STACK_SIZE: usize = mem::size_of::< usize >() * 16384;
-
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct ShadowEntry {
@@ -223,11 +222,133 @@ struct ShadowEntry {
 
 #[repr(C)]
 struct ShadowStackTls {
+    length: usize,
     tail: usize,
     entries_popped_since_last_unwind: usize,
     last_unwind_address: usize,
-    is_enabled: usize,
-    slice: [ShadowEntry; (SHADOW_STACK_SIZE - mem::size_of::< usize >() * 4) / mem::size_of::< ShadowEntry >()]
+    is_enabled: usize
+}
+
+impl ShadowStackTls {
+    #[inline]
+    fn slice( &mut self ) -> &mut [ShadowEntry] {
+        let length = self.length;
+        debug_assert_ne!( length, 0 );
+        unsafe {
+            let ptr = (self as *mut ShadowStackTls).add( 1 ) as *mut ShadowEntry;
+            slice::from_raw_parts_mut( ptr, length )
+        }
+    }
+
+    #[cold]
+    unsafe fn alloc( length: usize ) -> *mut ShadowStackTls {
+        use std::alloc::{Layout, alloc};
+
+        let total_size = mem::size_of::< ShadowStackTls >() + length * mem::size_of::< ShadowEntry >();
+        let layout = Layout::from_size_align_unchecked( total_size, 8 );
+
+        let tls = alloc( layout ) as *mut ShadowStackTls;
+        *tls = ShadowStackTls {
+            length,
+            tail: 0,
+            entries_popped_since_last_unwind: 0,
+            last_unwind_address: 0,
+            is_enabled: 0
+        };
+
+        tls
+    }
+
+    #[cold]
+    unsafe fn dealloc( tls: *mut ShadowStackTls ) {
+        use std::alloc::{Layout, dealloc};
+        if tls == ptr::null_mut() {
+            return;
+        }
+
+        let length = (*tls).length;
+        let total_size = mem::size_of::< ShadowStackTls >() + length * mem::size_of::< ShadowEntry >();
+        let layout = Layout::from_size_align_unchecked( total_size, 8 );
+        dealloc( tls as *mut u8, layout );
+    }
+
+    #[cold]
+    unsafe fn grow( tls_p: &mut *mut ShadowStackTls ) -> usize {
+        let tls = *tls_p;
+
+        let length = (*tls).length;
+        let new_length = length * 2;
+        let extra_space = new_length - length;
+        info!( "Growing the shadow stack from {} elements to {} elements", length, new_length );
+
+        let new_tls = Self::alloc( new_length );
+        debug_assert_eq!( (*new_tls).slice().len(), new_length );
+
+        *new_tls = ShadowStackTls {
+            length: new_length,
+            ..(*tls)
+        };
+
+        {
+            let tls = &mut *tls;
+            let new_tls = &mut *new_tls;
+            let tail = tls.tail;
+            let src = tls.slice();
+            let dst = new_tls.slice();
+
+            dst[ ..tail ].copy_from_slice( &src[ ..tail ] );
+            dst[ tail + extra_space.. ].copy_from_slice( &src[ tail.. ] );
+        }
+
+        ShadowStackTls::dealloc( tls );
+        *tls_p = new_tls;
+
+        extra_space
+    }
+}
+
+struct ShadowStackTlsPtr {
+    tls: UnsafeCell< *mut ShadowStackTls >
+}
+
+impl ShadowStackTlsPtr {
+    #[inline]
+    fn get( &self ) -> *mut ShadowStackTls {
+        unsafe {
+            *self.tls.get()
+        }
+    }
+
+    #[inline]
+    unsafe fn set( &self, ptr: *mut ShadowStackTls ) {
+        *self.tls.get() = ptr;
+    }
+}
+
+impl Drop for ShadowStackTlsPtr {
+    fn drop( &mut self ) {
+        let tls = self.get();
+        unsafe {
+            ShadowStackTls::dealloc( tls );
+        }
+    }
+}
+
+#[cfg(not(test))]
+const SHADOW_STACK_DEFAULT_LENGTH: usize = 256;
+
+#[cfg(test)]
+const SHADOW_STACK_DEFAULT_LENGTH: usize = 1;
+
+thread_local! {
+    static SHADOW_STACK_TLS_PTR: ShadowStackTlsPtr = {
+        unsafe {
+            let tls = ShadowStackTls::alloc( SHADOW_STACK_DEFAULT_LENGTH );
+            ShadowStackTlsPtr {
+                tls: UnsafeCell::new( tls )
+            }
+        }
+    };
 }
 
 struct ShadowStack {
@@ -243,7 +364,7 @@ impl Drop for ShadowStack {
 
             let src = self.index;
             let dst = tls.tail;
-            let len = tls.slice.len() - self.index;
+            let len = tls.slice().len() - self.index;
 
             if len == 0 {
                 return;
@@ -252,8 +373,8 @@ impl Drop for ShadowStack {
             debug!( "Copying shadow stack into #{}..#{} (length={})", dst, dst + len, len );
 
             ptr::copy_nonoverlapping(
-                tls.slice.as_ptr().offset( src as isize ),
-                tls.slice.as_mut_ptr().offset( dst as isize ),
+                tls.slice().as_ptr().offset( src as isize ),
+                tls.slice().as_mut_ptr().offset( dst as isize ),
                 len
             );
 
@@ -262,7 +383,7 @@ impl Drop for ShadowStack {
 
             let mut index = 0;
             while index < tls.tail {
-                let entry = tls.slice[ index ];
+                let entry = tls.slice()[ index ];
                 let kind = if index < original_tail { "old" } else { "new" };
                 debug!( "Shadow stack ({}) #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", kind, index, entry.return_address, entry.location, entry.stack_pointer );
                 index += 1;
@@ -274,13 +395,22 @@ impl Drop for ShadowStack {
 impl ShadowStack {
     #[inline]
     fn get() -> Self {
-        let tls = unsafe { nwind_get_shadow_stack() } as *mut ShadowStackTls;
+        let mut tls = ptr::null_mut();
+        SHADOW_STACK_TLS_PTR.with( |tls_ptr| {
+            tls = tls_ptr.get();
+        });
+
         let stack = ShadowStack {
             tls: tls,
-            index: unsafe { (*tls).slice.len() }
+            index: unsafe { (*tls).slice().len() }
         };
 
         stack
+    }
+
+    #[inline]
+    fn tls( &mut self ) -> &mut ShadowStackTls {
+        unsafe { &mut *self.tls }
     }
 
     #[inline]
@@ -292,13 +422,12 @@ impl ShadowStack {
     #[inline]
     fn push( &mut self, stack_pointer: usize, address_location: usize ) -> Option< ShadowStackIter > {
         let slot = unsafe { &mut *(address_location as *mut usize) };
-        let tls = unsafe { &mut *self.tls };
-
         if *slot == nwind_ret_trampoline as usize {
             debug!( "Found already set trampoline at slot 0x{:016X}", address_location );
 
+            let tls = self.tls();
             let index = tls.tail - 1;
-            let entry = &tls.slice[ index ];
+            let entry = &tls.slice()[ index ];
             if entry.location != address_location {
                 debug!( "The address of the slot (0x{:016X}) doesn't match the slot address from the shadow stack (0x{:016X}) for shadow stack entry #{}", address_location, entry.location, index );
                 debug!( "Shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
@@ -312,23 +441,40 @@ impl ShadowStack {
             }
 
             debug!( "Found shadow stack entry at #{} matching the trampoline", index );
-            return Some( ShadowStackIter { slice: &tls.slice[..], index: tls.tail } );
+
+            let tail = tls.tail;
+            return Some( ShadowStackIter { slice: &tls.slice()[..], index: tail } );
         }
 
-        if self.index == tls.tail {
-            error!(
+        if self.index == self.tls().tail {
+            let length = self.tls().slice().len();
+            let tail = self.tls().tail;
+
+            warn!(
                 "Shadow stack overflow: has space for only {} entries, contains {} entries from the previous unwind and {} entries from the current one",
-                tls.slice.len(),
-                tls.tail,
-                tls.slice.len() - self.index
+                length,
+                tail,
+                length - self.index
             );
-            panic!( "Shadow stack overflow!" );
+
+            let extra_space = unsafe {
+                ShadowStackTls::grow( &mut self.tls )
+            };
+
+            SHADOW_STACK_TLS_PTR.with( |tls_ptr| {
+                unsafe {
+                    tls_ptr.set( self.tls );
+                }
+            });
+
+            self.index += extra_space;
         }
 
         self.index -= 1;
 
         debug!( "Saving to shadow stack: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", *slot, address_location, stack_pointer );
-        tls.slice[ self.index ] = ShadowEntry {
+        let index = self.index;
+        self.tls().slice()[ index ] = ShadowEntry {
             return_address: *slot,
             location: address_location,
             stack_pointer
@@ -344,7 +490,7 @@ impl ShadowStack {
         while tls.tail > 0 {
             tls.tail -= 1;
             let index = tls.tail;
-            let entry = tls.slice[ index ];
+            let entry = tls.slice()[ index ];
 
             debug!( "Clearing shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
             unsafe {
@@ -485,8 +631,6 @@ impl LocalAddressSpace {
     }
 
     pub fn new_with_opts( opts: LocalAddressSpaceOptions ) -> Result< Self, io::Error > {
-        assert!( mem::size_of::< ShadowStackTls >() <= SHADOW_STACK_SIZE );
-
         debug!( "Initializing local address space..." );
         debug!( "Trampoline address: 0x{:016X}", nwind_ret_trampoline as usize );
 
@@ -761,11 +905,15 @@ fn test_unwind_twice() {
 fn clear_tls() {
     // Make sure we clear the TLS data from any tests which might
     // have had been previously launched on this thread.
-    let stack = ShadowStack::get();
-    unsafe {
-        let size = mem::size_of_val( &*stack.tls );
-        ptr::write_bytes( stack.tls as *mut u8, 0, size );
-    }
+
+    SHADOW_STACK_TLS_PTR.with( |tls_ptr| {
+        unsafe {
+            let new_tls = ShadowStackTls::alloc( SHADOW_STACK_DEFAULT_LENGTH );
+
+            ShadowStackTls::dealloc( tls_ptr.get() );
+            tls_ptr.set( new_tls );
+        }
+    });
 }
 
 #[test]
