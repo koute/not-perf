@@ -12,7 +12,7 @@ pub fn main( args: args::FlamegraphArgs ) -> Result< (), Box< Error > > {
 
     let stdout = io::stdout();
     let stdout = stdout.lock();
-    flamegraph::from_sorted_lines( &mut options, lines.iter().map( |line| line.as_str() ), stdout ).unwrap();
+    flamegraph::from_lines( &mut options, lines.iter().map( |line| line.as_str() ), stdout ).unwrap();
 
     Ok(())
 }
