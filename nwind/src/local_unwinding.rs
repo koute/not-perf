@@ -370,7 +370,11 @@ impl Drop for ShadowStack {
                 return;
             }
 
-            debug!( "Copying shadow stack into #{}..#{} (length={})", dst, dst + len, len );
+            debug!( "Copying shadow stack from #{}..#{} into #{}..#{} (length={})", src, src + len, dst, dst + len, len );
+            if cfg!( debug_assertions ) && dst + len > src {
+                error!( "Assertion failed: #{}..#{} overlaps with #{}..#{}", src, src + len, dst, dst + len );
+                libc::abort();
+            }
 
             ptr::copy_nonoverlapping(
                 tls.slice().as_ptr().offset( src as isize ),
@@ -446,15 +450,18 @@ impl ShadowStack {
             return Some( ShadowStackIter { slice: &tls.slice()[..], index: tail } );
         }
 
-        if self.index == self.tls().tail {
-            let length = self.tls().slice().len();
-            let tail = self.tls().tail;
-
+        let capacity = self.tls().slice().len();
+        let tail = self.tls().tail;
+        let available_space = self.index - tail;
+        let space_required = capacity - self.index + 2;
+        if available_space < space_required {
             warn!(
-                "Shadow stack overflow: has space for only {} entries, contains {} entries from the previous unwind and {} entries from the current one",
-                length,
+                "Shadow stack overflow: capacity = {}, used = {} + {}, available = {}, required = {}",
+                capacity,
                 tail,
-                length - self.index
+                capacity - self.index,
+                available_space,
+                space_required
             );
 
             let extra_space = unsafe {
@@ -479,6 +486,19 @@ impl ShadowStack {
             location: address_location,
             stack_pointer
         };
+
+        if cfg!( debug_assertions ) {
+            let src = self.index;
+            let dst = self.tls().tail;
+            let len = self.tls().slice().len() - self.index;
+
+            if dst + len > src {
+                error!( "Assertion failed: #{}..#{} will overlap with #{}..#{}", src, src + len, dst, dst + len );
+                unsafe {
+                    libc::abort();
+                }
+            }
+        }
 
         *slot = nwind_ret_trampoline as usize;
         None
