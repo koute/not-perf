@@ -15,20 +15,20 @@ pub extern crate proc_maps;
 
 #[allow(unused_macros)]
 #[cfg(any(not(feature = "log"), not(feature = "debug-logs")))]
-macro_rules! trace { ($($token:tt)*) => {} }
+macro_rules! trace { ($($token:expr),*) => {{ $( let _ = &$token; )+ }} }
 
 #[cfg(any(not(feature = "log"), not(feature = "debug-logs")))]
-macro_rules! debug { ($($token:tt)*) => {} }
+macro_rules! debug { ($($token:expr),*) => {{ $( let _ = &$token; )+ }} }
 
 #[allow(unused_macros)]
 #[cfg(not(feature = "log"))]
-macro_rules! info { ($($token:tt)*) => {} }
+macro_rules! info { ($($token:expr),*) => {{ $( let _ = &$token; )+ }} }
 
 #[cfg(not(feature = "log"))]
-macro_rules! warn { ($($token:tt)*) => {} }
+macro_rules! warn { ($($token:expr),*) => {{ $( let _ = &$token; )+ }} }
 
 #[cfg(not(feature = "log"))]
-macro_rules! error { ($($token:tt)*) => {} }
+macro_rules! error { ($($token:expr),*) => {{ $( let _ = &$token; )+ }} }
 
 #[cfg(any(not(feature = "log"), not(feature = "debug-logs")))]
 macro_rules! debug_logs_enabled { () => { false } }
@@ -36,20 +36,20 @@ macro_rules! debug_logs_enabled { () => { false } }
 
 #[allow(unused_macros)]
 #[cfg(all(feature = "log", feature = "debug-logs"))]
-macro_rules! trace { ($($token:tt)*) => { log::trace!( $($token)* ) } }
+macro_rules! trace { ($($token:expr),*) => { log::trace!( $($token),* ) } }
 
 #[cfg(all(feature = "log", feature = "debug-logs"))]
-macro_rules! debug { ($($token:tt)*) => { log::debug!( $($token)* ) } }
+macro_rules! debug { ($($token:expr),*) => { log::debug!( $($token),* ) } }
 
 #[allow(unused_macros)]
 #[cfg(feature = "log")]
-macro_rules! info { ($($token:tt)*) => { log::info!( $($token)* ) } }
+macro_rules! info { ($($token:expr),*) => { log::info!( $($token),* ) } }
 
 #[cfg(feature = "log")]
-macro_rules! warn { ($($token:tt)*) => { log::warn!( $($token)* ) } }
+macro_rules! warn { ($($token:expr),*) => { log::warn!( $($token),* ) } }
 
 #[cfg(feature = "log")]
-macro_rules! error { ($($token:tt)*) => { log::error!( $($token)* ) } }
+macro_rules! error { ($($token:expr),*) => { log::error!( $($token),* ) } }
 
 #[cfg(all(feature = "log", feature = "debug-logs"))]
 macro_rules! debug_logs_enabled { () => { log::log_enabled!( log::Level::Debug ) } }
