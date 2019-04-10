@@ -441,7 +441,9 @@ impl ShadowStack {
                 error!( "The stack pointer (0x{:016X}) doesn't match the stack pointer from the shadow stack (0x{:016X}) for shadow stack entry #{}", stack_pointer, entry.stack_pointer, index );
                 error!( "Shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
 
-                panic!( "The stack pointer doesn't match the stack pointer from the shadow stack" );
+                unsafe {
+                    libc::abort();
+                }
             }
 
             debug!( "Found shadow stack entry at #{} matching the trampoline", index );
