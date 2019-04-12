@@ -94,7 +94,7 @@ elif [[ "$ARCH" = "arm" ]]; then
     INITRD_URL="http://ftp.debian.org/debian/dists/jessie/main/installer-armhf/current/images/netboot/initrd.gz"
     KERNEL_APPEND="console=ttyAMA0 earlycon"
     IO_DEVICE=virtio-blk-device
-elif [[ "$ARCH" = "arm64" ]]; then
+elif [[ "$ARCH" = "arm64" || "$ARCH" = "aarch64" ]]; then
     QEMU=qemu-system-aarch64
     YOCTO_MACHINE=qemuarm64
     MACHINE=virt

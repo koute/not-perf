@@ -32,6 +32,10 @@ function initialize_toolchain {
         PREFIX=amd64
         TARGET=x86_64-unknown-linux-musl
         EXTRA_RUSTFLAGS=""
+    elif [[ "$BASENAME" = "qemuarm64" ]]; then
+        PREFIX=aarch64
+        TARGET=aarch64-unknown-linux-gnu
+        EXTRA_RUSTFLAGS=""
     else
         echo "Unknown SDK detected! ($BASENAME)"
         print_sdk_urls_and_exit
@@ -64,6 +68,7 @@ function print_sdk_urls_and_exit {
     echo "  MIPS64 - http://downloads.yoctoproject.org/releases/yocto/yocto-2.4.1/toolchain/x86_64/poky-glibc-x86_64-core-image-minimal-mips64-toolchain-ext-2.4.1.sh"
     echo "     ARM - http://downloads.yoctoproject.org/releases/yocto/yocto-2.4.1/toolchain/x86_64/poky-glibc-x86_64-core-image-minimal-cortexa8hf-neon-toolchain-ext-2.4.1.sh"
     echo "   AMD64 - http://downloads.yoctoproject.org/releases/yocto/yocto-2.4.1/toolchain/x86_64/poky-glibc-x86_64-core-image-minimal-core2-64-toolchain-ext-2.4.1.sh"
+    echo " AArch64 - http://downloads.yoctoproject.org/releases/yocto/yocto-2.4.1/toolchain/x86_64/poky-glibc-x86_64-core-image-minimal-aarch64-toolchain-ext-2.4.1.sh"
     exit 1
 }
 

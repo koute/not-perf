@@ -61,3 +61,4 @@ function generate {
 generate amd64
 generate arm
 generate mips64
+generate aarch64
