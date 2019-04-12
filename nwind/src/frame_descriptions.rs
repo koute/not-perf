@@ -12,7 +12,6 @@ use gimli::{
     EhFrame,
     EhFrameHdr,
     DebugFrame,
-    InitializedUnwindContext,
     UninitializedUnwindContext,
     UnwindSection,
     UnwindOffset,
@@ -35,49 +34,15 @@ use crate::range_map::RangeMap;
 type DataReader< E > = EndianSlice< 'static, E >;
 
 pub struct ContextCache< E: Endianity > {
-    cached_eh_frame: Option< UninitializedUnwindContext< EhFrame< DataReader< E > >, DataReader< E > > >,
-    cached_debug_frame: Option< UninitializedUnwindContext< DebugFrame< DataReader< E > >, DataReader< E > > >
-}
-
-trait CachableSection< E: Endianity >: UnwindSection< DataReader< E > > where <Self as UnwindSection< DataReader< E > >>::Offset: UnwindOffset {
-    fn get( ctx_cache: &mut ContextCache< E > ) -> UninitializedUnwindContext< Self, DataReader< E > >;
-    fn cache( ctx_cache: &mut ContextCache< E >, uuc: UninitializedUnwindContext< Self, DataReader< E > > );
-}
-
-impl< E: Endianity > CachableSection< E > for EhFrame< DataReader< E > > {
-    fn get( ctx_cache: &mut ContextCache< E > ) -> UninitializedUnwindContext< Self, DataReader< E > > {
-        ctx_cache.cached_eh_frame.take().unwrap_or_else( || Default::default() )
-    }
-
-    fn cache( ctx_cache: &mut ContextCache< E >, uuc: UninitializedUnwindContext< Self, DataReader< E > > ) {
-        ctx_cache.cached_eh_frame = Some( uuc );
-    }
-}
-
-impl< E: Endianity > CachableSection< E > for DebugFrame< DataReader< E > > {
-    fn get( ctx_cache: &mut ContextCache< E > ) -> UninitializedUnwindContext< Self, DataReader< E > > {
-        ctx_cache.cached_debug_frame.take().unwrap_or_else( || Default::default() )
-    }
-
-    fn cache( ctx_cache: &mut ContextCache< E >, uuc: UninitializedUnwindContext< Self, DataReader< E > > ) {
-        ctx_cache.cached_debug_frame = Some( uuc );
-    }
+    cached_context: Option< UninitializedUnwindContext< DataReader< E > > >
 }
 
 impl< E: Endianity > ContextCache< E > {
     #[inline]
     pub fn new() -> Self {
         ContextCache {
-            cached_eh_frame: None,
-            cached_debug_frame: None
+            cached_context: None
         }
-    }
-
-    #[inline]
-    fn cache< U: CachableSection< E > >( &mut self, iuc: InitializedUnwindContext< U, DataReader< E > > )
-        where <U as UnwindSection< DataReader< E > >>::Offset: UnwindOffset
-    {
-        U::cache( self, iuc.reset() );
     }
 }
 
@@ -89,15 +54,15 @@ pub struct AddressMapping {
     pub size: u64
 }
 
-type EhFrameDescription< 'a, E > = FrameDescriptionEntry< EhFrame< DataReader< E > >, DataReader< E > >;
-type DebugFrameDescription< 'a, E > = FrameDescriptionEntry< DebugFrame< DataReader< E > >, DataReader< E > >;
+type FDE< E > = FrameDescriptionEntry< DataReader< E > >;
 
 pub struct FrameDescriptions< E: Endianity > {
     binary: ManuallyDrop< Arc< BinaryData > >,
-    eh_descriptions: ManuallyDrop< RangeMap< EhFrameDescription< 'static, E > > >,
-    debug_descriptions: ManuallyDrop< RangeMap< DebugFrameDescription< 'static, E > > >,
+    eh_descriptions: ManuallyDrop< RangeMap< FDE< E > > >,
+    debug_descriptions: ManuallyDrop< RangeMap< FDE< E > > >,
 
-    eh_frame: ManuallyDrop< Option< EhFrame< DataReader< E > > > >,
+    debug_frame: ManuallyDrop< Option< (BaseAddresses, DebugFrame< DataReader< E > >) > >,
+    eh_frame: ManuallyDrop< Option< (BaseAddresses, EhFrame< DataReader< E > >) > >,
     eh_frame_hdr: ManuallyDrop< Option< (BaseAddresses, ParsedEhFrameHdr< DataReader< E > >) > >
 }
 
@@ -221,11 +186,31 @@ impl< E: Endianity > FrameDescriptions< E > {
 
     fn load_with_options( builder: FrameDescriptionsBuilder< E > ) -> Option< Self > {
         let binary = &builder.binary;
+        let debug_frame;
+        if let Some( range ) = binary.debug_frame_range() {
+            let bases = BaseAddresses::default();
+            let debug_frame_data: &[u8] = &binary.as_bytes()[ range ];
+            let debug_frame_data: &'static [u8] = unsafe { mem::transmute( debug_frame_data ) };
+            debug_frame = Some( (bases, DebugFrame::new( debug_frame_data, E::get() )) );
+        } else {
+            debug_frame = None;
+        }
+
         let eh_frame;
         if let Some( range ) = binary.eh_frame_range() {
+            let mut bases = BaseAddresses::default();
+
+            if let Some( base ) = Self::get_base( binary, binary.text_range() ) {
+                bases = bases.set_text( base );
+            }
+
+            if let Some( base ) = Self::get_base( binary, binary.eh_frame_range() ) {
+                bases = bases.set_eh_frame( base );
+            }
+
             let eh_frame_data: &[u8] = &binary.as_bytes()[ range ];
             let eh_frame_data: &'static [u8] = unsafe { mem::transmute( eh_frame_data ) };
-            eh_frame = Some( EhFrame::new( eh_frame_data, E::get() ) );
+            eh_frame = Some( (bases, EhFrame::new( eh_frame_data, E::get() )) );
         } else {
             eh_frame = None;
         }
@@ -237,27 +222,47 @@ impl< E: Endianity > FrameDescriptions< E > {
             eh_frame_hdr = None;
         }
 
-        let debug_descriptions: RangeMap< DebugFrameDescription< E > >;
-        if builder.load_debug_frame {
-            debug_descriptions = Self::load_debug_frame( binary );
+        let debug_descriptions: RangeMap< FDE< E > >;
+        if debug_frame.is_some() && builder.load_debug_frame {
+            debug!( "Loading FDEs from .debug_frame for {}...", binary.name() );
+            let (ref bases, ref debug_frame) = debug_frame.as_ref().unwrap();
+
+            let start_timestamp = Instant::now();
+            debug_descriptions = Self::load_section( bases, binary, debug_frame );
+            let elapsed = start_timestamp.elapsed();
+
+            debug!( "Loaded {} FDEs from .debug_frame for '{}' in {}ms", debug_descriptions.len(), binary.name(), get_ms( elapsed ) );
         } else {
             debug_descriptions = RangeMap::new();
         }
 
-        let eh_descriptions: RangeMap< EhFrameDescription< E > >;
-        if builder.load_eh_frame == LoadHint::Always || (builder.load_eh_frame == LoadHint::WhenNecessary && eh_frame_hdr.is_none()) {
-            eh_descriptions = Self::load_eh_frame( binary );
+        let want_to_load_eh_frame = builder.load_eh_frame == LoadHint::Always || (builder.load_eh_frame == LoadHint::WhenNecessary && eh_frame_hdr.is_none());
+        let eh_descriptions: RangeMap< FDE< E > >;
+        if eh_frame.is_some() && want_to_load_eh_frame {
+            debug!( "Loading FDEs from .eh_frame for {}...", binary.name() );
+            let (ref bases, ref eh_frame) = eh_frame.as_ref().unwrap();
+
+            let start_timestamp = Instant::now();
+            eh_descriptions = Self::load_section( bases, binary, eh_frame );
+            let elapsed = start_timestamp.elapsed();
+
+            debug!( "Loaded {} FDEs from .eh_frame for '{}' in {}ms", eh_descriptions.len(), binary.name(), get_ms( elapsed ) );
         } else {
+            if want_to_load_eh_frame {
+                warn!( "No .eh_frame section found for '{}'", binary.name() );
+            }
+
             eh_descriptions = RangeMap::new();
         }
 
-        let debug_descriptions: RangeMap< DebugFrameDescription< 'static, E > > = unsafe { mem::transmute( debug_descriptions ) };
-        let eh_descriptions: RangeMap< EhFrameDescription< 'static, E > > = unsafe { mem::transmute( eh_descriptions ) };
+        let debug_descriptions: RangeMap< FDE< E > > = unsafe { mem::transmute( debug_descriptions ) };
+        let eh_descriptions: RangeMap< FDE< E > > = unsafe { mem::transmute( eh_descriptions ) };
 
         Some( FrameDescriptions {
             binary: ManuallyDrop::new( binary.clone() ),
             debug_descriptions: ManuallyDrop::new( debug_descriptions ),
             eh_descriptions: ManuallyDrop::new( eh_descriptions ),
+            debug_frame: ManuallyDrop::new( debug_frame ),
             eh_frame: ManuallyDrop::new( eh_frame ),
             eh_frame_hdr: ManuallyDrop::new( eh_frame_hdr )
         })
@@ -313,72 +318,16 @@ impl< E: Endianity > FrameDescriptions< E > {
         Some( (bases, eh_frame_hdr) )
     }
 
-    fn load_debug_frame< 'a >( binary: &'a Arc< BinaryData > ) -> RangeMap< FrameDescriptionEntry< DebugFrame< DataReader< E > >, DataReader< E > > > {
-        let debug_frame_range = match binary.debug_frame_range() {
-            Some( range ) => range,
-            None => return RangeMap::new()
-        };
-
-        debug!( "Loading FDEs from .debug_frame for {}...", binary.name() );
-
-        let start_timestamp = Instant::now();
-
-        let bases = BaseAddresses::default();
-
-        let debug_frame_data: &[u8] = &binary.as_bytes()[ debug_frame_range.clone() ];
-        let debug_frame_data: &'static [u8] = unsafe { mem::transmute( debug_frame_data ) };
-        let debug_frame = DebugFrame::new( debug_frame_data, E::get() );
-
-        let descriptions = Self::load_section( bases, binary, debug_frame );
-        let elapsed = start_timestamp.elapsed();
-        debug!( "Loaded {} FDEs from .debug_frame for '{}' in {}ms", descriptions.len(), binary.name(), get_ms( elapsed ) );
-
-        descriptions
-    }
-
-    fn load_eh_frame< 'a >( binary: &'a Arc< BinaryData > ) -> RangeMap< FrameDescriptionEntry< EhFrame< DataReader< E > >, DataReader< E > > > {
-        let eh_frame_range = match binary.eh_frame_range() {
-            Some( range ) => range,
-            None => {
-                warn!( "No .eh_frame section found for '{}'", binary.name() );
-                return RangeMap::new();
-            }
-        };
-
-        debug!( "Loading FDEs from .eh_frame for {}...", binary.name() );
-
-        let start_timestamp = Instant::now();
-
-        let mut bases = BaseAddresses::default();
-        if let Some( base ) = Self::get_base( binary, binary.text_range() ) {
-            bases = bases.set_text( base );
-        }
-
-        if let Some( base ) = Self::get_base( binary, Some( eh_frame_range.clone() ) ) {
-            bases = bases.set_eh_frame( base );
-        }
-
-        let eh_frame_data: &[u8] = &binary.as_bytes()[ eh_frame_range.clone() ];
-        let eh_frame_data: &'static [u8] = unsafe { mem::transmute( eh_frame_data ) };
-        let eh_frame = EhFrame::new( eh_frame_data, E::get() );
-
-        let descriptions = Self::load_section( bases, binary, eh_frame );
-        let elapsed = start_timestamp.elapsed();
-        debug!( "Loaded {} FDEs from .eh_frame for '{}' in {}ms", descriptions.len(), binary.name(), get_ms( elapsed ) );
-
-        descriptions
-    }
-
-    fn load_section< R: gimli::Reader< Offset = usize >, U: UnwindSection< R > >( bases: BaseAddresses, binary: &Arc< BinaryData >, section: U ) -> RangeMap< FrameDescriptionEntry< U, R > >
+    fn load_section< R: gimli::Reader< Offset = usize >, U: UnwindSection< R > >( bases: &BaseAddresses, binary: &Arc< BinaryData >, section: &U ) -> RangeMap< FrameDescriptionEntry< R > >
         where <U as UnwindSection< R >>::Offset: UnwindOffset
     {
-        let mut entries = section.entries( &bases );
+        let mut entries = section.entries( bases );
         let mut descriptions = Vec::new();
         loop {
             match entries.next() {
                 Ok( Some( CieOrFde::Cie( _ ) ) ) => continue,
                 Ok( Some( CieOrFde::Fde( partial ) ) ) => {
-                    match partial.parse( |offset| section.cie_from_offset( &bases, offset ) ) {
+                    match partial.parse( |_, _, offset| section.cie_from_offset( bases, offset ) ) {
                         Ok( fde ) => {
                             descriptions.push( (fde.initial_address()..fde.initial_address() + fde.len(), fde) );
                         },
@@ -409,19 +358,21 @@ impl< E: Endianity > FrameDescriptions< E > {
 
         if !self.debug_descriptions.is_empty() {
             if let Some( fde ) = self.debug_descriptions.get_value( address ) {
-                info = Self::find_unwind_info_impl( fde, ctx_cache, address );
+                let (bases, debug_frame) = &self.debug_frame.as_ref().unwrap();
+                info = Self::find_unwind_info_impl( fde, debug_frame, bases, ctx_cache, address );
             }
         }
 
         if info.is_none() && !self.eh_descriptions.is_empty() {
             if let Some( fde ) = self.eh_descriptions.get_value( address ) {
-                info = Self::find_unwind_info_impl( fde, ctx_cache, address );
+                let (bases, eh_frame) = &self.eh_frame.as_ref().unwrap();
+                info = Self::find_unwind_info_impl( fde, eh_frame, bases, ctx_cache, address );
             }
         }
 
         if info.is_none() {
             if let Some( &(ref bases, ref eh_frame_hdr) ) = self.eh_frame_hdr.as_ref() {
-                let eh_frame = self.eh_frame.as_ref().unwrap();
+                let eh_frame = &self.eh_frame.as_ref().unwrap().1;
 
                 if debug_logs_enabled!() {
                     match eh_frame_hdr.table().unwrap().lookup( address, bases ) {
@@ -432,13 +383,13 @@ impl< E: Endianity > FrameDescriptions< E > {
                     }
                 }
 
-                let fde = eh_frame_hdr.table().unwrap().lookup_and_parse( address, bases, eh_frame.clone(), |offset| {
+                let fde = eh_frame_hdr.table().unwrap().lookup_and_parse( address, bases, eh_frame.clone(), |_, _, offset| {
                     eh_frame.cie_from_offset( bases, offset )
                 });
 
                 match fde {
                     Ok( fde ) => {
-                        info = Self::find_unwind_info_impl( &fde, ctx_cache, address );
+                        info = Self::find_unwind_info_impl( &fde, eh_frame, bases, ctx_cache, address );
                     },
                     Err( error ) => {
                         debug!( "FDE not found in .eh_frame_hdr for 0x{:016X}: {}", absolute_address, error );
@@ -459,25 +410,27 @@ impl< E: Endianity > FrameDescriptions< E > {
         }
     }
 
-    fn find_unwind_info_impl< U: CachableSection< E > >(
-        fde: &FrameDescriptionEntry< U, DataReader< E > >,
+    fn find_unwind_info_impl< U >(
+        fde: &FDE< E >,
+        section: &U,
+        bases: &BaseAddresses,
         ctx_cache: &mut ContextCache< E >,
         address: u64
     ) -> Option< (u64, UncachedUnwindInfo< E >) >
-        where <U as UnwindSection< DataReader< E > >>::Offset: UnwindOffset
+        where U: UnwindSection< DataReader< E > >,
+              <U as UnwindSection< DataReader< E > >>::Offset: UnwindOffset
     {
-        let ctx = U::get( ctx_cache );
-        let mut ctx = match ctx.initialize( fde.cie() ) {
-            Ok( ctx ) => ctx,
-            Err( (_, ctx) ) => {
-                U::cache( ctx_cache, ctx );
-                return None;
-            }
-        };
-
+        let mut ctx = ctx_cache.cached_context.take().unwrap_or_else( || Default::default() );
         let info = {
             let initial_address = fde.initial_address();
-            let mut table = UnwindTable::new( &mut ctx, &fde );
+            let mut table = match UnwindTable::new( section, bases, &mut ctx, &fde ) {
+                Ok( table ) => table,
+                Err( _ ) => {
+                    ctx_cache.cached_context = Some( ctx );
+                    return None;
+                }
+            };
+
             loop {
                 let row = match table.next_row() {
                     Ok( None ) => break None,
@@ -497,7 +450,7 @@ impl< E: Endianity > FrameDescriptions< E > {
             }
         };
 
-        ctx_cache.cache( ctx );
+        ctx_cache.cached_context = Some( ctx );
         info
     }
 }
