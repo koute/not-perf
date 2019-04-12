@@ -4,7 +4,7 @@
 
 ## Features
 
-   * Support for AMD64, ARM and MIPS64 architectures (where MIPS64 requires a tiny out-of-tree patch to the kernel to work)
+   * Support for AMD64, ARM, AArch64 and MIPS64 architectures (where MIPS64 requires a tiny out-of-tree patch to the kernel to work)
    * Support for offline and online stack trace unwinding
    * Support for profiling of binaries without any debug info (without the `.debug_frame` section)
       * using `.eh_frame` based unwinding (this is how normal C++ exception handling unwinds the stack)
