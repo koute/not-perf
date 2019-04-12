@@ -178,6 +178,7 @@ impl BinaryData {
                             "mips"
                         }
                     },
+                    elf_header::EM_AARCH64 => "aarch64",
                     kind => {
                         return Err( io::Error::new( io::ErrorKind::Other, format!( "unknown machine type '{}' for {:?}", kind, path ) ) );
                     }

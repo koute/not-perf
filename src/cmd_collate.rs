@@ -301,6 +301,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                     arch::arm::Arch::NAME => Box::new( AddressSpace::< arch::arm::Arch >::new() ),
                     arch::amd64::Arch::NAME => Box::new( AddressSpace::< arch::amd64::Arch >::new() ),
                     arch::mips64::Arch::NAME => Box::new( AddressSpace::< arch::mips64::Arch >::new() ),
+                    arch::aarch64::Arch::NAME => Box::new( AddressSpace::< arch::aarch64::Arch >::new() ),
                     _ => panic!( "Unknown architecture: {}", machine_architecture )
                 };
 

@@ -174,6 +174,49 @@ pub mod arm {
     );
 }
 
+pub mod aarch64 {
+    use perf_event_open::sys::*;
+    use nwind::arch::aarch64::dwarf::*;
+
+    fn validate( _register: u16, _value: u64 ) -> bool { return true; }
+
+    define_regs!(
+        PERF_REG_ARM64_X0 => X0,
+        PERF_REG_ARM64_X1 => X1,
+        PERF_REG_ARM64_X2 => X2,
+        PERF_REG_ARM64_X3 => X3,
+        PERF_REG_ARM64_X4 => X4,
+        PERF_REG_ARM64_X5 => X5,
+        PERF_REG_ARM64_X6 => X6,
+        PERF_REG_ARM64_X7 => X7,
+        PERF_REG_ARM64_X8 => X8,
+        PERF_REG_ARM64_X9 => X9,
+        PERF_REG_ARM64_X10 => X10,
+        PERF_REG_ARM64_X11 => X11,
+        PERF_REG_ARM64_X12 => X12,
+        PERF_REG_ARM64_X13 => X13,
+        PERF_REG_ARM64_X14 => X14,
+        PERF_REG_ARM64_X15 => X15,
+        PERF_REG_ARM64_X16 => X16,
+        PERF_REG_ARM64_X17 => X17,
+        PERF_REG_ARM64_X18 => X18,
+        PERF_REG_ARM64_X19 => X19,
+        PERF_REG_ARM64_X20 => X20,
+        PERF_REG_ARM64_X21 => X21,
+        PERF_REG_ARM64_X22 => X22,
+        PERF_REG_ARM64_X23 => X23,
+        PERF_REG_ARM64_X24 => X24,
+        PERF_REG_ARM64_X25 => X25,
+        PERF_REG_ARM64_X26 => X26,
+        PERF_REG_ARM64_X27 => X27,
+        PERF_REG_ARM64_X28 => X28,
+        PERF_REG_ARM64_X29 => X29,
+        PERF_REG_ARM64_LR => X30,
+        PERF_REG_ARM64_SP => X31,
+        PERF_REG_ARM64_PC => PC
+    );
+}
+
 pub mod native {
     #[cfg(target_arch = "x86_64")]
     pub use super::amd64::*;
@@ -183,4 +226,7 @@ pub mod native {
 
     #[cfg(target_arch = "arm")]
     pub use super::arm::*;
+
+    #[cfg(target_arch = "aarch64")]
+    pub use super::aarch64::*;
 }

@@ -9,6 +9,7 @@ fn build() {
         "x86_64-unknown-linux-gnu" => "src/arch/amd64_get_regs.s",
         "mips64-unknown-linux-gnuabi64" => "src/arch/mips64_get_regs.s",
         "armv7-unknown-linux-gnueabihf" => "src/arch/arm_get_regs.s",
+        "aarch64-unknown-linux-gnu" => "src/arch/aarch64_get_regs.s",
         target => panic!( "unsupported target: {}", target )
     };
 

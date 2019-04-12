@@ -12,6 +12,9 @@ pub mod native {
 
     #[cfg(target_arch = "arm")]
     pub use crate::arch::arm::*;
+
+    #[cfg(target_arch = "aarch64")]
+    pub use crate::arch::aarch64::*;
 }
 
 pub enum RegName {
@@ -266,3 +269,4 @@ macro_rules! unsafe_impl_registers {
 pub mod amd64;
 pub mod mips64;
 pub mod arm;
+pub mod aarch64;
