@@ -1049,6 +1049,93 @@ mod test {
     }
 
     #[test]
+    fn collate_aarch64_hot_spot_usleep_in_a_loop_no_fp() {
+        let data = load( "aarch64-usleep_in_a_loop_no_fp.nperf" );
+
+        let (frames, count) = most_frequent_trace( &data );
+        assert!( count >= 40 );
+        assert_backtrace( &data, frames, &[
+            "[process:aarch64-usleep_in_a_loop_no_fp]",
+            "[main_thread]",
+            "__libc_start_main:libc-2.26.so",
+            "main:aarch64-usleep_in_a_loop_no_fp",
+            "function:aarch64-usleep_in_a_loop_no_fp",
+            "usleep:libc-2.26.so",
+            "nanosleep:libc-2.26.so",
+            "el0_svc_naked:linux",
+            "sys_nanosleep:linux",
+            "**"
+        ]);
+    }
+
+    #[test]
+    fn collate_aarch64_perfect_unwinding_usleep_in_a_loop_no_fp() {
+        let data = load( "aarch64-usleep_in_a_loop_no_fp.nperf" );
+
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
+                "[process:aarch64-usleep_in_a_loop_no_fp]",
+                "[main_thread]",
+                "__libc_start_main:libc-2.26.so",
+                "main:aarch64-usleep_in_a_loop_no_fp",
+                "**"
+            ]);
+        }
+    }
+
+    #[test]
+    fn collate_aarch64_hot_spot_usleep_in_a_loop_fp() {
+        let data = load( "aarch64-usleep_in_a_loop_fp.nperf" );
+
+        let (frames, count) = most_frequent_trace( &data );
+        assert!( count >= 40 );
+        assert_backtrace( &data, frames, &[
+            "[process:aarch64-usleep_in_a_loop_fp]",
+            "[main_thread]",
+            "__libc_start_main:libc-2.26.so",
+            "main:aarch64-usleep_in_a_loop_fp",
+            "function:aarch64-usleep_in_a_loop_fp",
+            "usleep:libc-2.26.so",
+            "nanosleep:libc-2.26.so",
+            "el0_svc_naked:linux",
+            "sys_nanosleep:linux",
+            "**"
+        ]);
+    }
+
+    #[test]
+    fn collate_aarch64_perfect_unwinding_usleep_in_a_loop_fp() {
+        let data = load( "aarch64-usleep_in_a_loop_fp.nperf" );
+
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
+                "[process:aarch64-usleep_in_a_loop_fp]",
+                "[main_thread]",
+                "__libc_start_main:libc-2.26.so",
+                "main:aarch64-usleep_in_a_loop_fp",
+                "**"
+            ]);
+        }
+    }
+
+    #[test]
+    fn collate_aarch64_noreturn() {
+        let data = load( "aarch64-noreturn.nperf" );
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
+                "[process:aarch64-noreturn]",
+                "[main_thread]",
+                "__libc_start_main:libc-2.26.so",
+                "main:aarch64-noreturn",
+                "function:aarch64-noreturn",
+                "infinite_loop:aarch64-noreturn",
+                "usleep:libc-2.26.so",
+                "**"
+            ]);
+        }
+    }
+
+    #[test]
     fn collate_arm_hot_spot_usleep_in_a_loop_no_fp() {
         let data = load( "arm-usleep_in_a_loop_no_fp.nperf" );
 
