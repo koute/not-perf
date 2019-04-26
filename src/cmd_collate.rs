@@ -874,7 +874,6 @@ mod test {
     use nwind::LoadHint;
     use std::path::Path;
     use std::collections::HashMap;
-    use env_logger;
 
     struct Data {
         collation: Collation,
@@ -891,6 +890,7 @@ mod test {
     }
 
     fn load_with_fde_hints( filename: &str, fde_hints: FdeHints ) -> Data {
+        #[cfg(feature = "env_logger")]
         let _ = env_logger::try_init();
         let mut interner = StringInterner::new();
         let path = Path::new( env!( "CARGO_MANIFEST_DIR" ) ).join( "test-data" ).join( "artifacts" ).join( filename );

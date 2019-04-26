@@ -44,6 +44,7 @@ fn main_impl() -> Result< (), Box< Error >  > {
         env::set_var( "RUST_LOG", "nperf=info" );
     }
 
+    #[cfg(feature = "env_logger")]
     env_logger::init();
 
     let opt = args::Opt::from_args();
