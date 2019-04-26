@@ -12,8 +12,8 @@ use libc;
 
 use proc_maps;
 
-use utils::read_string_lossy;
-use perf_arch;
+use crate::utils::read_string_lossy;
+use crate::perf_arch;
 use perf_event_open::{Perf, EventRef, Event, CommEvent, Mmap2Event, EventSource};
 
 struct StoppedProcess( u32 );

@@ -3,7 +3,7 @@ use std::fs;
 use std::time::{Duration, Instant};
 use std::thread::sleep;
 
-use utils::SigintHandler;
+use crate::utils::SigintHandler;
 
 struct ProcessName {
     from_cmdline: Option< String >,

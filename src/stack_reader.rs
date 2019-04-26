@@ -1,6 +1,6 @@
 use std::mem;
 
-use archive::Endianness;
+use crate::archive::Endianness;
 use perf_event_open::RawData;
 use nwind::{Primitive, BufferReader};
 

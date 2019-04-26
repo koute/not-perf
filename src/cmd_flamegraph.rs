@@ -3,8 +3,8 @@ use std::io;
 
 use inferno::flamegraph;
 
-use args;
-use cmd_collate::collapse_into_sorted_vec;
+use crate::args;
+use crate::cmd_collate::collapse_into_sorted_vec;
 
 pub fn main( args: args::FlamegraphArgs ) -> Result< (), Box< Error > > {
     let lines = collapse_into_sorted_vec( &args.collation_args )?;

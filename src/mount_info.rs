@@ -4,7 +4,7 @@ use std::fs;
 use std::fmt;
 use std::str;
 
-use utils::read_string_lossy;
+use crate::utils::read_string_lossy;
 
 #[derive(Debug)]
 enum OctalUnescapeError {

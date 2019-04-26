@@ -1,10 +1,3 @@
-extern crate libc;
-extern crate regex;
-extern crate env_logger;
-extern crate parking_lot;
-extern crate num_cpus;
-extern crate chrono;
-extern crate speedy;
 #[macro_use]
 extern crate speedy_derive;
 
@@ -14,23 +7,12 @@ extern crate lazy_static;
 #[macro_use]
 extern crate log;
 
-extern crate serde;
-extern crate serde_json;
-
 #[macro_use]
 extern crate serde_derive;
-extern crate structopt;
 
 #[cfg(test)]
 #[macro_use]
 extern crate quickcheck;
-
-#[cfg(feature = "inferno")]
-extern crate inferno;
-
-extern crate nwind;
-extern crate proc_maps;
-extern crate perf_event_open;
 
 mod utils;
 

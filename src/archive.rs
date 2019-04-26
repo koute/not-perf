@@ -13,7 +13,7 @@ pub use nwind::{
 };
 
 pub use speedy::Endianness;
-pub use raw_data::CowRawData;
+pub use crate::raw_data::CowRawData;
 
 #[derive(Copy, Clone, Debug)]
 pub struct DwarfReg {

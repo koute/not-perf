@@ -31,12 +31,12 @@ use nwind::{
     LoadHint
 };
 
-use args;
-use archive::{Packet, Inode, Bitness, UserFrame, ArchiveReader};
-use utils::StableIndex;
-use kallsyms::{self, KernelSymbol};
+use crate::args;
+use crate::archive::{Packet, Inode, Bitness, UserFrame, ArchiveReader};
+use crate::utils::StableIndex;
+use crate::kallsyms::{self, KernelSymbol};
 
-use stack_reader::StackReader;
+use crate::stack_reader::StackReader;
 
 #[derive(PartialEq, Eq, Debug, Hash)]
 enum FrameKind {

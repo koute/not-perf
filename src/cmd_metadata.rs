@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use serde_json;
 
 use nwind::BinaryId;
-use archive::{Packet, ArchiveReader};
-use metadata::{self, Metadata};
-use args;
+use crate::archive::{Packet, ArchiveReader};
+use crate::metadata::{self, Metadata};
+use crate::args;
 
 pub fn main( args: args::MetadataArgs ) -> Result< (), Box< Error > > {
     let fp = fs::File::open( &args.input ).map_err( |err| format!( "cannot open {:?}: {}", args.input, err ) )?;

@@ -27,14 +27,14 @@ use nwind::{
     BinaryId
 };
 
-use args::{self, TargetProcess};
-use utils::{SigintHandler, read_string_lossy, get_major, get_minor, get_ms};
-use archive::{FramedPacket, Packet, Inode, Bitness, DwarfReg, ARCHIVE_MAGIC, ARCHIVE_VERSION};
-use execution_queue::ExecutionQueue;
-use ps::{wait_for_process, find_process};
-use stack_reader::StackReader;
-use mount_info::PathResolver;
-use raw_data::CowRawData;
+use crate::args::{self, TargetProcess};
+use crate::utils::{SigintHandler, read_string_lossy, get_major, get_minor, get_ms};
+use crate::archive::{FramedPacket, Packet, Inode, Bitness, DwarfReg, ARCHIVE_MAGIC, ARCHIVE_VERSION};
+use crate::execution_queue::ExecutionQueue;
+use crate::ps::{wait_for_process, find_process};
+use crate::stack_reader::StackReader;
+use crate::mount_info::PathResolver;
+use crate::raw_data::CowRawData;
 
 fn get_vdso() -> Option< &'static [u8] > {
     let maps_str = read_string_lossy( "/proc/self/maps" ).expect( "cannot read /proc/self/maps" );

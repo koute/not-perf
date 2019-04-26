@@ -3,7 +3,7 @@ use structopt::StructOpt;
 
 use perf_event_open::EventSource;
 
-use cmd_collate::CollateFormat;
+use crate::cmd_collate::CollateFormat;
 
 fn parse_event_source( source: &str ) -> EventSource {
     match source {

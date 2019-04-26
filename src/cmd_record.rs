@@ -7,12 +7,12 @@ use proc_maps::Region;
 use nwind::arch::Registers;
 use nwind::DwarfRegs;
 
-use args;
+use crate::args;
 use perf_event_open::{Event, CommEvent, Mmap2Event};
-use perf_group::PerfGroup;
-use perf_arch;
-use archive::Packet;
-use profiler::{ProfilingController, Sample};
+use crate::perf_group::PerfGroup;
+use crate::perf_arch;
+use crate::archive::Packet;
+use crate::profiler::{ProfilingController, Sample};
 
 fn handle_comm_event( event: CommEvent, controller: &ProfilingController ) {
     let packet = Packet::ThreadName {
