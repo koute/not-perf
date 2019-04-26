@@ -305,7 +305,7 @@ fn process_maps(
 
             if region.name == "[vdso]" {
                 if let Some( vdso ) = get_vdso() {
-                    let mut data = match BinaryData::load_from_static_slice( &region.name, vdso ) {
+                    let data = match BinaryData::load_from_static_slice( &region.name, vdso ) {
                         Ok( data ) => data,
                         Err( _ ) => return
                     };

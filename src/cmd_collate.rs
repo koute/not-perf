@@ -334,7 +334,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                     BinaryId::ByInode( inode )
                 };
 
-                let mut binary = Binary {
+                let binary = Binary {
                     basename: get_basename( &path ),
                     path,
                     string_tables: Arc::new( BinaryChunks::new() ),
@@ -525,7 +525,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                 }
 
                 let user_backtrace = {
-                    let mut process = &mut collation.processes[ 0 ];
+                    let process = &mut collation.processes[ 0 ];
                     process.reload_if_necessary( &debug_info_index, &mut collation.binary_by_id, &args.fde_hints );
 
                     let mut dwarf_regs = DwarfRegs::new();
