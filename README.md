@@ -35,7 +35,7 @@ Some of those are as follows:
 
 ## Building
 
-1. Install at least Rust 1.28
+1. Install at least Rust 1.31
 2. Build it:
 
         $ cargo build --release
