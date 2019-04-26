@@ -3,7 +3,6 @@ use structopt::StructOpt;
 
 use perf_event_open::EventSource;
 
-use profiler::TargetProcess;
 use cmd_collate::CollateFormat;
 
 fn parse_event_source( source: &str ) -> EventSource {
@@ -23,6 +22,12 @@ fn parse_collate_format( format: &str ) -> CollateFormat {
         "perf-like" => CollateFormat::PerfLike,
         _ => unreachable!()
     }
+}
+
+pub enum TargetProcess {
+    ByPid( u32 ),
+    ByName( String ),
+    ByNameWaiting( String, u64 )
 }
 
 #[derive(StructOpt, Clone, Debug)]
