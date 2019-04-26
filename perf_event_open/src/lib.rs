@@ -1,8 +1,5 @@
-extern crate libc;
 #[macro_use]
 extern crate log;
-extern crate byteorder;
-extern crate parking_lot;
 
 mod perf;
 mod raw_data;

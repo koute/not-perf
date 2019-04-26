@@ -5,7 +5,7 @@ use std::fmt;
 use std::mem;
 
 use byteorder::{ByteOrder, NativeEndian};
-use utils::HexValue;
+use crate::utils::HexValue;
 
 impl< 'a > From< &'a Cow< 'a, [u8] > > for RawData< 'a > {
     fn from( data: &'a Cow< 'a, [u8] > ) -> Self {

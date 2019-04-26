@@ -14,9 +14,9 @@ use libc::{self, pid_t, c_void};
 use byteorder::{ReadBytesExt, NativeEndian};
 use parking_lot::Mutex;
 
-use sys::*;
-use utils::{HexValue, HexSlice};
-use raw_data::{RawData, RawRegs};
+use crate::sys::*;
+use crate::utils::{HexValue, HexSlice};
+use crate::raw_data::{RawData, RawRegs};
 
 #[derive(Debug)]
 #[repr(C)]
