@@ -1136,6 +1136,21 @@ mod test {
     }
 
     #[test]
+    fn collate_aarch64_perfect_unwinding_floating_point() {
+        let data = load( "aarch64-floating_point.nperf" );
+
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
+                "[process:aarch64-floating_point]",
+                "[main_thread]",
+                "__libc_start_main:libc-2.26.so",
+                "main:aarch64-floating_point",
+                "**"
+            ]);
+        }
+    }
+
+    #[test]
     fn collate_arm_hot_spot_usleep_in_a_loop_no_fp() {
         let data = load( "arm-usleep_in_a_loop_no_fp.nperf" );
 
@@ -1204,6 +1219,22 @@ mod test {
                 "?:arm-usleep_in_a_loop_fp",
                 "__libc_start_main:libc-2.26.so",
                 "main:arm-usleep_in_a_loop_fp",
+                "**"
+            ]);
+        }
+    }
+
+    #[test]
+    fn collate_arm_perfect_unwinding_floating_point() {
+        let data = load( "arm-floating_point.nperf" );
+
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
+                "[process:arm-floating_point]",
+                "[main_thread]",
+                "?:arm-floating_point",
+                "__libc_start_main:libc-2.26.so",
+                "main:arm-floating_point",
                 "**"
             ]);
         }
@@ -1416,6 +1447,22 @@ mod test {
     }
 
     #[test]
+    fn collate_amd64_perfect_unwinding_floating_point() {
+        let data = load( "amd64-floating_point.nperf" );
+
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
+                "[process:amd64-floating_point]",
+                "[main_thread]",
+                "_start:amd64-floating_point",
+                "__libc_start_main:libc-2.26.so",
+                "main:amd64-floating_point",
+                "**"
+            ]);
+        }
+    }
+
+    #[test]
     fn collate_mips64_hot_spot_usleep_in_a_loop_no_fp() {
         let data = load( "mips64-usleep_in_a_loop_no_fp.nperf" );
 
@@ -1520,6 +1567,22 @@ mod test {
             "thread_main:mips64-pthread_cond_wait",
             "pthread_mutex_lock:libpthread-2.26.so"
         ]);
+    }
+
+    #[test]
+    fn collate_mips64_perfect_unwinding_floating_point() {
+        let data = load( "mips64-floating_point.nperf" );
+
+        for (ref frames, _) in &data.stacks {
+            assert_backtrace( &data, &frames, &[
+                "[process:mips64-floating_point]",
+                "[main_thread]",
+                "?:mips64-floating_point",
+                "__libc_start_main:libc-2.26.so",
+                "main:mips64-floating_point",
+                "**"
+            ]);
+        }
     }
 
     #[test]
