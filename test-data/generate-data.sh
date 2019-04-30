@@ -41,6 +41,7 @@ function generate {
     generate_test "pthread_cond_wait"
     generate_test "inline_functions"
     generate_test "noreturn"
+    generate_test "floating_point"
 
     if [[ "$PREFIX" = "amd64" ]]; then
         generate_test_ex "usleep_in_a_loop_no_fp" "usleep_in_a_loop_no_fp_online" ""
