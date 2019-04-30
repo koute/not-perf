@@ -87,11 +87,11 @@ elif [[ "$ARCH" = "arm" ]]; then
     MACHINE=vexpress-a15
     CPU=cortex-a15
     KERNEL_FILENAME=vmlinuz
-    KERNEL_URL="http://ftp.debian.org/debian/dists/jessie/main/installer-armhf/current/images/netboot/vmlinuz"
+    KERNEL_URL="http://ftp.debian.org/debian/dists/jessie/main/installer-armhf/20150422/images/netboot/vmlinuz"
     DTB_FILENAME="vexpress-v2p-ca15-tc1.dtb"
-    DTB_URL="http://ftp.nl.debian.org/debian/dists/jessie/main/installer-armhf/current/images/device-tree/vexpress-v2p-ca15-tc1.dtb"
+    DTB_URL="http://ftp.nl.debian.org/debian/dists/jessie/main/installer-armhf/20150422/images/device-tree/vexpress-v2p-ca15-tc1.dtb"
     INITRD_FILENAME="initrd.gz"
-    INITRD_URL="http://ftp.debian.org/debian/dists/jessie/main/installer-armhf/current/images/netboot/initrd.gz"
+    INITRD_URL="http://ftp.debian.org/debian/dists/jessie/main/installer-armhf/20150422/images/netboot/initrd.gz"
     KERNEL_APPEND="console=ttyAMA0 earlycon"
     IO_DEVICE=virtio-blk-device
 elif [[ "$ARCH" = "arm64" || "$ARCH" = "aarch64" ]]; then
