@@ -202,23 +202,28 @@ macro_rules! unsafe_impl_registers {
     ($regs_ty:ty, $regs_array:ident, $reg_ty:ty) => {
         impl $regs_ty {
             #[inline]
-            fn as_slice( &self ) -> &[$reg_ty] {
+            fn slice_length( &self ) -> usize {
                 use ::std::mem::size_of;
+                let length = size_of::< $regs_ty >() / size_of::< $reg_ty >() - 1;
+                length
+            }
+
+            #[inline]
+            fn as_slice( &self ) -> &[$reg_ty] {
                 unsafe {
                     ::std::slice::from_raw_parts(
                         self as *const _ as *const $reg_ty,
-                        (size_of::< $regs_ty >() - size_of::< u64 >()) / size_of::< $reg_ty >()
+                        self.slice_length()
                     )
                 }
             }
 
             #[inline]
             fn as_slice_mut( &mut self ) -> &mut [$reg_ty] {
-                use ::std::mem::size_of;
                 unsafe {
                     ::std::slice::from_raw_parts_mut(
                         self as *const _ as *mut $reg_ty,
-                        (size_of::< $regs_ty >() - size_of::< u64 >()) / size_of::< $reg_ty >() - 1
+                        self.slice_length()
                     )
                 }
             }
@@ -233,23 +238,42 @@ macro_rules! unsafe_impl_registers {
                     return None
                 }
 
-                let value = unsafe {
-                    *self.as_slice().get_unchecked( register as usize )
-                };
+                let value =
+                    if cfg!( debug_assertions ) {
+                        self.as_slice()[ register as usize ]
+                    } else {
+                        unsafe {
+                            *self.as_slice().get_unchecked( register as usize )
+                        }
+                    };
 
                 Some( value as u64 )
             }
 
             #[inline]
             fn contains( &self, register: u16 ) -> bool {
+                if register >= self.slice_length() as u16 {
+                    return false;
+                }
+
+                debug_assert!( register < 64, "Out of range register number: {}", register );
                 self.mask & (1_u64 << (register as u32)) != 0
             }
 
             #[inline]
             fn append( &mut self, register: u16, value: u64 ) {
+                if register >= self.slice_length() as u16 {
+                    return;
+                }
+
+                debug_assert!( register < 64, "Out of range register number: {}", register );
                 self.mask |= 1_u64 << (register as u32);
-                unsafe {
-                    *self.as_slice_mut().get_unchecked_mut( register as usize ) = value as $reg_ty;
+                if cfg!( debug_assertions ) {
+                    self.as_slice_mut()[ register as usize ] = value as $reg_ty;
+                } else {
+                    unsafe {
+                        *self.as_slice_mut().get_unchecked_mut( register as usize ) = value as $reg_ty;
+                    }
                 }
             }
 
