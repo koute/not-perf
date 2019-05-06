@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 byteorder = "1"
-gimli = { version = "0.17", default-features = false, features = ["std", "read"] }
+gimli = { version = "0.18", default-features = false, features = ["std", "read"] }
 goblin = "0.0.21"
 scroll = "0.9"
 memmap = "0.7"
@@ -16,7 +16,7 @@ speedy-derive = "0.3"
 lru = "0.1"
 string-interner = "0.7"
 cpp_demangle = "0.2"
-addr2line = { version = "0.8", optional = true, default-features = false, features = ["std", "cpp_demangle"], git = "https://github.com/gimli-rs/addr2line.git", rev = "1535f8f5e11b0b78512ce3c42316a1a0936eed3d" }
+addr2line = { version = "0.9", optional = true, default-features = false, features = ["std", "cpp_demangle"] }
 proc-maps = { version = "0.1", path = "../proc-maps" }
 libc = "0.2"
 
