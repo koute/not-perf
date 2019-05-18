@@ -78,6 +78,7 @@ nwind_ret_trampoline:
     .cfi_endproc
 
 .globl nwind_on_ret_trampoline
+.hidden nwind_on_ret_trampoline
 .type nwind_on_ret_trampoline, @function
 
     .section    .text.startup
