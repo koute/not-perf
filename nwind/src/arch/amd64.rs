@@ -1,5 +1,3 @@
-use std::mem;
-
 use gimli::{RegisterRule, CfaRule, LittleEndian};
 
 use crate::arch::{Architecture, Registers, UnwindStatus};
@@ -99,26 +97,25 @@ fn guess_ebp< M: MemoryReader< Arch > >( nth_frame: usize, memory: &M, ctx_cache
     debug!( "Trying to guess RBP for frame #{}...", nth_frame );
 
     let rip = regs.get( dwarf::RETURN_ADDRESS )?;
-    let unwind_info = binary.lookup_unwind_row( ctx_cache, rip )?;
+    let (rbp_offset, ra_offset) = binary.lookup_unwind_row( ctx_cache, rip, |unwind_info| {
+        let cfa_offset = match unwind_info.cfa() {
+            CfaRule::RegisterAndOffset { register: cfa_register, offset: cfa_offset } if cfa_register == gimli::X86_64::RBP => cfa_offset,
+            _ => return None
+        };
 
-    let cfa_offset = match unwind_info.cfa() {
-        CfaRule::RegisterAndOffset { register: cfa_register, offset: cfa_offset } if cfa_register == gimli::X86_64::RBP => cfa_offset,
-        _ => return None
-    };
+        // What this rule means is that:
+        //   previous.RBP == *(current.RBP + rbp_offset)
+        let rbp_offset = match unwind_info.register( gimli::X86_64::RBP ) {
+            RegisterRule::Offset( offset ) => offset + cfa_offset,
+            _ => return None
+        };
 
-    // What this rule means is that:
-    //   previous.RBP == *(current.RBP + rbp_offset)
-    let rbp_offset = match unwind_info.register( gimli::X86_64::RBP ) {
-        RegisterRule::Offset( offset ) => offset + cfa_offset,
-        _ => return None
-    };
-
-    let ra_offset = match unwind_info.register( gimli::X86_64::RA ) {
-        RegisterRule::Offset( offset ) => offset + cfa_offset,
-        _ => return None
-    };
-
-    mem::drop( unwind_info );
+        let ra_offset = match unwind_info.register( gimli::X86_64::RA ) {
+            RegisterRule::Offset( offset ) => offset + cfa_offset,
+            _ => return None
+        };
+        Some( (rbp_offset, ra_offset) )
+    })??;
 
     let rsp = regs.get( dwarf::RSP )?;
 

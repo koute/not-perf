@@ -347,30 +347,91 @@ impl< E: Endianity > FrameDescriptions< E > {
         RangeMap::from_vec( descriptions )
     }
 
-    pub fn find_unwind_info< 'a >( &'a self, ctx_cache: &mut ContextCache< E >, mappings: &[AddressMapping], absolute_address: u64 ) -> Option< UnwindInfo< 'a, E > > {
+    pub fn find_unwind_info< 'a, F, R >( &'a self, ctx_cache: &mut ContextCache< E >, mappings: &[AddressMapping], absolute_address: u64, callback: F ) -> Option< R >
+        where F: FnOnce( UnwindInfo< 'a, E > ) -> R
+    {
         let address = if let Some( mapping ) = mappings.iter().find( |mapping| absolute_address >= mapping.actual_address && absolute_address < (mapping.actual_address + mapping.size) ) {
             absolute_address - mapping.actual_address + mapping.declared_address
         } else {
             absolute_address
         };
 
-        let mut info = None;
+
+        let mut ctx = ctx_cache.cached_context.take().unwrap_or_else( || Default::default() );
+
+        let mut initial_address = 0;
+        let mut debug_frame_table = None;
+        let mut debug_frame_row = None;
+        let mut eh_frame_table = None;
+        let mut eh_frame_row = None;
+        let mut eh_frame_hdr_table = None;
+        let mut eh_frame_hdr_row = None;
 
         if !self.debug_descriptions.is_empty() {
             if let Some( fde ) = self.debug_descriptions.get_value( address ) {
+                initial_address = fde.initial_address();
+
                 let (bases, debug_frame) = &self.debug_frame.as_ref().unwrap();
-                info = Self::find_unwind_info_impl( fde, debug_frame, bases, ctx_cache, address );
+                let ctx = unsafe { &mut *(&mut ctx as *mut _) };
+                debug_frame_table = UnwindTable::new( debug_frame, bases, ctx, &fde ).ok();
+
+                if let Some( table ) = debug_frame_table.as_mut() {
+                    loop {
+                        let row = match table.next_row() {
+                            Ok( None ) => break,
+                            Ok( Some( row ) ) => row,
+                            Err( error ) => {
+                                error!( "Failed to iterate the unwind table: {:?}", error );
+                                break;
+                            }
+                        };
+
+                        if row.contains( address ) {
+                            debug_frame_row = Some( row as *const _ );
+                            break;
+                        }
+                    }
+                }
+
+                if debug_frame_row.is_none() {
+                    debug_frame_table = None;
+                }
             }
         }
 
-        if info.is_none() && !self.eh_descriptions.is_empty() {
+        if debug_frame_row.is_none() && !self.eh_descriptions.is_empty() {
             if let Some( fde ) = self.eh_descriptions.get_value( address ) {
+                initial_address = fde.initial_address();
+
                 let (bases, eh_frame) = &self.eh_frame.as_ref().unwrap();
-                info = Self::find_unwind_info_impl( fde, eh_frame, bases, ctx_cache, address );
+                let ctx = unsafe { &mut *(&mut ctx as *mut _) };
+                eh_frame_table = UnwindTable::new( eh_frame, bases, ctx, &fde ).ok();
+
+                if let Some( table ) = eh_frame_table.as_mut() {
+                    loop {
+                        let row = match table.next_row() {
+                            Ok( None ) => break,
+                            Ok( Some( row ) ) => row,
+                            Err( error ) => {
+                                error!( "Failed to iterate the unwind table: {:?}", error );
+                                break;
+                            }
+                        };
+
+                        if row.contains( address ) {
+                            eh_frame_row = Some( row as *const _ );
+                            break;
+                        }
+                    }
+                }
+
+                if eh_frame_row.is_none() {
+                    eh_frame_table = None;
+                }
             }
         }
 
-        if info.is_none() {
+        if debug_frame_row.is_none() && eh_frame_row.is_none() {
             if let Some( &(ref bases, ref eh_frame_hdr) ) = self.eh_frame_hdr.as_ref() {
                 let eh_frame = &self.eh_frame.as_ref().unwrap().1;
 
@@ -389,7 +450,30 @@ impl< E: Endianity > FrameDescriptions< E > {
 
                 match fde {
                     Ok( fde ) => {
-                        info = Self::find_unwind_info_impl( &fde, eh_frame, bases, ctx_cache, address );
+                        initial_address = fde.initial_address();
+                        eh_frame_hdr_table = UnwindTable::new( eh_frame, bases, &mut ctx, &fde ).ok();
+
+                        if let Some( table ) = eh_frame_hdr_table.as_mut() {
+                            loop {
+                                let row = match table.next_row() {
+                                    Ok( None ) => break,
+                                    Ok( Some( row ) ) => row,
+                                    Err( error ) => {
+                                        error!( "Failed to iterate the unwind table: {:?}", error );
+                                        break;
+                                    }
+                                };
+
+                                if row.contains( address ) {
+                                    eh_frame_hdr_row = Some( row as *const _ );
+                                    break;
+                                }
+                            }
+                        }
+
+                        if eh_frame_hdr_row.is_none() {
+                            eh_frame_hdr_table = None;
+                        }
                     },
                     Err( error ) => {
                         debug!( "FDE not found in .eh_frame_hdr for 0x{:016X}: {}", absolute_address, error );
@@ -398,70 +482,30 @@ impl< E: Endianity > FrameDescriptions< E > {
             }
         }
 
-        if let Some( (initial_address, info) ) = info {
-            Some( UnwindInfo {
+        let row = debug_frame_row.or( eh_frame_row ).or( eh_frame_hdr_row );
+        let unwind_info = row.map( |row| {
+            UnwindInfo {
                 initial_address,
                 address,
                 absolute_address,
-                kind: UnwindInfoKind::Uncached( info.row ),
-            })
-        } else {
-            None
-        }
-    }
-
-    fn find_unwind_info_impl< U >(
-        fde: &FDE< E >,
-        section: &U,
-        bases: &BaseAddresses,
-        ctx_cache: &mut ContextCache< E >,
-        address: u64
-    ) -> Option< (u64, UncachedUnwindInfo< E >) >
-        where U: UnwindSection< DataReader< E > >,
-              <U as UnwindSection< DataReader< E > >>::Offset: UnwindOffset
-    {
-        let mut ctx = ctx_cache.cached_context.take().unwrap_or_else( || Default::default() );
-        let info = {
-            let initial_address = fde.initial_address();
-            let mut table = match UnwindTable::new( section, bases, &mut ctx, &fde ) {
-                Ok( table ) => table,
-                Err( _ ) => {
-                    ctx_cache.cached_context = Some( ctx );
-                    return None;
-                }
-            };
-
-            loop {
-                let row = match table.next_row() {
-                    Ok( None ) => break None,
-                    Ok( Some( row ) ) => row,
-                    Err( error ) => {
-                        error!( "Failed to iterate the unwind table: {:?}", error );
-                        break None;
-                    }
-                };
-
-                if row.contains( address ) {
-                    let row = row.clone();
-                    break Some( (initial_address, UncachedUnwindInfo {
-                        row: row
-                    }));
-                }
+                kind: UnwindInfoKind::Uncached( unsafe { &*row } ),
             }
-        };
+        });
+
+        let result = unwind_info.map( |unwind_info| callback( unwind_info ) );
+
+        mem::drop( debug_frame_table );
+        mem::drop( eh_frame_table );
+        mem::drop( eh_frame_hdr_table );
 
         ctx_cache.cached_context = Some( ctx );
-        info
+        result
     }
-}
-
-struct UncachedUnwindInfo< E: Endianity > {
-    row: UnwindTableRow< DataReader< E > >
 }
 
 enum UnwindInfoKind< 'a, E: Endianity + 'a > {
     Cached( &'a CachedUnwindInfo ),
-    Uncached( UnwindTableRow< DataReader< E > > ),
+    Uncached( &'a UnwindTableRow< DataReader< E > > ),
 }
 
 pub struct UnwindInfo< 'a, E: Endianity + 'a > {

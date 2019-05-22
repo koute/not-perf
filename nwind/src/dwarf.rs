@@ -196,28 +196,30 @@ pub fn dwarf_unwind< A: Architecture, M: MemoryReader< A > >(
     }
 
     let binary = lookup_binary( nth_frame, memory, regs )?;
-    let unwind_info = match binary.lookup_unwind_row( ctx_cache, if nth_frame == 0 { address } else { address - 1 } ) {
-        Some( unwind_info ) => unwind_info,
+    let result = binary.lookup_unwind_row( ctx_cache, if nth_frame == 0 { address } else { address - 1 }, |unwind_info| {
+        let mut ra_address = None;
+        let cfa = dwarf_unwind_impl(
+            nth_frame,
+            memory,
+            Some( unwind_cache ),
+            regs,
+            &unwind_info,
+            next_regs,
+            &mut ra_address
+        );
+
+        return Some( DwarfResult {
+            initial_address: unwind_info.initial_absolute_address(),
+            cfa,
+            ra_address
+        });
+    });
+
+    match result {
+        Some( result ) => result,
         None => {
             debug!( "No unwind info for address 0x{:016X}", address );
             return None;
         }
-    };
-
-    let mut ra_address = None;
-    let cfa = dwarf_unwind_impl(
-        nth_frame,
-        memory,
-        Some( unwind_cache ),
-        regs,
-        &unwind_info,
-        next_regs,
-        &mut ra_address
-    );
-
-    return Some( DwarfResult {
-        initial_address: unwind_info.initial_absolute_address(),
-        cfa,
-        ra_address
-    });
+    }
 }
