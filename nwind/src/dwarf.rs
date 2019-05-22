@@ -176,6 +176,7 @@ pub fn dwarf_unwind< A: Architecture, M: MemoryReader< A > >(
     next_regs.clear();
 
     let address = A::get_instruction_pointer( regs ).expect( "DWARF unwind: no instruction pointer" );
+    let address = if nth_frame == 0 { address } else { address - 1 };
     if let Some( unwind_info ) = unwind_cache.lookup( address ) {
         let mut ra_address = None;
         let cfa = dwarf_unwind_impl(
@@ -196,7 +197,7 @@ pub fn dwarf_unwind< A: Architecture, M: MemoryReader< A > >(
     }
 
     let binary = lookup_binary( nth_frame, memory, regs )?;
-    let result = binary.lookup_unwind_row( ctx_cache, if nth_frame == 0 { address } else { address - 1 }, |unwind_info| {
+    let result = binary.lookup_unwind_row( ctx_cache, address, |unwind_info| {
         let mut ra_address = None;
         let cfa = dwarf_unwind_impl(
             nth_frame,
