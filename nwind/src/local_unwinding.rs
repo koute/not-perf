@@ -67,7 +67,7 @@ extern "C" {
 pub extern fn nwind_on_ret_trampoline( stack_pointer: usize ) -> usize {
     debug!( "Unwinding of trampoline triggered at 0x{:016X} on the stack", stack_pointer );
 
-    let stack = ShadowStack::get();
+    let stack = ShadowStack::get().unwrap();
     let tls = unsafe { &mut *stack.tls };
 
     tls.entries_popped_since_last_unwind += 1;
@@ -156,7 +156,7 @@ extern {
 pub unsafe fn _Unwind_RaiseException( ctx: *mut libc::c_void ) -> libc::c_int {
     debug!( "Exception raised!" );
 
-    let mut stack = ShadowStack::get();
+    let mut stack = ShadowStack::get().unwrap();
     stack.reset();
 
     union Union {
@@ -179,7 +179,7 @@ pub unsafe extern fn nwind_ret_trampoline_personality(
 ) -> _Unwind_Reason_Code {
     warn!( "Personality called!" );
 
-    let mut stack = ShadowStack::get();
+    let mut stack = ShadowStack::get().unwrap();
     stack.reset();
 
     // TODO: This will most likely crash and burn since the instruction pointer
@@ -325,10 +325,30 @@ impl ShadowStackTlsPtr {
     }
 }
 
+fn reset_tls( tls: *mut ShadowStackTls ) {
+    debug!( "Clearing shadow stack..." );
+    let tls = unsafe { &mut *tls };
+    while tls.tail > 0 {
+        tls.tail -= 1;
+        let index = tls.tail;
+        let entry = tls.slice()[ index ];
+
+        debug!( "Clearing shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
+        unsafe {
+            *(entry.location as *mut usize) = entry.return_address;
+        }
+    }
+
+    tls.is_enabled = 0;
+    tls.entries_popped_since_last_unwind = 0;
+    tls.last_unwind_address = 0;
+}
+
 impl Drop for ShadowStackTlsPtr {
     fn drop( &mut self ) {
         let tls = self.get();
         unsafe {
+            reset_tls( tls );
             ShadowStackTls::dealloc( tls );
         }
     }
@@ -398,18 +418,18 @@ impl Drop for ShadowStack {
 
 impl ShadowStack {
     #[inline]
-    fn get() -> Self {
+    fn get() -> Option< Self > {
         let mut tls = ptr::null_mut();
-        SHADOW_STACK_TLS_PTR.with( |tls_ptr| {
+        SHADOW_STACK_TLS_PTR.try_with( |tls_ptr| {
             tls = tls_ptr.get();
-        });
+        }).ok()?;
 
         let stack = ShadowStack {
             tls: tls,
             index: unsafe { (*tls).slice().len() }
         };
 
-        stack
+        Some( stack )
     }
 
     #[inline]
@@ -507,22 +527,7 @@ impl ShadowStack {
     }
 
     fn reset( &mut self ) {
-        debug!( "Clearing shadow stack..." );
-        let tls = unsafe { &mut *self.tls };
-        while tls.tail > 0 {
-            tls.tail -= 1;
-            let index = tls.tail;
-            let entry = tls.slice()[ index ];
-
-            debug!( "Clearing shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
-            unsafe {
-                *(entry.location as *mut usize) = entry.return_address;
-            }
-        }
-
-        tls.is_enabled = 0;
-        tls.entries_popped_since_last_unwind = 0;
-        tls.last_unwind_address = 0;
+        reset_tls( self.tls );
     }
 }
 
@@ -710,25 +715,28 @@ impl LocalAddressSpace {
         let use_shadow_stack = self.is_shadow_stack_enabled();
         let mut ctx = self.inner.ctx.start( &memory, LocalRegsInitializer::default() );
         let mut shadow_stack = ShadowStack::get();
-        {
-            let tls = unsafe { &mut *shadow_stack.tls };
-            tls.entries_popped_since_last_unwind = 0;
-            tls.last_unwind_address = ctx.current_address() as usize;
-        }
 
-        unsafe {
-            if ((*shadow_stack.tls).is_enabled == 1) != use_shadow_stack {
-                if !use_shadow_stack {
-                    shadow_stack.reset();
-                } else {
-                    (*shadow_stack.tls).is_enabled = 1;
+        if let Some( shadow_stack ) = shadow_stack.as_mut() {
+            unsafe {
+                (*shadow_stack.tls).entries_popped_since_last_unwind = 0;
+                (*shadow_stack.tls).last_unwind_address = ctx.current_address() as usize;
+                if ((*shadow_stack.tls).is_enabled == 1) != use_shadow_stack {
+                    if !use_shadow_stack {
+                        shadow_stack.reset();
+                    } else {
+                        (*shadow_stack.tls).is_enabled = 1;
+                    }
                 }
             }
         }
 
+        if !use_shadow_stack {
+            mem::forget( shadow_stack.take() );
+        }
+
         loop {
             let mut shadow_stack_iter = None;
-            if use_shadow_stack {
+            if let Some( shadow_stack ) = shadow_stack.as_mut() {
                 if let Some( next_address_location ) = ctx.next_address_location() {
                     let stack_pointer = ctx.next_stack_pointer();
                     shadow_stack_iter = shadow_stack.push( stack_pointer as usize, next_address_location as usize )
@@ -773,22 +781,25 @@ impl LocalAddressSpace {
         let use_shadow_stack = self.is_shadow_stack_enabled();
         let mut ctx = self.inner.ctx.start( &memory, LocalRegsInitializer::default() );
         let mut shadow_stack = ShadowStack::get();
-        let entries_popped_since_last_unwind;
-        let last_unwind_address;
-        {
-            let tls = unsafe { &mut *shadow_stack.tls };
-            entries_popped_since_last_unwind = mem::replace( &mut tls.entries_popped_since_last_unwind, 0 );
-            last_unwind_address = mem::replace( &mut tls.last_unwind_address, ctx.current_address() as usize );
-        }
+        let mut entries_popped_since_last_unwind = 0;
+        let mut last_unwind_address = 0;
+        if let Some( shadow_stack ) = shadow_stack.as_mut() {
+            unsafe {
+                entries_popped_since_last_unwind = mem::replace( &mut (*shadow_stack.tls).entries_popped_since_last_unwind, 0 );
+                last_unwind_address = mem::replace( &mut (*shadow_stack.tls).last_unwind_address, ctx.current_address() as usize );
 
-        unsafe {
-            if ((*shadow_stack.tls).is_enabled == 1) != use_shadow_stack {
-                if !use_shadow_stack {
-                    shadow_stack.reset();
-                } else {
-                    (*shadow_stack.tls).is_enabled = 1;
+                if ((*shadow_stack.tls).is_enabled == 1) != use_shadow_stack {
+                    if !use_shadow_stack {
+                        shadow_stack.reset();
+                    } else {
+                        (*shadow_stack.tls).is_enabled = 1;
+                    }
                 }
             }
+        }
+
+        if !use_shadow_stack {
+            mem::forget( shadow_stack.take() );
         }
 
         if entries_popped_since_last_unwind == 0 && last_unwind_address == ctx.current_address() as usize {
@@ -802,7 +813,7 @@ impl LocalAddressSpace {
 
         loop {
             let mut is_end_of_fresh_frames = false;
-            if use_shadow_stack {
+            if let Some( shadow_stack ) = shadow_stack.as_mut() {
                 if let Some( next_address_location ) = ctx.next_address_location() {
                     let stack_pointer = ctx.next_stack_pointer();
                     is_end_of_fresh_frames = shadow_stack.push( stack_pointer as usize, next_address_location as usize ).is_some();
@@ -870,7 +881,7 @@ fn test_self_unwind() {
     assert!( symbols.iter().next().unwrap().contains( "test_self_unwind" ) );
     assert_ne!( addresses[ addresses.len() - 1 ], addresses[ addresses.len() - 2 ] );
 
-    ShadowStack::get().reset();
+    ShadowStack::get().unwrap().reset();
 }
 
 #[test]
@@ -920,7 +931,7 @@ fn test_unwind_twice() {
     assert_ne!( &trace_4[ 2 ], &trace_2[ 2 ] );
     assert_eq!( &trace_4[ 3.. ], &trace_2[ 3.. ] );
 
-    ShadowStack::get().reset();
+    ShadowStack::get().unwrap().reset();
 }
 
 #[cfg(test)]
@@ -1052,7 +1063,7 @@ fn test_unwind_through_fresh_frames() {
         assert_eq!( trace_1.len(), trace_2.len() );
     }
 
-    ShadowStack::get().reset();
+    ShadowStack::get().unwrap().reset();
 }
 
 #[test]
@@ -1138,5 +1149,5 @@ fn test_unwind_with_panic() {
     assert_eq!( &trace_1.last().unwrap(), &trace_2.last().unwrap() );
     assert_eq!( &trace_1.last().unwrap(), &trace_3.last().unwrap() );
 
-    ShadowStack::get().reset();
+    ShadowStack::get().unwrap().reset();
 }
