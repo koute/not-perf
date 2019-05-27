@@ -2,7 +2,7 @@ use gimli::LittleEndian;
 use crate::arch::{Architecture, Registers, UnwindStatus};
 use crate::address_space::{MemoryReader, lookup_binary};
 use crate::types::{Endianness, Bitness};
-use crate::arm_extab::VirtualMachine as EhVm;
+use crate::arm_extab::{UnwindInfoCache, unwind, unwind_from_cache};
 use crate::arm_extab::Error as EhError;
 
 // Source: DWARF for the ARM Architecture
@@ -74,6 +74,11 @@ impl_regs_debug!( Regs, REGS, Arch );
 #[allow(dead_code)]
 pub struct Arch {}
 
+#[doc(hidden)]
+pub struct State {
+    unwind_cache: UnwindInfoCache
+}
+
 impl Architecture for Arch {
     const NAME: &'static str = "arm";
     const ENDIANNESS: Endianness = Endianness::LittleEndian;
@@ -81,7 +86,7 @@ impl Architecture for Arch {
     const RETURN_ADDRESS_REG: u16 = dwarf::R15;
 
     type Endianity = LittleEndian;
-    type State = ();
+    type State = State;
     type Regs = Regs;
 
     fn register_name_str( register: u16 ) -> Option< &'static str > {
@@ -122,17 +127,37 @@ impl Architecture for Arch {
 
     #[inline]
     fn initial_state() -> Self::State {
-        ()
+        State {
+            unwind_cache: UnwindInfoCache::new()
+        }
     }
 
     fn unwind< M: MemoryReader< Self > >(
         nth_frame: usize,
         memory: &M,
-        _state: &mut Self::State,
+        state: &mut Self::State,
         regs: &mut Self::Regs,
         initial_address: &mut Option< u64 >,
         ra_address: &mut Option< u64 >
     ) -> Option< UnwindStatus > {
+        let address = regs.get( dwarf::R15 ).unwrap() as u32;
+        if let Some( result ) = unwind_from_cache( memory, &mut state.unwind_cache, regs, address ) {
+            match result {
+                Ok( link_register_addr ) => {
+                    *ra_address = link_register_addr.map( |addr| addr as _ );
+                    return Some( UnwindStatus::InProgress );
+                },
+                Err( EhError::EndOfStack ) => {
+                    debug!( "Previous frame not found: EndOfStack" );
+                    return Some( UnwindStatus::Finished );
+                },
+                Err( error ) => {
+                    debug!( "Previous frame not found: {:?}", error );
+                    return None;
+                }
+            }
+        }
+
         let binary = lookup_binary( nth_frame, memory, regs )?;
         let binary_data = binary.data()?;
 
@@ -164,7 +189,6 @@ impl Architecture for Arch {
             }
         };
 
-        let address = regs.get( dwarf::R15 ).unwrap() as u32;
         let exidx = &binary_data.as_bytes()[ exidx_range ];
         let extab = if let Some( extab_range ) = binary_data.arm_extab_range() {
             &binary_data.as_bytes()[ extab_range ]
@@ -173,10 +197,10 @@ impl Architecture for Arch {
         };
 
         let mut initial_address_u32 = None;
-        let mut vm = EhVm::new();
-        let result = vm.unwind(
+        let result = unwind(
             memory,
             &mut initial_address_u32,
+            &mut state.unwind_cache,
             regs,
             exidx,
             extab,
@@ -191,12 +215,11 @@ impl Architecture for Arch {
             *initial_address = Some( initial_address_u32 as _ )
         }
 
-        if let Some( link_register_addr ) = vm.link_register_addr() {
-            *ra_address = Some( link_register_addr as u64 );
-        }
-
         match result {
-            Ok( () ) => return Some( UnwindStatus::InProgress ),
+            Ok( link_register_addr ) => {
+                *ra_address = link_register_addr.map( |addr| addr as _ );
+                return Some( UnwindStatus::InProgress )
+            },
             Err( EhError::EndOfStack ) => {
                 debug!( "Previous frame not found: EndOfStack" );
                 Some( UnwindStatus::Finished )

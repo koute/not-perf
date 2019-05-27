@@ -4,6 +4,7 @@ use std::fmt;
 use std::ops::Range;
 
 use byteorder::{ByteOrder, LittleEndian, BigEndian};
+use lru::LruCache;
 
 use crate::arch::arm;
 use crate::arch::arm::dwarf;
@@ -792,208 +793,329 @@ fn get_bytecode_iter< 'a >( address: u32, index: usize, entry: &IndexEntry, exid
     }
 }
 
-#[derive(Default)]
-pub struct VirtualMachine {
-    vsp: u32,
-    link_register_addr: Option< u32 >
+#[derive(Clone)]
+enum Rule {
+    SetSp {
+        reg: Reg
+    },
+    SetReg {
+        reg: Reg,
+        offset: i32
+    }
 }
 
-impl VirtualMachine {
+#[derive(Clone)]
+struct UnwindInfo {
+    sp_offset: i32,
+    rules: Vec< Rule >
+}
+
+pub struct UnwindInfoCache {
+    cache: LruCache< u32, UnwindInfo >
+}
+
+impl UnwindInfoCache {
     pub fn new() -> Self {
-        VirtualMachine {
-            vsp: 0,
-            link_register_addr: None
+        UnwindInfoCache {
+            cache: LruCache::new( 2000 )
+        }
+    }
+}
+
+fn interpret_bytecode( output: &mut UnwindInfo, bytecode: impl IntoIterator< Item = u8 > ) -> Result< (), Error > {
+    let decoder = Decoder::new( bytecode.into_iter() );
+    let mut vsp_offset = 0;
+
+    output.rules.clear();
+    let regs = &mut output.rules;
+
+    for instruction in decoder {
+        let instruction = instruction?;
+        match instruction {
+            Instruction::VspAdd( offset ) => {
+                debug!( "op: VSP += {} ({} + {})", offset, vsp_offset, offset );
+                vsp_offset += offset;
+            },
+            Instruction::VspSet( reg ) => {
+                debug!( "op: VSP = {:?}", reg );
+                vsp_offset = 0;
+                regs.push( Rule::SetSp { reg } );
+            },
+            Instruction::PopRegs( reg_mask ) => {
+                debug!( "op: pop {:?}", reg_mask );
+                for reg in reg_mask {
+                    regs.push( Rule::SetReg {
+                        reg,
+                        offset: vsp_offset
+                    });
+                    vsp_offset += 4;
+                }
+            },
+            Instruction::Finish => {
+                debug!( "op: finish" );
+            },
+            Instruction::PopFpRegs( reg_mask ) => {
+                debug!( "op: pop {:?}", reg_mask );
+                for _ in reg_mask {
+                    vsp_offset += 8;
+                }
+            },
+            Instruction::RefuseToUnwind => {
+                debug!( "op: refuse" );
+                return Err( Error::EndOfStack );
+            }
         }
     }
 
-    fn run_bytecode< R, M, I >(
-        &mut self,
-        memory: &M,
-        regs: &mut R,
-        regs_modified: &mut u32,
-        bytecode: I
-    ) -> Result< (), Error > where R: Registers, M: MemoryReader< arm::Arch >, I: IntoIterator< Item = u8 > {
-        let decoder = Decoder::new( bytecode.into_iter() );
-        for instruction in decoder {
-            let instruction = instruction?;
-            match instruction {
-                Instruction::VspAdd( offset ) => {
-                    debug!( "op: VSP += {} (0x{:08X} + {})", offset, self.vsp, offset );
-                    self.vsp = (self.vsp as i32 + offset) as u32;
-                },
-                Instruction::VspSet( reg ) => {
-                    let value = regs.get( reg.0 as u16 );
-                    match value {
+    output.sp_offset = vsp_offset;
+    Ok(())
+}
+
+fn run_bytecode< R, M, I >(
+    memory: &M,
+    regs: &mut R,
+    regs_modified: &mut u32,
+    mut vsp: u32,
+    bytecode: I
+) -> Result< (u32, Option< u32 >), Error > where R: Registers, M: MemoryReader< arm::Arch >, I: IntoIterator< Item = u8 > {
+    let decoder = Decoder::new( bytecode.into_iter() );
+    let mut link_register_addr = None;
+    for instruction in decoder {
+        let instruction = instruction?;
+        match instruction {
+            Instruction::VspAdd( offset ) => {
+                debug!( "op: VSP += {} (0x{:08X} + {})", offset, vsp, offset );
+                vsp = (vsp as i32 + offset) as u32;
+            },
+            Instruction::VspSet( reg ) => {
+                let value = regs.get( reg.0 as u16 );
+                match value {
+                    Some( value ) => {
+                        debug!( "op: VSP = {:?} = 0x{:08X}", reg, value );
+                        vsp = value as u32;
+                    },
+                    None => {
+                        debug!( "op: VSP = {:?} = unknown", reg );
+                        return Err( Error::MissingRegisterValue( reg ) );
+                    }
+                }
+            },
+            Instruction::PopRegs( reg_mask ) => {
+                debug!( "op: pop {:?}", reg_mask );
+                for reg in reg_mask {
+                    match memory.get_pointer_at_address( Endianness::LittleEndian, Bitness::B32, vsp as u64 ) {
                         Some( value ) => {
-                            debug!( "op: VSP = {:?} = 0x{:08X}", reg, value );
-                            self.vsp = value as u32;
+                            debug!( "op:   {:?} = *(0x{:08X}) = 0x{:08X}", reg, vsp, value );
+                            regs.append( reg.0 as u16, value as u64 );
+                            *regs_modified |= 1 << reg.0;
+
+                            if reg.0 == dwarf::R14 as u8 {
+                                link_register_addr = Some( vsp );
+                            }
                         },
                         None => {
-                            debug!( "op: VSP = {:?} = unknown", reg );
-                            return Err( Error::MissingRegisterValue( reg ) );
+                            debug!( "op:   {:?} = *(0x{:08X}) = unaccessible", reg, vsp );
+                            return Err( Error::MemoryUnaccessible { address: vsp } );
                         }
                     }
-                },
-                Instruction::PopRegs( reg_mask ) => {
-                    debug!( "op: pop {:?}", reg_mask );
-                    for reg in reg_mask {
-                        match memory.get_pointer_at_address( Endianness::LittleEndian, Bitness::B32, self.vsp as u64 ) {
-                            Some( value ) => {
-                                debug!( "op:   {:?} = *(0x{:08X}) = 0x{:08X}", reg, self.vsp, value );
-                                regs.append( reg.0 as u16, value as u64 );
-                                *regs_modified |= 1 << reg.0;
 
-                                if reg.0 == dwarf::R14 as u8 {
-                                    self.link_register_addr = Some( self.vsp );
-                                }
-                            },
-                            None => {
-                                debug!( "op:   {:?} = *(0x{:08X}) = unaccessible", reg, self.vsp );
-                                return Err( Error::MemoryUnaccessible { address: self.vsp } );
-                            }
-                        }
+                    vsp += 4;
+                }
+            },
+            Instruction::Finish => {
+                debug!( "op: finish" );
+            },
+            Instruction::PopFpRegs( reg_mask ) => {
+                debug!( "op: pop {:?}", reg_mask );
+                for _ in reg_mask {
+                    vsp += 8;
+                }
+            },
+            Instruction::RefuseToUnwind => {
+                debug!( "op: refuse" );
+                return Err( Error::EndOfStack );
+            }
+        }
+    }
 
-                        self.vsp += 4;
+    Ok( (vsp, link_register_addr) )
+}
+
+fn find_entry(
+    exidx: &[u8],
+    exidx_base: u32,
+    address: u32
+) -> Option< (usize, &IndexEntry, Range< u32 >) > {
+    let exidx: &[IndexEntry] = unsafe {
+        slice::from_raw_parts( exidx.as_ptr() as *const IndexEntry, exidx.len() / mem::size_of::< IndexEntry >() )
+    };
+
+    let index = match search( exidx, exidx_base, address ) {
+        Some( index ) => index,
+        None => return None
+    };
+
+    let entry = &exidx[ index ];
+
+    let function_start = exidx_offset( exidx_base, index as u32, entry.offset_to_function() );
+    let function_end = if index + 1 < exidx.len() {
+        exidx_offset( exidx_base, index as u32 + 1, exidx[ index + 1 ].offset_to_function() )
+    } else {
+        !0
+    };
+
+    let range = function_start..function_end;
+    Some( (index, entry, range) )
+}
+
+pub fn unwind_from_cache< R, M >(
+    memory: &M,
+    unwind_cache: &mut UnwindInfoCache,
+    regs: &mut R,
+    address: u32
+) -> Option< Result< Option< u32 >, Error > > where R: Registers, M: MemoryReader< arm::Arch > {
+    let unwind_info = unwind_cache.cache.get( &address )?;
+    let mut link_register_addr = None;
+    let mut sp = regs.get( dwarf::R13 ).unwrap() as u32;
+
+    for rule in &unwind_info.rules {
+        match *rule {
+            Rule::SetSp { reg } => {
+                sp = regs.get( reg.0 as _ ).unwrap() as u32;
+            },
+            Rule::SetReg { reg, offset } => {
+                let location = (sp as i32 + offset) as u32;
+                if let Some( value ) = memory.get_pointer_at_address( Endianness::LittleEndian, Bitness::B32, location as _ ) {
+                    debug!( "{:?} = *(0x{:08X}) = 0x{:08X}", reg, location, value );
+                    regs.append( reg.0 as u16, value as u64 );
+
+                    if reg.0 == dwarf::R14 as u8 {
+                        link_register_addr = Some( location );
                     }
-                },
-                Instruction::Finish => {
-                    debug!( "op: finish" );
-                },
-                Instruction::PopFpRegs( reg_mask ) => {
-                    debug!( "op: pop {:?}", reg_mask );
-                    for _ in reg_mask {
-                        self.vsp += 8;
-                    }
-                },
-                Instruction::RefuseToUnwind => {
-                    debug!( "op: refuse" );
-                    return Err( Error::EndOfStack );
+                } else {
+                    debug!( "{:?} = *(0x{:08X}) = unaccessible", reg, location );
+                    return Some( Err( Error::MemoryUnaccessible { address: location } ) );
                 }
             }
         }
-
-        Ok(())
     }
 
-    fn find_entry(
-        exidx: &[u8],
-        exidx_base: u32,
-        address: u32
-    ) -> Option< (usize, &IndexEntry, Range< u32 >) > {
-        let exidx: &[IndexEntry] = unsafe {
-            slice::from_raw_parts( exidx.as_ptr() as *const IndexEntry, exidx.len() / mem::size_of::< IndexEntry >() )
-        };
+    sp = (sp as i32 + unwind_info.sp_offset) as u32;
 
-        let index = match search( exidx, exidx_base, address ) {
-            Some( index ) => index,
-            None => return None
-        };
+    let link_register = regs.get( dwarf::R14 ).unwrap();
+    let program_counter = link_register & !1;
+    regs.append( dwarf::R15, program_counter as u64 );
+    regs.append( dwarf::R13, sp as u64 );
 
-        let entry = &exidx[ index ];
+    Some( Ok( link_register_addr ) )
+}
 
-        let function_start = exidx_offset( exidx_base, index as u32, entry.offset_to_function() );
-        let function_end = if index + 1 < exidx.len() {
-            exidx_offset( exidx_base, index as u32 + 1, exidx[ index + 1 ].offset_to_function() )
-        } else {
-            !0
-        };
-
-        let range = function_start..function_end;
-        Some( (index, entry, range) )
+pub fn unwind< R, M >(
+    memory: &M,
+    initial_address: &mut Option< u32 >,
+    unwind_cache: &mut UnwindInfoCache,
+    regs: &mut R,
+    exidx: &[u8],
+    extab: &[u8],
+    exidx_base: u32,
+    extab_base: u32,
+    address: u32,
+    is_first_frame: bool
+) -> Result< Option< u32 >, Error > where R: Registers, M: MemoryReader< arm::Arch > {
+    if address == 0 || exidx.is_empty() {
+        return Err( Error::UnwindInfoMissing );
     }
 
-    pub fn link_register_addr( &self ) -> Option< u32 > {
-        self.link_register_addr
-    }
+    let original_sp = regs.get( dwarf::R13 );
+    let original_pc = regs.get( dwarf::R15 );
 
-    pub fn unwind< R, M >(
-        &mut self,
-        memory: &M,
-        initial_address: &mut Option< u32 >,
-        regs: &mut R,
-        exidx: &[u8],
-        extab: &[u8],
-        exidx_base: u32,
-        extab_base: u32,
-        address: u32,
-        is_first_frame: bool
-    ) -> Result< (), Error > where R: Registers, M: MemoryReader< arm::Arch > {
-        self.link_register_addr = None;
+    let (index, entry, function_range) = match find_entry( exidx, exidx_base, if is_first_frame { address } else { address - 1 } ) {
+        Some( result ) => result,
+        None => {
+            debug!( "Address 0x{:08X} has no unwinding information", address );
 
-        if address == 0 || exidx.is_empty() {
+            if is_first_frame {
+                let link_register = regs.get( dwarf::R14 ).unwrap();
+                let program_counter = link_register & !1;
+
+                if original_pc.unwrap() == program_counter as u64 {
+                    return Err( Error::UnwindingFailed );
+                }
+
+                regs.append( dwarf::R15, program_counter as u64 );
+                return Ok( None );
+            }
+
             return Err( Error::UnwindInfoMissing );
         }
+    };
 
-        let original_sp = regs.get( dwarf::R13 );
-        let original_pc = regs.get( dwarf::R15 );
+    let function_start = function_range.start;
+    *initial_address = Some( function_start );
 
-        let (index, entry, function_range) = match Self::find_entry( exidx, exidx_base, if is_first_frame { address } else { address - 1 } ) {
-            Some( result ) => result,
-            None => {
-                debug!( "Address 0x{:08X} has no unwinding information", address );
+    if entry.value() == EXIDX_CANTUNWIND {
+        debug!( "Entry for 0x{:08X} (index: {}) doesn't support unwinding", address, index );
+        return Err( Error::EndOfStack );
+    }
 
-                if is_first_frame {
-                    let link_register = regs.get( dwarf::R14 ).unwrap();
-                    let program_counter = link_register & !1;
+    let vsp = match original_sp {
+        Some( value ) => value as u32,
+        None => return Err( Error::MissingRegisterValue( Reg( 13 ) ) )
+    };
 
-                    if original_pc.unwrap() == program_counter as u64 {
-                        return Err( Error::UnwindingFailed );
-                    }
-
-                    regs.append( dwarf::R15, program_counter as u64 );
-                    return Ok(());
-                }
-
-                return Err( Error::UnwindInfoMissing );
-            }
-        };
-
-        let function_start = function_range.start;
-        *initial_address = Some( function_start );
-
-        if entry.value() == EXIDX_CANTUNWIND {
-            debug!( "Entry for 0x{:08X} (index: {}) doesn't support unwinding", address, index );
-            return Err( Error::EndOfStack );
-        }
-
-        self.vsp = match original_sp {
-            Some( value ) => value as u32,
-            None => return Err( Error::MissingRegisterValue( Reg( 13 ) ) )
-        };
-
-        if is_first_frame && address == function_start {
-            debug!( "Address 0x{:08X} starts on the first instruction of its entry (index: {}) in .ARM.extab at: 0x{:08X}", address, index, extab_base );
-            let link_register = regs.get( dwarf::R14 ).unwrap();
-            let program_counter = link_register & !1;
-
-            if original_pc.unwrap() == program_counter as u64 {
-                return Err( Error::UnwindingFailed );
-            }
-
-            regs.append( dwarf::R15, program_counter as u64 ); // The program counter.
-            regs.append( dwarf::R13, self.vsp as u64 ); // The stack pointer.
-            return Ok( () );
-        }
-
-        let mut regs_modified = 0;
-        let iter = get_bytecode_iter( address, index, entry, exidx_base, extab_base, extab )?;
-        self.run_bytecode( memory, regs, &mut regs_modified, iter )?;
-
+    if is_first_frame && address == function_start {
+        debug!( "Address 0x{:08X} starts on the first instruction of its entry (index: {}) in .ARM.extab at: 0x{:08X}", address, index, extab_base );
         let link_register = regs.get( dwarf::R14 ).unwrap();
         let program_counter = link_register & !1;
 
-        {
-            let r14_modified = regs_modified & (1 << dwarf::R14) != 0;
-            if original_pc.unwrap() == program_counter as u64 && !r14_modified {
-                return Err( Error::UnwindingFailed );
-            }
+        if original_pc.unwrap() == program_counter as u64 {
+            return Err( Error::UnwindingFailed );
         }
 
         regs.append( dwarf::R15, program_counter as u64 ); // The program counter.
-        regs.append( dwarf::R13, self.vsp as u64 ); // The stack pointer.
-
-        Ok(())
+        regs.append( dwarf::R13, vsp as u64 ); // The stack pointer.
+        return Ok( None );
     }
+
+    let mut regs_modified = 0;
+    let iter = get_bytecode_iter( address, index, entry, exidx_base, extab_base, extab )?;
+    let (vsp, link_register_addr) = run_bytecode( memory, regs, &mut regs_modified, vsp, iter )?;
+
+    let link_register = regs.get( dwarf::R14 ).unwrap();
+    let program_counter = link_register & !1;
+
+    {
+        let r14_modified = regs_modified & (1 << dwarf::R14) != 0;
+        if original_pc.unwrap() == program_counter as u64 && !r14_modified {
+            return Err( Error::UnwindingFailed );
+        }
+    }
+
+    {
+        let mut rules = Vec::new();
+        if unwind_cache.cache.len() == unwind_cache.cache.cap() {
+            rules = unwind_cache.cache.pop_lru().map( |(_, old)| old.rules ).unwrap();
+            rules.clear();
+        } else {
+            rules.reserve( 16 );
+        }
+
+        let mut info = UnwindInfo {
+            sp_offset: 0,
+            rules
+        };
+
+        let iter = get_bytecode_iter( address, index, entry, exidx_base, extab_base, extab ).unwrap();
+        let result = interpret_bytecode( &mut info, iter );
+        if result.is_ok() {
+            unwind_cache.cache.put( address, info );
+        }
+    }
+
+    regs.append( dwarf::R15, program_counter as u64 ); // The program counter.
+    regs.append( dwarf::R13, vsp as u64 ); // The stack pointer.
+
+    Ok( link_register_addr )
 }
 
 #[test]
