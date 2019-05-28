@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
-use crate::arch::{Architecture, UnwindStatus};
+use crate::arch::{Architecture, Registers, UnwindStatus};
 use crate::address_space::MemoryReader;
 
 pub struct UnwindContext< A: Architecture > {
     nth_frame: usize,
-    initial_address: Option< u64 >,
-    ra_address: Option< u64 >,
-    address: u64,
+    initial_address: Option< A::RegTy >,
+    ra_address: Option< A::RegTy >,
+    address: A::RegTy,
     regs: A::Regs,
     state: A::State,
     is_done: bool,
@@ -39,7 +39,7 @@ impl< A: Architecture > UnwindContext< A > {
             nth_frame: 0,
             initial_address: None,
             ra_address: None,
-            address: 0,
+            address: Default::default(),
             regs: Default::default(),
             state: A::initial_state(),
             panic_on_partial_backtrace: false,
@@ -62,7 +62,7 @@ impl< A: Architecture > UnwindContext< A > {
         self.is_done = false;
         self.nth_frame = 0;
 
-        self.address = A::get_instruction_pointer( &self.regs ).unwrap();
+        self.address = self.regs.get( A::INSTRUCTION_POINTER_REG ).unwrap();
         debug!( "Starting unwinding at: 0x{:016X}", self.address );
 
         let result = A::unwind( 0, memory, &mut self.state, &mut self.regs, &mut self.initial_address, &mut self.ra_address );
@@ -92,8 +92,8 @@ impl< 'a, A: Architecture > UnwindHandle< 'a, A > {
 
         self.ctx.nth_frame += 1;
 
-        self.ctx.address = A::get_instruction_pointer( &self.ctx.regs ).unwrap();
-        debug!( "Unwinding #{} -> #{} at: 0x{:016X}", self.ctx.nth_frame - 1, self.ctx.nth_frame, A::get_instruction_pointer( &self.ctx.regs ).unwrap() );
+        self.ctx.address = self.ctx.regs.get( A::INSTRUCTION_POINTER_REG ).unwrap();
+        debug!( "Unwinding #{} -> #{} at: 0x{:016X}", self.ctx.nth_frame - 1, self.ctx.nth_frame, self.ctx.address );
 
         self.ctx.initial_address = None;
         self.ctx.ra_address = None;
@@ -116,24 +116,24 @@ impl< 'a, A: Architecture > UnwindHandle< 'a, A > {
     }
 
     #[inline]
-    pub fn current_initial_address( &mut self ) -> Option< u64 > {
+    pub fn current_initial_address( &mut self ) -> Option< A::RegTy > {
         self.ctx.initial_address
     }
 
     #[inline]
-    pub fn current_address( &self ) -> u64 {
+    pub fn current_address( &self ) -> A::RegTy {
         self.ctx.address
     }
 
     #[cfg(feature = "local-unwinding")]
     #[inline]
-    pub fn next_address_location( &mut self ) -> Option< u64 > {
+    pub fn next_address_location( &mut self ) -> Option< A::RegTy > {
         self.ctx.ra_address
     }
 
     #[cfg(feature = "local-unwinding")]
     #[inline]
-    pub fn next_stack_pointer( &self ) -> u64 {
-        A::get_stack_pointer( &self.ctx.regs ).unwrap()
+    pub fn next_stack_pointer( &self ) -> A::RegTy {
+        self.ctx.regs.get( A::STACK_POINTER_REG ).unwrap()
     }
 }

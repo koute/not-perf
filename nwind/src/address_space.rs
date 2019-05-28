@@ -163,7 +163,7 @@ pub struct Binary< A: Architecture > {
 type BinaryHandle< A > = Arc< Binary< A > >;
 
 pub fn lookup_binary< 'a, A: Architecture, M: MemoryReader< A > >( nth_frame: usize, memory: &'a M, regs: &A::Regs ) -> Option< &'a Binary< A > > {
-    let address = A::get_instruction_pointer( regs ).unwrap();
+    let address: u64 = regs.get( A::INSTRUCTION_POINTER_REG ).unwrap().into();
     let region = match memory.get_region_at_address( address ) {
         Some( region ) => region,
         None => {
@@ -992,7 +992,7 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > where A::RegTy: Prim
     fn unwind( &mut self, dwarf_regs: &mut DwarfRegs, stack: &BufferReader, output: &mut Vec< UserFrame > ) {
         output.clear();
 
-        let stack_address = match A::get_stack_pointer( dwarf_regs ) {
+        let stack_address = match dwarf_regs.get( A::STACK_POINTER_REG ) {
             Some( address ) => address,
             None => return
         };
@@ -1016,8 +1016,8 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > where A::RegTy: Prim
 
         loop {
             let frame = UserFrame {
-                address: ctx.current_address(),
-                initial_address: ctx.current_initial_address()
+                address: ctx.current_address().into(),
+                initial_address: ctx.current_initial_address().map( |value| value.into() )
             };
             output.push( frame );
             if !ctx.unwind( &memory ) {

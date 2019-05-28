@@ -140,6 +140,8 @@ impl Architecture for Arch {
     const NAME: &'static str = "aarch64";
     const ENDIANNESS: Endianness = Endianness::LittleEndian;
     const BITNESS: Bitness = Bitness::B64;
+    const STACK_POINTER_REG: u16 = dwarf::X31;
+    const INSTRUCTION_POINTER_REG: u16 = dwarf::PC;
     const RETURN_ADDRESS_REG: u16 = dwarf::X30;
 
     type Endianity = LittleEndian;
@@ -187,16 +189,6 @@ impl Architecture for Arch {
         };
 
         Some( name )
-    }
-
-    #[inline]
-    fn get_stack_pointer< R: Registers >( regs: &R ) -> Option< u64 > {
-        regs.get( dwarf::X31 ).map( |value| value.into() )
-    }
-
-    #[inline]
-    fn get_instruction_pointer( regs: &Self::Regs ) -> Option< u64 > {
-        regs.get( dwarf::PC ).map( |value| value.into() )
     }
 
     #[inline]

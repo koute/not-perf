@@ -57,12 +57,14 @@ pub trait Architecture: Sized {
     const NAME: &'static str;
     const ENDIANNESS: Endianness;
     const BITNESS: Bitness;
+    const STACK_POINTER_REG: u16;
+    const INSTRUCTION_POINTER_REG: u16;
     const RETURN_ADDRESS_REG: u16;
 
     type Endianity: Endianity + 'static;
     type State;
     type Regs: Registers< RegTy = Self::RegTy > + std::fmt::Debug;
-    type RegTy: Copy + Into< u64 > + TryFrom< u64 > + From< u32 >;
+    type RegTy: Default + Copy + Into< u64 > + TryFrom< u64 > + From< u32 >;
 
     fn register_name( register: u16 ) -> RegName {
         if let Some( name ) = Self::register_name_str( register ) {
@@ -73,16 +75,14 @@ pub trait Architecture: Sized {
     }
 
     fn register_name_str( register: u16 ) -> Option< &'static str >;
-    fn get_stack_pointer< R: Registers >( regs: &R ) -> Option< u64 >;
-    fn get_instruction_pointer( regs: &Self::Regs ) -> Option< u64 >;
     fn initial_state() -> Self::State;
     fn unwind< M: MemoryReader< Self > >(
         nth_frame: usize,
         memory: &M,
         state: &mut Self::State,
         regs: &mut Self::Regs,
-        initial_address: &mut Option< u64 >,
-        ra_address: &mut Option< u64 >
+        initial_address: &mut Option< Self::RegTy >,
+        ra_address: &mut Option< Self::RegTy >
     ) -> Option< UnwindStatus >;
 }
 

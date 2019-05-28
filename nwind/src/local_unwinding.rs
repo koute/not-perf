@@ -12,7 +12,6 @@ use proc_maps;
 use crate::address_space::{IAddressSpace, AddressSpace, BinaryRegion, MemoryReader, Frame};
 use crate::binary::BinaryData;
 use crate::range_map::RangeMap;
-use crate::types::UserFrame;
 use crate::arch::{self, LocalRegs, Architecture};
 use crate::unwind_context::InitializeRegs;
 
@@ -515,15 +514,9 @@ impl ShadowStack {
     }
 }
 
-fn unwind_cached< F: FnMut( &UserFrame ) -> UnwindControl >( iter: ShadowStackIter, mut callback: F ) {
+fn unwind_cached< F: FnMut( usize ) -> UnwindControl >( iter: ShadowStackIter, mut callback: F ) {
     for address in iter {
-        let address = address as u64;
-        let frame = UserFrame {
-            address,
-            initial_address: None // TODO: Remove this field?
-        };
-
-        match callback( &frame ).into() {
+        match callback( address ).into() {
             UnwindControl::Continue => {},
             UnwindControl::Stop => break
         }
@@ -691,7 +684,7 @@ impl LocalAddressSpace {
     }
 
     #[inline(always)]
-    pub fn unwind< F: FnMut( &UserFrame ) -> UnwindControl >( &mut self, mut callback: F ) {
+    pub fn unwind< F: FnMut( usize ) -> UnwindControl >( &mut self, mut callback: F ) {
         let memory = LocalMemory {
             regions: &self.inner.regions
         };
@@ -727,12 +720,8 @@ impl LocalAddressSpace {
                 }
             }
 
-            let frame = UserFrame {
-                address: ctx.current_address(),
-                initial_address: ctx.current_initial_address()
-            };
-
-            match callback( &frame ).into() {
+            let address = ctx.current_address() as usize;
+            match callback( address ).into() {
                 UnwindControl::Continue => {},
                 UnwindControl::Stop => break
             }
@@ -757,7 +746,7 @@ impl LocalAddressSpace {
     /// from which the code returned from, or `None` in case this is
     /// a completely fresh stack trace.
     #[inline(always)]
-    pub fn unwind_through_fresh_frames< F: FnMut( &UserFrame ) -> UnwindControl >( &mut self, mut callback: F ) -> Option< usize > {
+    pub fn unwind_through_fresh_frames< F: FnMut( usize ) -> UnwindControl >( &mut self, mut callback: F ) -> Option< usize > {
         let memory = LocalMemory {
             regions: &self.inner.regions
         };
@@ -804,12 +793,8 @@ impl LocalAddressSpace {
                 }
             }
 
-            let frame = UserFrame {
-                address: ctx.current_address(),
-                initial_address: ctx.current_initial_address()
-            };
-
-            let stop = match callback( &frame ).into() {
+            let address = ctx.current_address() as usize;
+            let stop = match callback( address ).into() {
                 UnwindControl::Continue => false,
                 UnwindControl::Stop => true
             };
@@ -824,8 +809,8 @@ impl LocalAddressSpace {
         }
     }
 
-    pub fn decode_symbol_once( &self, address: u64 ) -> Frame {
-        self.inner.decode_symbol_once( address )
+    pub fn decode_symbol_once( &self, address: usize ) -> Frame {
+        self.inner.decode_symbol_once( address as u64 )
     }
 }
 
@@ -854,12 +839,12 @@ fn test_self_unwind() {
 
     let mut addresses = Vec::new();
     let mut symbols = Vec::new();
-    for frame in frames.iter() {
-        if let Some( symbol ) = address_space.decode_symbol_once( frame.address ).name {
+    for &address in frames.iter() {
+        if let Some( symbol ) = address_space.decode_symbol_once( address ).name {
             symbols.push( symbol.to_owned() );
         }
 
-        addresses.push( frame.address );
+        addresses.push( address );
     }
 
     assert!( symbols.iter().next().unwrap().contains( "test_self_unwind" ) );
@@ -874,15 +859,15 @@ fn test_unwind_twice() {
     let mut address_space = LocalAddressSpace::new().unwrap();
 
     #[inline(never)]
-    fn func_1( address_space: &mut LocalAddressSpace, output: &mut Vec< u64 > ) {
-        address_space.unwind( |frame| {
-            output.push( frame.address );
+    fn func_1( address_space: &mut LocalAddressSpace, output: &mut Vec< usize > ) {
+        address_space.unwind( |address| {
+            output.push( address );
             UnwindControl::Continue
         });
     }
 
     #[inline(never)]
-    fn func_2( address_space: &mut LocalAddressSpace, output: &mut Vec< u64 > ) {
+    fn func_2( address_space: &mut LocalAddressSpace, output: &mut Vec< usize > ) {
         func_1( address_space, output );
         dummy_volatile_read();
     }
@@ -939,18 +924,18 @@ fn test_unwind_through_fresh_frames() {
     let mut address_space = LocalAddressSpace::new().unwrap();
 
     #[inline(never)]
-    fn func_normal_unwind( address_space: &mut LocalAddressSpace, output: &mut Vec< u64 > ) {
-        address_space.unwind( |frame| {
-            output.push( frame.address );
+    fn func_normal_unwind( address_space: &mut LocalAddressSpace, output: &mut Vec< usize > ) {
+        address_space.unwind( |address| {
+            output.push( address );
             UnwindControl::Continue
         });
     }
 
     #[inline(never)]
-    fn func_1( address_space: &mut LocalAddressSpace, output: &mut [&mut Vec< u64 >], counts: &mut Vec< Option< usize > > ) {
+    fn func_1( address_space: &mut LocalAddressSpace, output: &mut [&mut Vec< usize >], counts: &mut Vec< Option< usize > > ) {
         for output in output {
-            let count = address_space.unwind_through_fresh_frames( |frame| {
-                output.push( frame.address );
+            let count = address_space.unwind_through_fresh_frames( |address| {
+                output.push( address );
                 UnwindControl::Continue
             });
 
@@ -959,7 +944,7 @@ fn test_unwind_through_fresh_frames() {
     }
 
     #[inline(never)]
-    fn func_2( address_space: &mut LocalAddressSpace, output: &mut [&mut Vec< u64 >], counts: &mut Vec< Option< usize > > ) {
+    fn func_2( address_space: &mut LocalAddressSpace, output: &mut [&mut Vec< usize >], counts: &mut Vec< Option< usize > > ) {
         func_1( address_space, output, counts );
         dummy_volatile_read();
     }
@@ -1058,18 +1043,18 @@ fn test_double_unwind_through_fresh_frames() {
     #[inline(never)]
     fn func_twice(
         address_space: &mut LocalAddressSpace,
-        output_1: &mut Vec< u64 >,
-        output_2: &mut Vec< u64 >,
+        output_1: &mut Vec< usize >,
+        output_2: &mut Vec< usize >,
         count_1: &mut Option< usize >,
         count_2: &mut Option< usize >
     ) {
-        *count_1 = address_space.unwind_through_fresh_frames( |frame| {
-            output_1.push( frame.address );
+        *count_1 = address_space.unwind_through_fresh_frames( |address| {
+            output_1.push( address );
             UnwindControl::Continue
         });
 
-        *count_2 = address_space.unwind_through_fresh_frames( |frame| {
-            output_2.push( frame.address );
+        *count_2 = address_space.unwind_through_fresh_frames( |address| {
+            output_2.push( address );
             UnwindControl::Continue
         });
     }
@@ -1097,9 +1082,9 @@ fn test_unwind_with_panic() {
     let mut address_space = LocalAddressSpace::new().unwrap();
 
     #[inline(never)]
-    fn func_1( address_space: &mut LocalAddressSpace, output: &mut Vec< u64 >, should_panic: bool ) {
-        address_space.unwind( |frame| {
-            output.push( frame.address );
+    fn func_1( address_space: &mut LocalAddressSpace, output: &mut Vec< usize >, should_panic: bool ) {
+        address_space.unwind( |address| {
+            output.push( address );
             UnwindControl::Continue
         });
 
@@ -1109,7 +1094,7 @@ fn test_unwind_with_panic() {
     }
 
     #[inline(never)]
-    fn func_2( address_space: &mut LocalAddressSpace, output: &mut Vec< u64 >, should_panic: bool ) {
+    fn func_2( address_space: &mut LocalAddressSpace, output: &mut Vec< usize >, should_panic: bool ) {
         func_1( address_space, output, should_panic );
     }
 

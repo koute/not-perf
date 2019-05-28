@@ -83,6 +83,8 @@ impl Architecture for Arch {
     const NAME: &'static str = "arm";
     const ENDIANNESS: Endianness = Endianness::LittleEndian;
     const BITNESS: Bitness = Bitness::B32;
+    const STACK_POINTER_REG: u16 = dwarf::R13;
+    const INSTRUCTION_POINTER_REG: u16 = dwarf::R15;
     const RETURN_ADDRESS_REG: u16 = dwarf::R15;
 
     type Endianity = LittleEndian;
@@ -117,16 +119,6 @@ impl Architecture for Arch {
     }
 
     #[inline]
-    fn get_stack_pointer< R: Registers >( regs: &R ) -> Option< u64 > {
-        regs.get( dwarf::R13 ).map( |value| value.into() )
-    }
-
-    #[inline]
-    fn get_instruction_pointer( regs: &Self::Regs ) -> Option< u64 > {
-        regs.get( dwarf::R15 ).map( |value| value.into() )
-    }
-
-    #[inline]
     fn initial_state() -> Self::State {
         State {
             unwind_cache: UnwindInfoCache::new()
@@ -138,14 +130,14 @@ impl Architecture for Arch {
         memory: &M,
         state: &mut Self::State,
         regs: &mut Self::Regs,
-        initial_address: &mut Option< u64 >,
-        ra_address: &mut Option< u64 >
+        initial_address: &mut Option< u32 >,
+        ra_address: &mut Option< u32 >
     ) -> Option< UnwindStatus > {
         let address = regs.get( dwarf::R15 ).unwrap() as u32;
         if let Some( result ) = unwind_from_cache( memory, &mut state.unwind_cache, regs, address ) {
             match result {
                 Ok( link_register_addr ) => {
-                    *ra_address = link_register_addr.map( |addr| addr as _ );
+                    *ra_address = link_register_addr;
                     return Some( UnwindStatus::InProgress );
                 },
                 Err( EhError::EndOfStack ) => {
@@ -218,7 +210,7 @@ impl Architecture for Arch {
 
         match result {
             Ok( link_register_addr ) => {
-                *ra_address = link_register_addr.map( |addr| addr as _ );
+                *ra_address = link_register_addr;
                 return Some( UnwindStatus::InProgress )
             },
             Err( EhError::EndOfStack ) => {
