@@ -76,6 +76,7 @@ pub trait Architecture: Sized {
 
     fn register_name_str( register: u16 ) -> Option< &'static str >;
     fn initial_state() -> Self::State;
+    fn clear_cache( state: &mut Self::State );
     fn unwind< M: MemoryReader< Self > >(
         nth_frame: usize,
         memory: &M,

@@ -672,6 +672,8 @@ impl LocalAddressSpace {
                 handle.set_binary( data.into() );
             }
         });
+
+        self.inner.ctx.clear_cache();
         Ok(())
     }
 

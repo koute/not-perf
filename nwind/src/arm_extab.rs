@@ -820,6 +820,10 @@ impl UnwindInfoCache {
             cache: LruCache::new( 2000 )
         }
     }
+
+    pub fn clear( &mut self ) {
+        self.cache.clear();
+    }
 }
 
 fn interpret_bytecode( output: &mut UnwindInfo, bytecode: impl IntoIterator< Item = u8 > ) -> Result< (), Error > {

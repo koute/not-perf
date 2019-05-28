@@ -90,6 +90,12 @@ impl UnwindInfoCache {
         }
     }
 
+    pub fn clear( &mut self ) {
+        if let Some( cache ) = self.cache.as_mut() {
+            cache.clear();
+        }
+    }
+
     pub fn lookup< E: Endianity >( &mut self, absolute_address: u64 ) -> Option< UnwindInfo< E > > {
         let cache = self.cache.as_mut()?;
         let info = match cache.get( &absolute_address ) {

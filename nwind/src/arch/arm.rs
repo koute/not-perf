@@ -125,6 +125,10 @@ impl Architecture for Arch {
         }
     }
 
+    fn clear_cache( state: &mut Self::State ) {
+        state.unwind_cache.clear();
+    }
+
     fn unwind< M: MemoryReader< Self > >(
         nth_frame: usize,
         memory: &M,

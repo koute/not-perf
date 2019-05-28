@@ -986,6 +986,7 @@ fn reload< A: Architecture >(
 
 impl< A: Architecture > IAddressSpace for AddressSpace< A > where A::RegTy: Primitive {
     fn reload( &mut self, regions: Vec< Region >, try_load: &mut FnMut( &Region, &mut LoadHandle ) ) -> Reloaded {
+        self.ctx.clear_cache();
         reload( &mut self.binary_map, &mut self.regions, regions, try_load )
     }
 

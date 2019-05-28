@@ -58,6 +58,10 @@ impl< A: Architecture > UnwindContext< A > {
         self.start_impl( memory )
     }
 
+    pub fn clear_cache( &mut self ) {
+        A::clear_cache( &mut self.state );
+    }
+
     fn start_impl< 'a, M: MemoryReader< A > >( &'a mut self, memory: &M ) -> UnwindHandle< 'a, A > {
         self.is_done = false;
         self.nth_frame = 0;
