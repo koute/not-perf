@@ -12,7 +12,7 @@ use proc_maps;
 use crate::address_space::{IAddressSpace, AddressSpace, BinaryRegion, MemoryReader, Frame};
 use crate::binary::BinaryData;
 use crate::range_map::RangeMap;
-use crate::types::{Endianness, UserFrame};
+use crate::types::UserFrame;
 use crate::arch::{self, LocalRegs, Architecture};
 use crate::unwind_context::InitializeRegs;
 
@@ -31,26 +31,10 @@ impl< 'a > MemoryReader< arch::native::Arch > for LocalMemory< 'a > {
         self.regions.get_value( address )
     }
 
-    fn get_u32_at_address( &self, endianness: Endianness, address: u64 ) -> Option< u32 > {
-        let value = unsafe { *(address as usize as *const u32) };
-        let value = if endianness.conversion_necessary() {
-            value.swap_bytes()
-        } else {
-            value
-        };
-
-        Some( value )
-    }
-
-    fn get_u64_at_address( &self, endianness: Endianness, address: u64 ) -> Option< u64 > {
-        let value = unsafe { *(address as usize as *const u64) };
-        let value = if endianness.conversion_necessary() {
-            value.swap_bytes()
-        } else {
-            value
-        };
-
-        Some( value )
+    #[inline(always)]
+    fn get_pointer_at_address( &self, address: <arch::native::Arch as Architecture>::RegTy ) -> Option< <arch::native::Arch as Architecture>::RegTy > {
+        let value = unsafe { *(address as usize as *const usize) };
+        Some( value as _ )
     }
 
     fn is_stack_address( &self, _: u64 ) -> bool {

@@ -24,7 +24,7 @@ use crate::unwind_context::UnwindContext;
 use crate::binary::{BinaryData, LoadHeader, BinaryDataReader};
 use crate::symbols::Symbols;
 use crate::frame_descriptions::{FrameDescriptions, ContextCache, UnwindInfo, AddressMapping, LoadHint};
-use crate::types::{Bitness, Inode, UserFrame, Endianness, BinaryId};
+use crate::types::{Inode, UserFrame, Endianness, BinaryId};
 
 #[cfg(not(feature = "addr2line"))]
 mod addr2line {
@@ -419,20 +419,15 @@ impl< 'a, A: Architecture, T: ?Sized + BufferReader + 'a > Memory< 'a, A, T > {
     }
 }
 
-impl< 'a, A: Architecture, T: ?Sized + BufferReader + 'a > MemoryReader< A > for Memory< 'a, A, T > {
+impl< 'a, A: Architecture, T: ?Sized + BufferReader + 'a > MemoryReader< A > for Memory< 'a, A, T > where A::RegTy: Primitive {
     #[inline]
     fn get_region_at_address( &self, address: u64 ) -> Option< &BinaryRegion< A > > {
         self.regions.get_value( address )
     }
 
     #[inline]
-    fn get_u32_at_address( &self, endianness: Endianness, address: u64 ) -> Option< u32 > {
-        self.get_value_at_address::< u32 >( endianness, address )
-    }
-
-    #[inline]
-    fn get_u64_at_address( &self, endianness: Endianness, address: u64 ) -> Option< u64 > {
-        self.get_value_at_address::< u64 >( endianness, address )
+    fn get_pointer_at_address( &self, address: A::RegTy ) -> Option< A::RegTy > {
+        self.get_value_at_address::< A::RegTy >( A::ENDIANNESS, address.into() )
     }
 
     #[inline]
@@ -525,17 +520,8 @@ fn test_slice_buffer_reader() {
 
 pub trait MemoryReader< A: Architecture > {
     fn get_region_at_address( &self, address: u64 ) -> Option< &BinaryRegion< A > >;
-    fn get_u32_at_address( &self, endianness: Endianness, address: u64 ) -> Option< u32 >;
-    fn get_u64_at_address( &self, endianness: Endianness, address: u64 ) -> Option< u64 >;
+    fn get_pointer_at_address( &self, address: A::RegTy ) -> Option< A::RegTy >;
     fn is_stack_address( &self, address: u64 ) -> bool;
-
-    #[inline]
-    fn get_pointer_at_address( &self, endianness: Endianness, bitness: Bitness, address: u64 ) -> Option< u64 > {
-        match bitness {
-            Bitness::B32 => self.get_u32_at_address( endianness, address ).map( |value| value as u64 ),
-            Bitness::B64 => self.get_u64_at_address( endianness, address )
-        }
-    }
 }
 
 pub trait Primitive: Sized + fmt::UpperHex {
@@ -998,7 +984,7 @@ fn reload< A: Architecture >(
     reloaded
 }
 
-impl< A: Architecture > IAddressSpace for AddressSpace< A > {
+impl< A: Architecture > IAddressSpace for AddressSpace< A > where A::RegTy: Primitive {
     fn reload( &mut self, regions: Vec< Region >, try_load: &mut FnMut( &Region, &mut LoadHandle ) ) -> Reloaded {
         reload( &mut self.binary_map, &mut self.regions, regions, try_load )
     }

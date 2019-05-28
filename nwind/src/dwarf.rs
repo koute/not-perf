@@ -9,7 +9,7 @@ use gimli::{
     Piece
 };
 
-use crate::arch::{Architecture, Registers};
+use crate::arch::{Architecture, Registers, TryInto};
 use crate::address_space::{MemoryReader, lookup_binary};
 use crate::frame_descriptions::{UnwindInfo, ContextCache, UnwindInfoCache};
 use crate::types::Bitness;
@@ -26,7 +26,7 @@ fn dwarf_get_reg< A: Architecture, M: MemoryReader< A >, R: gimli::Reader >( nth
             let value_address = (cfa_value as i64 + offset) as u64;
             debug!( "Register {:?} at frame #{} is at 0x{:016X}", A::register_name( register ), nth_frame, value_address );
 
-            let value = match memory.get_pointer_at_address( A::ENDIANNESS, A::BITNESS, value_address ) {
+            let value = match memory.get_pointer_at_address( value_address.try_into().unwrap() ) {
                 Some( value ) => value,
                 None => {
                     debug!( "Cannot grab register {:?} for frame #{}: failed to fetch it from 0x{:016X}", A::register_name( register ), nth_frame, value_address );
@@ -42,7 +42,7 @@ fn dwarf_get_reg< A: Architecture, M: MemoryReader< A >, R: gimli::Reader >( nth
     };
 
     debug!( "Register {:?} at frame #{} is equal to 0x{:016X}", A::register_name( register ), nth_frame, value );
-    Some( (value_address, value) )
+    Some( (value_address, value.into()) )
 }
 
 pub fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(

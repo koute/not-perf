@@ -121,8 +121,8 @@ fn guess_ebp< M: MemoryReader< Arch > >( nth_frame: usize, memory: &M, ctx_cache
 
     let mut rbp = rsp;
     for _ in 0..32 {
-        let candidate_ra = memory.get_u64_at_address( Endianness::LittleEndian, (rbp as i64 + ra_offset) as u64 )?;
-        let candidate_rbp = memory.get_u64_at_address( Endianness::LittleEndian, (rbp as i64 + rbp_offset) as u64 )?;
+        let candidate_ra = memory.get_pointer_at_address( (rbp as i64 + ra_offset) as u64 )?;
+        let candidate_rbp = memory.get_pointer_at_address( (rbp as i64 + rbp_offset) as u64 )?;
 
         let valid_ra = memory.get_region_at_address( candidate_ra ).map( |region| region.is_executable() ).unwrap_or( false );
         let valid_rbp = memory.is_stack_address( candidate_rbp );
@@ -152,6 +152,7 @@ impl Architecture for Arch {
     type Endianity = LittleEndian;
     type State = State;
     type Regs = Regs;
+    type RegTy = u64;
 
     fn register_name_str( register: u16 ) -> Option< &'static str > {
         use self::dwarf::*;

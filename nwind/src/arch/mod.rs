@@ -61,7 +61,8 @@ pub trait Architecture: Sized {
 
     type Endianity: Endianity + 'static;
     type State;
-    type Regs: Registers + std::fmt::Debug;
+    type Regs: Registers< RegTy = Self::RegTy > + std::fmt::Debug;
+    type RegTy: Copy + Into< u64 > + TryFrom< u64 > + From< u32 >;
 
     fn register_name( register: u16 ) -> RegName {
         if let Some( name ) = Self::register_name_str( register ) {

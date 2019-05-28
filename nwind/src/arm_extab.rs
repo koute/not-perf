@@ -11,7 +11,6 @@ use crate::arch::arm::dwarf;
 use crate::arch::arm::Regs;
 use crate::arch::Registers;
 use crate::address_space::MemoryReader;
-use crate::types::{Endianness, Bitness};
 
 struct RegsIter {
     mask: u16,
@@ -893,7 +892,7 @@ fn run_bytecode< M, I >(
                 match value {
                     Some( value ) => {
                         debug!( "op: VSP = {:?} = 0x{:08X}", reg, value );
-                        vsp = value as u32;
+                        vsp = value;
                     },
                     None => {
                         debug!( "op: VSP = {:?} = unknown", reg );
@@ -904,9 +903,8 @@ fn run_bytecode< M, I >(
             Instruction::PopRegs( reg_mask ) => {
                 debug!( "op: pop {:?}", reg_mask );
                 for reg in reg_mask {
-                    match memory.get_pointer_at_address( Endianness::LittleEndian, Bitness::B32, vsp as u64 ) {
+                    match memory.get_pointer_at_address( vsp ) {
                         Some( value ) => {
-                            let value = value as u32;
                             debug!( "op:   {:?} = *(0x{:08X}) = 0x{:08X}", reg, vsp, value );
                             regs.append( reg.0 as u16, value );
                             *regs_modified |= 1 << reg.0;
@@ -978,17 +976,16 @@ pub fn unwind_from_cache< M >(
 ) -> Option< Result< Option< u32 >, Error > > where M: MemoryReader< arm::Arch > {
     let unwind_info = unwind_cache.cache.get( &address )?;
     let mut link_register_addr = None;
-    let mut sp = regs.get( dwarf::R13 ).unwrap() as u32;
+    let mut sp = regs.get( dwarf::R13 ).unwrap();
 
     for rule in &unwind_info.rules {
         match *rule {
             Rule::SetSp { reg } => {
-                sp = regs.get( reg.0 as _ ).unwrap() as u32;
+                sp = regs.get( reg.0 as _ ).unwrap();
             },
             Rule::SetReg { reg, offset } => {
                 let location = (sp as i32 + offset) as u32;
-                if let Some( value ) = memory.get_pointer_at_address( Endianness::LittleEndian, Bitness::B32, location as _ ) {
-                    let value = value as u32;
+                if let Some( value ) = memory.get_pointer_at_address( location ) {
                     debug!( "{:?} = *(0x{:08X}) = 0x{:08X}", reg, location, value );
                     regs.append( reg.0 as u16, value );
 
@@ -1062,7 +1059,7 @@ pub fn unwind< M >(
     }
 
     let vsp = match original_sp {
-        Some( value ) => value as u32,
+        Some( value ) => value,
         None => return Err( Error::MissingRegisterValue( Reg( 13 ) ) )
     };
 

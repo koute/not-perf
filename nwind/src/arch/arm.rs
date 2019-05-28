@@ -88,6 +88,7 @@ impl Architecture for Arch {
     type Endianity = LittleEndian;
     type State = State;
     type Regs = Regs;
+    type RegTy = u32;
 
     fn register_name_str( register: u16 ) -> Option< &'static str > {
         use self::dwarf::*;
