@@ -1020,7 +1020,12 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > {
         self.ctx.set_panic_on_partial_backtrace( self.panic_on_partial_backtrace );
 
         let mut ctx = self.ctx.start( &memory, |regs: &mut A::Regs| {
-            regs.extend_from_regs( dwarf_regs );
+            use crate::arch::TryInto;
+
+            regs.clear();
+            for (register, value) in dwarf_regs.iter() {
+                regs.append( register, value.try_into().unwrap() );
+            }
         });
 
         loop {

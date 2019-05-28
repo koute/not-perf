@@ -185,12 +185,12 @@ impl Architecture for Arch {
 
     #[inline]
     fn get_stack_pointer< R: Registers >( regs: &R ) -> Option< u64 > {
-        regs.get( dwarf::RSP )
+        regs.get( dwarf::RSP ).map( |value| value.into() )
     }
 
     #[inline]
     fn get_instruction_pointer( regs: &Self::Regs ) -> Option< u64 > {
-        regs.get( dwarf::RETURN_ADDRESS )
+        regs.get( dwarf::RETURN_ADDRESS ).map( |value| value.into() )
     }
 
     #[inline]

@@ -62,7 +62,7 @@ pub fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
     let cfa_value = match cfa {
         CfaRule::RegisterAndOffset { register: cfa_register, offset: cfa_offset } => {
             let cfa_register_value = match regs.get( cfa_register.0 ) {
-                Some( cfa_register_value ) => cfa_register_value,
+                Some( cfa_register_value ) => cfa_register_value.into(),
                 None => {
                     debug!( "Failed to fetch CFA for frame #{}: failed to fetch register {:?}", nth_frame, A::register_name( cfa_register.0 ) );
                     return None;
@@ -116,7 +116,7 @@ pub fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
                     },
                     Ok( EvaluationResult::RequiresRegister { register, .. } ) => {
                         let reg_value = match regs.get( register.0 ) {
-                            Some( reg_value ) => reg_value,
+                            Some( reg_value ) => reg_value.into(),
                             None => {
                                 error!( "Failed to evaluate CFA rule due to a missing value of register {:?}", A::register_name( register.0 ) );
                                 return None;

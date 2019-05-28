@@ -93,7 +93,7 @@ pub struct RegsIter< 'a, T: Copy + Into< u64 > > {
 }
 
 impl< 'a, T > Iterator for RegsIter< 'a, T > where T: Copy + Into< u64 > {
-    type Item = (u16, u64);
+    type Item = (u16, T);
     fn next( &mut self ) -> Option< Self::Item > {
         while self.index < self.regs_list.len() {
             let register = self.regs_list[ self.index ];
@@ -102,7 +102,7 @@ impl< 'a, T > Iterator for RegsIter< 'a, T > where T: Copy + Into< u64 > {
             let mask = 1_u64 << (register as u32);
             if (self.mask & mask) != 0 {
                 let value = self.regs[ register as usize ];
-                return Some( (register, value.into()) );
+                return Some( (register, value) );
             }
         }
 
@@ -122,22 +122,44 @@ impl< 'a, T > RegsIter< 'a, T > where T: Copy + Into< u64 > {
     }
 }
 
-pub trait Registers: Clone + Default {
-    type RegTy: Copy + Into< u64 >;
+pub trait TryFrom< T > where Self: Sized {
+    fn try_from( value: T ) -> Option< Self >;
+}
 
-    fn get( &self, register: u16 ) -> Option< u64 >;
+impl< T > TryFrom< T > for T {
+    fn try_from( value: T ) -> Option< Self > {
+        Some( value )
+    }
+}
+
+impl TryFrom< u64 > for u32 {
+    fn try_from( value: u64 ) -> Option< u32 > {
+        if value & 0xFFFFFFFF == value {
+            Some( value as u32 )
+        } else {
+            None
+        }
+    }
+}
+
+pub trait TryInto< T > where Self: Sized {
+    fn try_into( self ) -> Option< T >;
+}
+
+impl< T, U > TryInto< U > for T where U: TryFrom< T > {
+    fn try_into( self ) -> Option< U > {
+        TryFrom::try_from( self )
+    }
+}
+
+pub trait Registers: Clone + Default {
+    type RegTy: Copy + Into< u64 > + TryFrom< u64 >;
+
+    fn get( &self, register: u16 ) -> Option< Self::RegTy >;
     fn contains( &self, register: u16 ) -> bool;
-    fn append( &mut self, register: u16, value: u64 );
+    fn append( &mut self, register: u16, value: Self::RegTy );
     fn iter< 'a >( &'a self ) -> RegsIter< 'a, Self::RegTy >;
     fn clear( &mut self );
-
-    fn extend_from_regs< T: Registers >( &mut self, dwarf_regs: &T ) {
-        self.clear();
-        for (register, value) in dwarf_regs.iter() {
-            self.append( register, value );
-        }
-
-    }
 }
 
 pub trait LocalRegs {
@@ -233,7 +255,7 @@ macro_rules! unsafe_impl_registers {
             type RegTy = $reg_ty;
 
             #[inline]
-            fn get( &self, register: u16 ) -> Option< u64 > {
+            fn get( &self, register: u16 ) -> Option< Self::RegTy > {
                 if !self.contains( register ) {
                     return None
                 }
@@ -247,7 +269,7 @@ macro_rules! unsafe_impl_registers {
                         }
                     };
 
-                Some( value as u64 )
+                Some( value )
             }
 
             #[inline]
@@ -261,7 +283,7 @@ macro_rules! unsafe_impl_registers {
             }
 
             #[inline]
-            fn append( &mut self, register: u16, value: u64 ) {
+            fn append( &mut self, register: u16, value: Self::RegTy ) {
                 if register >= self.slice_length() as u16 {
                     return;
                 }

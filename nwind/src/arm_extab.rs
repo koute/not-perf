@@ -8,6 +8,7 @@ use lru::LruCache;
 
 use crate::arch::arm;
 use crate::arch::arm::dwarf;
+use crate::arch::arm::Regs;
 use crate::arch::Registers;
 use crate::address_space::MemoryReader;
 use crate::types::{Endianness, Bitness};
@@ -871,13 +872,13 @@ fn interpret_bytecode( output: &mut UnwindInfo, bytecode: impl IntoIterator< Ite
     Ok(())
 }
 
-fn run_bytecode< R, M, I >(
+fn run_bytecode< M, I >(
     memory: &M,
-    regs: &mut R,
+    regs: &mut Regs,
     regs_modified: &mut u32,
     mut vsp: u32,
     bytecode: I
-) -> Result< (u32, Option< u32 >), Error > where R: Registers, M: MemoryReader< arm::Arch >, I: IntoIterator< Item = u8 > {
+) -> Result< (u32, Option< u32 >), Error > where M: MemoryReader< arm::Arch >, I: IntoIterator< Item = u8 > {
     let decoder = Decoder::new( bytecode.into_iter() );
     let mut link_register_addr = None;
     for instruction in decoder {
@@ -905,8 +906,9 @@ fn run_bytecode< R, M, I >(
                 for reg in reg_mask {
                     match memory.get_pointer_at_address( Endianness::LittleEndian, Bitness::B32, vsp as u64 ) {
                         Some( value ) => {
+                            let value = value as u32;
                             debug!( "op:   {:?} = *(0x{:08X}) = 0x{:08X}", reg, vsp, value );
-                            regs.append( reg.0 as u16, value as u64 );
+                            regs.append( reg.0 as u16, value );
                             *regs_modified |= 1 << reg.0;
 
                             if reg.0 == dwarf::R14 as u8 {
@@ -968,12 +970,12 @@ fn find_entry(
     Some( (index, entry, range) )
 }
 
-pub fn unwind_from_cache< R, M >(
+pub fn unwind_from_cache< M >(
     memory: &M,
     unwind_cache: &mut UnwindInfoCache,
-    regs: &mut R,
+    regs: &mut Regs,
     address: u32
-) -> Option< Result< Option< u32 >, Error > > where R: Registers, M: MemoryReader< arm::Arch > {
+) -> Option< Result< Option< u32 >, Error > > where M: MemoryReader< arm::Arch > {
     let unwind_info = unwind_cache.cache.get( &address )?;
     let mut link_register_addr = None;
     let mut sp = regs.get( dwarf::R13 ).unwrap() as u32;
@@ -986,8 +988,9 @@ pub fn unwind_from_cache< R, M >(
             Rule::SetReg { reg, offset } => {
                 let location = (sp as i32 + offset) as u32;
                 if let Some( value ) = memory.get_pointer_at_address( Endianness::LittleEndian, Bitness::B32, location as _ ) {
+                    let value = value as u32;
                     debug!( "{:?} = *(0x{:08X}) = 0x{:08X}", reg, location, value );
-                    regs.append( reg.0 as u16, value as u64 );
+                    regs.append( reg.0 as u16, value );
 
                     if reg.0 == dwarf::R14 as u8 {
                         link_register_addr = Some( location );
@@ -1004,24 +1007,24 @@ pub fn unwind_from_cache< R, M >(
 
     let link_register = regs.get( dwarf::R14 ).unwrap();
     let program_counter = link_register & !1;
-    regs.append( dwarf::R15, program_counter as u64 );
-    regs.append( dwarf::R13, sp as u64 );
+    regs.append( dwarf::R15, program_counter );
+    regs.append( dwarf::R13, sp );
 
     Some( Ok( link_register_addr ) )
 }
 
-pub fn unwind< R, M >(
+pub fn unwind< M >(
     memory: &M,
     initial_address: &mut Option< u32 >,
     unwind_cache: &mut UnwindInfoCache,
-    regs: &mut R,
+    regs: &mut Regs,
     exidx: &[u8],
     extab: &[u8],
     exidx_base: u32,
     extab_base: u32,
     address: u32,
     is_first_frame: bool
-) -> Result< Option< u32 >, Error > where R: Registers, M: MemoryReader< arm::Arch > {
+) -> Result< Option< u32 >, Error > where M: MemoryReader< arm::Arch > {
     if address == 0 || exidx.is_empty() {
         return Err( Error::UnwindInfoMissing );
     }
@@ -1038,11 +1041,11 @@ pub fn unwind< R, M >(
                 let link_register = regs.get( dwarf::R14 ).unwrap();
                 let program_counter = link_register & !1;
 
-                if original_pc.unwrap() == program_counter as u64 {
+                if original_pc.unwrap() == program_counter {
                     return Err( Error::UnwindingFailed );
                 }
 
-                regs.append( dwarf::R15, program_counter as u64 );
+                regs.append( dwarf::R15, program_counter );
                 return Ok( None );
             }
 
@@ -1068,12 +1071,12 @@ pub fn unwind< R, M >(
         let link_register = regs.get( dwarf::R14 ).unwrap();
         let program_counter = link_register & !1;
 
-        if original_pc.unwrap() == program_counter as u64 {
+        if original_pc.unwrap() == program_counter {
             return Err( Error::UnwindingFailed );
         }
 
-        regs.append( dwarf::R15, program_counter as u64 ); // The program counter.
-        regs.append( dwarf::R13, vsp as u64 ); // The stack pointer.
+        regs.append( dwarf::R15, program_counter ); // The program counter.
+        regs.append( dwarf::R13, vsp ); // The stack pointer.
         return Ok( None );
     }
 
@@ -1086,7 +1089,7 @@ pub fn unwind< R, M >(
 
     {
         let r14_modified = regs_modified & (1 << dwarf::R14) != 0;
-        if original_pc.unwrap() == program_counter as u64 && !r14_modified {
+        if original_pc.unwrap() == program_counter && !r14_modified {
             return Err( Error::UnwindingFailed );
         }
     }
@@ -1112,8 +1115,8 @@ pub fn unwind< R, M >(
         }
     }
 
-    regs.append( dwarf::R15, program_counter as u64 ); // The program counter.
-    regs.append( dwarf::R13, vsp as u64 ); // The stack pointer.
+    regs.append( dwarf::R15, program_counter ); // The program counter.
+    regs.append( dwarf::R13, vsp ); // The stack pointer.
 
     Ok( link_register_addr )
 }

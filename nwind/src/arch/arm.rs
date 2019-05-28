@@ -117,12 +117,12 @@ impl Architecture for Arch {
 
     #[inline]
     fn get_stack_pointer< R: Registers >( regs: &R ) -> Option< u64 > {
-        regs.get( dwarf::R13 )
+        regs.get( dwarf::R13 ).map( |value| value.into() )
     }
 
     #[inline]
     fn get_instruction_pointer( regs: &Self::Regs ) -> Option< u64 > {
-        regs.get( dwarf::R15 )
+        regs.get( dwarf::R15 ).map( |value| value.into() )
     }
 
     #[inline]
