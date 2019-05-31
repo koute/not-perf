@@ -190,7 +190,7 @@ macro_rules! impl_local_regs {
 
                 let mut mask = 0;
                 for &register in REGS {
-                    mask = mask | (1_u64 << register as u32);
+                    mask = mask | (1 << register as u32);
                 }
 
                 self.mask = mask;
@@ -280,8 +280,8 @@ macro_rules! unsafe_impl_registers {
                     return false;
                 }
 
-                debug_assert!( register < 64, "Out of range register number: {}", register );
-                self.mask & (1_u64 << (register as u32)) != 0
+                debug_assert!( register < (std::mem::size_of_val( &self.mask ) * 8) as _, "Out of range register number: {}", register );
+                self.mask & (1 << (register as u32)) != 0
             }
 
             #[inline]
@@ -291,7 +291,7 @@ macro_rules! unsafe_impl_registers {
                 }
 
                 debug_assert!( register < 64, "Out of range register number: {}", register );
-                self.mask |= 1_u64 << (register as u32);
+                self.mask |= 1 << (register as u32);
                 if cfg!( debug_assertions ) {
                     self.as_slice_mut()[ register as usize ] = value as $reg_ty;
                 } else {
@@ -303,7 +303,7 @@ macro_rules! unsafe_impl_registers {
 
             #[inline]
             fn iter< 'a >( &'a self ) -> crate::arch::RegsIter< 'a, $reg_ty > {
-                crate::arch::RegsIter::new( $regs_array, self.as_slice(), self.mask )
+                crate::arch::RegsIter::new( $regs_array, self.as_slice(), self.mask as u64 )
             }
 
             #[inline]

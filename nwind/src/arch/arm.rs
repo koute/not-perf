@@ -64,7 +64,7 @@ pub struct Regs {
     r13: u32,
     r14: u32,
     r15: u32,
-    mask: u64
+    mask: u16
 }
 
 unsafe_impl_registers!( Regs, REGS, u32 );
