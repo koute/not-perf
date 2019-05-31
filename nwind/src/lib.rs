@@ -103,7 +103,8 @@ pub use crate::local_unwinding::{
     nwind_on_ret_trampoline,
     nwind_ret_trampoline_personality,
 
-    _Unwind_RaiseException
+    _Unwind_RaiseException,
+    __cxa_throw
 };
 
 pub use crate::interner::{StringInterner, StringId};

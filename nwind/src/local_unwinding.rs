@@ -159,6 +159,21 @@ pub unsafe fn _Unwind_RaiseException( ctx: *mut libc::c_void ) -> libc::c_int {
 }
 
 #[doc(hidden)]
+#[unwind(allowed)]
+#[no_mangle]
+pub unsafe fn __cxa_throw( obj: *mut libc::c_void, tinfo: *mut libc::c_void, cb: extern "C" fn( *mut libc::c_void ) ) {
+    debug!( "__cxa_throw called" );
+
+    union Union {
+        raw_ptr: *const libc::c_void,
+        function: unsafe extern fn( *mut libc::c_void, *mut libc::c_void, extern "C" fn( *mut libc::c_void ) )
+    }
+
+    let ptr = libc::dlsym( libc::RTLD_NEXT, b"__cxa_throw\0".as_ptr() as *const libc::c_char );
+    (Union { raw_ptr: ptr }.function)( obj, tinfo, cb )
+}
+
+#[doc(hidden)]
 #[no_mangle]
 pub unsafe extern fn nwind_ret_trampoline_personality(
     version: _Unwind_Reason_Code,
