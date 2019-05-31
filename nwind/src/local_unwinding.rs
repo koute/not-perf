@@ -45,53 +45,27 @@ extern "C" {
     pub fn nwind_ret_trampoline();
 }
 
-#[doc(hidden)]
-#[no_mangle]
-pub extern fn nwind_on_ret_trampoline( stack_pointer: usize ) -> usize {
-    debug!( "Unwinding of trampoline triggered at 0x{:016X} on the stack", stack_pointer );
-
-    let stack = ShadowStack::get().unwrap();
-    let tls = unsafe { &mut *stack.tls };
-
-    tls.entries_popped_since_last_unwind += 1;
-    if tls.tail == 0 {
-        error!( "Shadow stack underflow!" );
-        unsafe {
-            libc::abort();
-        }
+#[cold]
+#[inline(never)]
+fn on_failed_to_fetch_shadow_stack_tls() -> ! {
+    error!( "Failed to fetch shadow stack TLS!" );
+    unsafe {
+        libc::abort();
     }
+}
 
-    tls.tail -= 1;
-
-    let expected_index = tls.tail;
-    let index =
-        if tls.slice()[ expected_index ].stack_pointer == stack_pointer {
-            Some( expected_index )
-        } else {
-            loop {
-                if tls.tail == 0 {
-                    break None;
-                }
-
-                tls.entries_popped_since_last_unwind += 1;
-                tls.tail -= 1;
-
-                let index = tls.tail;
-                if tls.slice()[ index ].stack_pointer == stack_pointer {
-                    warn!( "Found matching trampoline entry for stack pointer = 0x{:016X} at index #{} instead of at #{}; was `longjmp` used here?", stack_pointer, index, expected_index );
-                    break Some( index );
-                }
-            }
-        };
-
-    if let Some( index ) = index {
-        let entry = tls.slice()[ index ];
-        debug!( "Found trampoline entry at index #{}", index );
-        debug!( "Clearing shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
-
-        return entry.return_address;
+#[cold]
+#[inline(never)]
+fn on_shadow_stack_underflow() -> ! {
+    error!( "Shadow stack underflow!" );
+    unsafe {
+        libc::abort();
     }
+}
 
+#[cold]
+#[inline(never)]
+fn on_shadow_stack_no_entry_found( stack_pointer: usize, expected_index: usize, tls: &mut ShadowStackTls ) -> ! {
     error!( "Failed to find a matching trampoline entry for stack pointer = 0x{:016X}", stack_pointer );
     for index in 0..=expected_index {
         let entry = tls.slice()[ index ];
@@ -100,6 +74,63 @@ pub extern fn nwind_on_ret_trampoline( stack_pointer: usize ) -> usize {
 
     unsafe {
         libc::abort();
+    }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn unwind_shadow_stack( tls: &mut ShadowStackTls, stack_pointer: usize, expected_index: usize ) -> Option< usize > {
+    loop {
+        if tls.tail == 0 {
+            return None;
+        }
+
+        tls.entries_popped_since_last_unwind += 1;
+        tls.tail -= 1;
+
+        let index = tls.tail;
+        if tls.slice().get_unchecked( index ).stack_pointer == stack_pointer {
+            warn!( "Found matching trampoline entry for stack pointer = 0x{:016X} at index #{} instead of at #{}; was `longjmp` used here?", stack_pointer, index, expected_index );
+            return Some( index );
+        }
+    }
+}
+
+#[doc(hidden)]
+#[no_mangle]
+pub unsafe extern fn nwind_on_ret_trampoline( stack_pointer: usize ) -> usize {
+    debug!( "Unwinding of trampoline triggered at 0x{:016X} on the stack", stack_pointer );
+
+    let stack = if let Some( stack ) = ShadowStack::get() {
+        stack
+    } else {
+        on_failed_to_fetch_shadow_stack_tls();
+    };
+
+    let tls = &mut *stack.tls;
+    tls.entries_popped_since_last_unwind += 1;
+
+    if tls.tail == 0 {
+        on_shadow_stack_underflow();
+    }
+
+    tls.tail -= 1;
+    let expected_index = tls.tail;
+    let index =
+        if tls.slice().get_unchecked( expected_index ).stack_pointer == stack_pointer {
+            Some( expected_index )
+        } else {
+            unwind_shadow_stack( tls, stack_pointer, expected_index )
+        };
+
+    if let Some( index ) = index {
+        let entry = tls.slice().get_unchecked( index );
+        debug!( "Found trampoline entry at index #{}", index );
+        debug!( "Clearing shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
+
+        return entry.return_address;
+    } else {
+        on_shadow_stack_no_entry_found( stack_pointer, expected_index, tls );
     }
 }
 
