@@ -54,6 +54,13 @@ pub extern fn nwind_on_ret_trampoline( stack_pointer: usize ) -> usize {
     let tls = unsafe { &mut *stack.tls };
 
     tls.entries_popped_since_last_unwind += 1;
+    if tls.tail == 0 {
+        error!( "Shadow stack underflow!" );
+        unsafe {
+            libc::abort();
+        }
+    }
+
     tls.tail -= 1;
 
     let expected_index = tls.tail;
