@@ -817,7 +817,7 @@ pub struct UnwindInfoCache {
 impl UnwindInfoCache {
     pub fn new() -> Self {
         UnwindInfoCache {
-            cache: LruCache::new( 2000 )
+            cache: LruCache::new( 4096 )
         }
     }
 

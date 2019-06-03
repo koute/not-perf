@@ -586,7 +586,7 @@ impl< 'a, E: Endianity > UnwindInfo< 'a, E > {
             _ => return
         };
 
-        let cache = unwind_cache.cache.get_or_insert_with( || LruCache::new( 2000 ) );
+        let cache = unwind_cache.cache.get_or_insert_with( || LruCache::new( 4096 ) );
 
         let mut rules = Vec::new();
         if cache.len() == cache.cap() {
