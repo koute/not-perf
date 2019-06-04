@@ -14,7 +14,7 @@ trait ByteContainer: StableIndex + Index< Range< u64 >, Output = [u8] > + 'stati
 impl< T > ByteContainer for T where T: StableIndex + Index< Range< u64 >, Output = [u8] > + 'static {}
 
 pub struct Symbols {
-    strtab_owner: ManuallyDrop< Arc< ByteContainer< Output = [u8] > > >,
+    strtab_owner: ManuallyDrop< Arc< ByteContainer< Output = [u8] > + Send + Sync > >,
     symbols: ManuallyDrop< RangeMap< &'static str > >
 }
 
@@ -114,7 +114,7 @@ impl Symbols {
         strtab_owner: &Arc< T >
     ) -> Self
         where S: ?Sized + Index< Range< u64 >, Output = [u8] >,
-              T: StableIndex + Index< Range< u64 >, Output = [u8] > + 'static
+              T: StableIndex + Index< Range< u64 >, Output = [u8] > + Send + Sync + 'static
     {
         let start_timestamp = Instant::now();
 
