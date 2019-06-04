@@ -5,15 +5,17 @@ use std::marker::PhantomData;
 use std::mem;
 use std::slice;
 use std::cell::UnsafeCell;
+use std::collections::HashMap;
 
 use libc;
 use proc_maps;
 
-use crate::address_space::{IAddressSpace, AddressSpace, BinaryRegion, MemoryReader, Frame};
+use crate::address_space::{BinaryHandle, BinaryRegion, MemoryReader, Frame, reload};
 use crate::binary::BinaryData;
 use crate::range_map::RangeMap;
 use crate::arch::{self, LocalRegs, Architecture};
-use crate::unwind_context::InitializeRegs;
+use crate::unwind_context::{InitializeRegs, UnwindContext};
+use crate::types::BinaryId;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum UnwindControl {
@@ -576,10 +578,26 @@ fn unwind_cached< F: FnMut( usize ) -> UnwindControl >( iter: ShadowStackIter, m
     }
 }
 
+pub struct LocalUnwindContext {
+    inner: UnwindContext< arch::native::Arch >,
+    reload_count: usize
+}
+
+impl LocalUnwindContext {
+    pub fn new() -> Self {
+        LocalUnwindContext {
+            inner: UnwindContext::new(),
+            reload_count: 0
+        }
+    }
+}
+
 pub struct LocalAddressSpace {
-    inner: AddressSpace< arch::native::Arch >,
+    regions: RangeMap< BinaryRegion< arch::native::Arch > >,
+    binary_map: HashMap< BinaryId, BinaryHandle< arch::native::Arch > >,
     use_shadow_stack: bool,
-    should_load_symbols: bool
+    should_load_symbols: bool,
+    reload_count: usize
 }
 
 struct LocalRegsInitializer< A: Architecture >( PhantomData< A > );
@@ -692,9 +710,11 @@ impl LocalAddressSpace {
         debug!( "Trampoline address: 0x{:016X}", nwind_ret_trampoline as usize );
 
         let mut address_space = LocalAddressSpace {
-            inner: AddressSpace::new(),
+            regions: RangeMap::new(),
+            binary_map: HashMap::new(),
             use_shadow_stack: true,
-            should_load_symbols: opts.should_load_symbols
+            should_load_symbols: opts.should_load_symbols,
+            reload_count: 0
         };
 
         address_space.reload()?;
@@ -711,9 +731,10 @@ impl LocalAddressSpace {
         let data = String::from_utf8_lossy( &data );
         trace!( "Parsing maps..." );
         let regions = proc_maps::parse( &data );
-
         let should_load_symbols = self.should_load_symbols;
-        self.inner.reload( regions, &mut |region, handle| {
+
+        self.reload_count += 1;
+        reload( &mut self.binary_map, &mut self.regions, regions, &mut |region, handle| {
             handle.should_load_debug_frame( false );
             handle.should_load_symbols( should_load_symbols );
 
@@ -726,7 +747,6 @@ impl LocalAddressSpace {
             }
         });
 
-        self.inner.ctx.clear_cache();
         Ok(())
     }
 
@@ -738,14 +758,23 @@ impl LocalAddressSpace {
         self.use_shadow_stack
     }
 
+    fn clear_cache_if_necessary( &self, ctx: &mut LocalUnwindContext ) {
+        if ctx.reload_count != self.reload_count {
+            ctx.inner.clear_cache();
+            ctx.reload_count = self.reload_count;
+        }
+    }
+
     #[inline(always)]
-    pub fn unwind< F: FnMut( usize ) -> UnwindControl >( &mut self, mut callback: F ) {
+    pub fn unwind< F: FnMut( usize ) -> UnwindControl >( &self, ctx: &mut LocalUnwindContext, mut callback: F ) {
+        self.clear_cache_if_necessary( ctx );
+
         let memory = LocalMemory {
-            regions: &self.inner.regions
+            regions: &self.regions
         };
 
         let use_shadow_stack = self.is_shadow_stack_enabled();
-        let mut ctx = self.inner.ctx.start( &memory, LocalRegsInitializer::default() );
+        let mut ctx = ctx.inner.start( &memory, LocalRegsInitializer::default() );
         let mut shadow_stack = ShadowStack::get();
 
         if let Some( shadow_stack ) = shadow_stack.as_mut() {
@@ -801,13 +830,15 @@ impl LocalAddressSpace {
     /// from which the code returned from, or `None` in case this is
     /// a completely fresh stack trace.
     #[inline(always)]
-    pub fn unwind_through_fresh_frames< F: FnMut( usize ) -> UnwindControl >( &mut self, mut callback: F ) -> Option< usize > {
+    pub fn unwind_through_fresh_frames< F: FnMut( usize ) -> UnwindControl >( &self, ctx: &mut LocalUnwindContext, mut callback: F ) -> Option< usize > {
+        self.clear_cache_if_necessary( ctx );
+
         let memory = LocalMemory {
-            regions: &self.inner.regions
+            regions: &self.regions
         };
 
         let use_shadow_stack = self.is_shadow_stack_enabled();
-        let mut ctx = self.inner.ctx.start( &memory, LocalRegsInitializer::default() );
+        let mut ctx = ctx.inner.start( &memory, LocalRegsInitializer::default() );
         let mut shadow_stack = ShadowStack::get();
         let mut entries_popped_since_last_unwind = 0;
         let mut last_unwind_address = 0;
@@ -865,7 +896,12 @@ impl LocalAddressSpace {
     }
 
     pub fn decode_symbol_once( &self, address: usize ) -> Frame {
-        self.inner.decode_symbol_once( address as u64 )
+        let address = address as u64;
+        if let Some( region ) = self.regions.get_value( address ) {
+            region.binary().decode_symbol_once( address )
+        } else {
+            Frame::from_address( address, address )
+        }
     }
 }
 
@@ -885,8 +921,9 @@ fn test_self_unwind() {
     let _ = ::env_logger::try_init();
 
     let mut address_space = LocalAddressSpace::new().unwrap();
+    let mut ctx = LocalUnwindContext::new();
     let mut frames = Vec::new();
-    address_space.unwind( |frame| {
+    address_space.unwind( &mut ctx, |frame| {
         frames.push( frame.clone() );
         UnwindControl::Continue
     });
@@ -912,28 +949,29 @@ fn test_self_unwind() {
 fn test_unwind_twice() {
     let _ = ::env_logger::try_init();
     let mut address_space = LocalAddressSpace::new().unwrap();
+    let mut ctx = LocalUnwindContext::new();
 
     #[inline(never)]
-    fn func_1( address_space: &mut LocalAddressSpace, output: &mut Vec< usize > ) {
-        address_space.unwind( |address| {
+    fn func_1( address_space: &mut LocalAddressSpace, ctx: &mut LocalUnwindContext, output: &mut Vec< usize > ) {
+        address_space.unwind( ctx, |address| {
             output.push( address );
             UnwindControl::Continue
         });
     }
 
     #[inline(never)]
-    fn func_2( address_space: &mut LocalAddressSpace, output: &mut Vec< usize > ) {
-        func_1( address_space, output );
+    fn func_2( address_space: &mut LocalAddressSpace, ctx: &mut LocalUnwindContext, output: &mut Vec< usize > ) {
+        func_1( address_space, ctx, output );
         dummy_volatile_read();
     }
 
     address_space.use_shadow_stack( false );
 
     let mut trace_1 = Vec::new();
-    func_1( &mut address_space, &mut trace_1 );
+    func_1( &mut address_space, &mut ctx, &mut trace_1 );
 
     let mut trace_2 = Vec::new();
-    func_2( &mut address_space, &mut trace_2 );
+    func_2( &mut address_space, &mut ctx, &mut trace_2 );
 
     assert_eq!( &trace_1[ 0 ], &trace_2[ 0 ] );
     assert_ne!( &trace_1[ 1 ], &trace_2[ 2 ] );
@@ -942,10 +980,10 @@ fn test_unwind_twice() {
     address_space.use_shadow_stack( true );
 
     let mut trace_3 = Vec::new();
-    func_1( &mut address_space, &mut trace_3 );
+    func_1( &mut address_space, &mut ctx, &mut trace_3 );
 
     let mut trace_4 = Vec::new();
-    func_2( &mut address_space, &mut trace_4 );
+    func_2( &mut address_space, &mut ctx, &mut trace_4 );
 
     assert_eq!( &trace_3[ 0 ], &trace_1[ 0 ] );
     assert_ne!( &trace_3[ 1 ], &trace_1[ 1 ] );
@@ -977,19 +1015,20 @@ fn clear_tls() {
 fn test_unwind_through_fresh_frames() {
     let _ = ::env_logger::try_init();
     let mut address_space = LocalAddressSpace::new().unwrap();
+    let mut ctx = LocalUnwindContext::new();
 
     #[inline(never)]
-    fn func_normal_unwind( address_space: &mut LocalAddressSpace, output: &mut Vec< usize > ) {
-        address_space.unwind( |address| {
+    fn func_normal_unwind( address_space: &mut LocalAddressSpace, ctx: &mut LocalUnwindContext, output: &mut Vec< usize > ) {
+        address_space.unwind( ctx, |address| {
             output.push( address );
             UnwindControl::Continue
         });
     }
 
     #[inline(never)]
-    fn func_1( address_space: &mut LocalAddressSpace, output: &mut [&mut Vec< usize >], counts: &mut Vec< Option< usize > > ) {
+    fn func_1( address_space: &mut LocalAddressSpace, ctx: &mut LocalUnwindContext, output: &mut [&mut Vec< usize >], counts: &mut Vec< Option< usize > > ) {
         for output in output {
-            let count = address_space.unwind_through_fresh_frames( |address| {
+            let count = address_space.unwind_through_fresh_frames( ctx, |address| {
                 output.push( address );
                 UnwindControl::Continue
             });
@@ -999,8 +1038,8 @@ fn test_unwind_through_fresh_frames() {
     }
 
     #[inline(never)]
-    fn func_2( address_space: &mut LocalAddressSpace, output: &mut [&mut Vec< usize >], counts: &mut Vec< Option< usize > > ) {
-        func_1( address_space, output, counts );
+    fn func_2( address_space: &mut LocalAddressSpace, ctx: &mut LocalUnwindContext, output: &mut [&mut Vec< usize >], counts: &mut Vec< Option< usize > > ) {
+        func_1( address_space, ctx, output, counts );
         dummy_volatile_read();
     }
 
@@ -1011,7 +1050,7 @@ fn test_unwind_through_fresh_frames() {
         let mut trace_1 = Vec::new();
         let mut trace_2 = Vec::new();
         let mut counts = Vec::new();
-        func_1( &mut address_space, &mut [&mut trace_1, &mut trace_2], &mut counts );
+        func_1( &mut address_space, &mut ctx, &mut [&mut trace_1, &mut trace_2], &mut counts );
 
         // The stack was unwound two times from exactly the same place,
         // hence the second time nothing was collected.
@@ -1022,7 +1061,7 @@ fn test_unwind_through_fresh_frames() {
     {
         let mut trace = Vec::new();
         let mut counts = Vec::new();
-        func_1( &mut address_space, &mut [&mut trace], &mut counts );
+        func_1( &mut address_space, &mut ctx, &mut [&mut trace], &mut counts );
 
         // We got out of `func_1`, and the instruction pointer in this function changed,
         // hence counts equals 2.
@@ -1035,7 +1074,7 @@ fn test_unwind_through_fresh_frames() {
     {
         let mut trace = Vec::new();
         let mut counts = Vec::new();
-        func_2( &mut address_space, &mut [&mut trace], &mut counts );
+        func_2( &mut address_space, &mut ctx, &mut [&mut trace], &mut counts );
 
         // We got out of `func_1` and the instruction pointer in this function changed,
         // hence counts equals 2.
@@ -1048,7 +1087,7 @@ fn test_unwind_through_fresh_frames() {
     {
         let mut trace = Vec::new();
         let mut counts = Vec::new();
-        func_1( &mut address_space, &mut [&mut trace], &mut counts );
+        func_1( &mut address_space, &mut ctx, &mut [&mut trace], &mut counts );
 
         // We got out of `func_1`, then out of `func_1`, and then the instruction
         // pointer in this function changed, hence counts equals 3.
@@ -1062,8 +1101,8 @@ fn test_unwind_through_fresh_frames() {
         let mut trace_1 = Vec::new();
         let mut trace_2 = Vec::new();
         let mut counts = Vec::new();
-        func_normal_unwind( &mut address_space, &mut trace_1 );
-        func_1( &mut address_space, &mut [&mut trace_2], &mut counts );
+        func_normal_unwind( &mut address_space, &mut ctx, &mut trace_1 );
+        func_1( &mut address_space, &mut ctx, &mut [&mut trace_2], &mut counts );
 
         // We got out of `func_normal_unwind` and the instruction pointer in this function changed,
         // hence counts equals 2.
@@ -1079,8 +1118,8 @@ fn test_unwind_through_fresh_frames() {
         let mut trace_1 = Vec::new();
         let mut trace_2 = Vec::new();
         let mut counts = Vec::new();
-        func_1( &mut address_space, &mut [&mut trace_1], &mut counts );
-        func_normal_unwind( &mut address_space, &mut trace_2 );
+        func_1( &mut address_space, &mut ctx, &mut [&mut trace_1], &mut counts );
+        func_normal_unwind( &mut address_space, &mut ctx, &mut trace_2 );
 
         // We disabled the shadow stack hence we'll always get full stack traces.
         assert_eq!( counts, &[None] );
@@ -1094,21 +1133,23 @@ fn test_unwind_through_fresh_frames() {
 fn test_double_unwind_through_fresh_frames() {
     let _ = ::env_logger::try_init();
     let mut address_space = LocalAddressSpace::new().unwrap();
+    let mut ctx = LocalUnwindContext::new();
 
     #[inline(never)]
     fn func_twice(
         address_space: &mut LocalAddressSpace,
+        ctx: &mut LocalUnwindContext,
         output_1: &mut Vec< usize >,
         output_2: &mut Vec< usize >,
         count_1: &mut Option< usize >,
         count_2: &mut Option< usize >
     ) {
-        *count_1 = address_space.unwind_through_fresh_frames( |address| {
+        *count_1 = address_space.unwind_through_fresh_frames( ctx, |address| {
             output_1.push( address );
             UnwindControl::Continue
         });
 
-        *count_2 = address_space.unwind_through_fresh_frames( |address| {
+        *count_2 = address_space.unwind_through_fresh_frames( ctx, |address| {
             output_2.push( address );
             UnwindControl::Continue
         });
@@ -1121,7 +1162,7 @@ fn test_double_unwind_through_fresh_frames() {
     let mut trace_2 = Vec::new();
     let mut count_1 = None;
     let mut count_2 = None;
-    func_twice( &mut address_space, &mut trace_1, &mut trace_2, &mut count_1, &mut count_2 );
+    func_twice( &mut address_space, &mut ctx, &mut trace_1, &mut trace_2, &mut count_1, &mut count_2 );
 
     assert_ne!( trace_1.len(), 0 );
     assert_eq!( count_1, None );
@@ -1135,10 +1176,11 @@ fn test_unwind_with_panic() {
 
     let _ = ::env_logger::try_init();
     let mut address_space = LocalAddressSpace::new().unwrap();
+    let mut ctx = LocalUnwindContext::new();
 
     #[inline(never)]
-    fn func_1( address_space: &mut LocalAddressSpace, output: &mut Vec< usize >, should_panic: bool ) {
-        address_space.unwind( |address| {
+    fn func_1( address_space: &mut LocalAddressSpace, ctx: &mut LocalUnwindContext, output: &mut Vec< usize >, should_panic: bool ) {
+        address_space.unwind( ctx, |address| {
             output.push( address );
             UnwindControl::Continue
         });
@@ -1149,24 +1191,24 @@ fn test_unwind_with_panic() {
     }
 
     #[inline(never)]
-    fn func_2( address_space: &mut LocalAddressSpace, output: &mut Vec< usize >, should_panic: bool ) {
-        func_1( address_space, output, should_panic );
+    fn func_2( address_space: &mut LocalAddressSpace, ctx: &mut LocalUnwindContext, output: &mut Vec< usize >, should_panic: bool ) {
+        func_1( address_space, ctx, output, should_panic );
     }
 
     address_space.use_shadow_stack( false );
 
     let mut trace_1 = Vec::new();
-    func_2( &mut address_space, &mut trace_1, false );
+    func_2( &mut address_space, &mut ctx, &mut trace_1, false );
 
     address_space.use_shadow_stack( true );
 
     let mut trace_2 = Vec::new();
     let _ = panic::catch_unwind( panic::AssertUnwindSafe( || {
-        func_2( &mut address_space, &mut trace_2, true );
+        func_2( &mut address_space, &mut ctx, &mut trace_2, true );
     }));
 
     let mut trace_3 = Vec::new();
-    func_2( &mut address_space, &mut trace_3, false );
+    func_2( &mut address_space, &mut ctx, &mut trace_3, false );
 
     assert_eq!( &trace_1[ 0 ], &trace_2[ 0 ] );
     assert_eq!( &trace_1[ 0 ], &trace_3[ 0 ] );

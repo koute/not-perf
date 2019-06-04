@@ -99,6 +99,7 @@ pub use crate::frame_descriptions::LoadHint;
 pub use crate::local_unwinding::{
     LocalAddressSpace,
     LocalAddressSpaceOptions,
+    LocalUnwindContext,
     UnwindControl,
     nwind_on_ret_trampoline,
     nwind_ret_trampoline_personality,

@@ -160,7 +160,7 @@ pub struct Binary< A: Architecture > {
     symbol_decode_cache: Option< Mutex< SymbolDecodeCache > >
 }
 
-type BinaryHandle< A > = Arc< Binary< A > >;
+pub type BinaryHandle< A > = Arc< Binary< A > >;
 
 pub fn lookup_binary< 'a, A: Architecture, M: MemoryReader< A > >( nth_frame: usize, memory: &'a M, regs: &A::Regs ) -> Option< &'a Binary< A > > {
     let address: u64 = regs.get( A::INSTRUCTION_POINTER_REG ).unwrap().into();
@@ -357,7 +357,7 @@ impl< A: Architecture > Binary< A > {
         None
     }
 
-    fn decode_symbol_once( &self, address: u64 ) -> Frame {
+    pub(crate) fn decode_symbol_once( &self, address: u64 ) -> Frame {
         let mut output = Frame::from_address( address, address );
         self.decode_symbol_while( address, &mut |frame| {
             mem::swap( &mut output, frame );
@@ -375,7 +375,7 @@ pub struct BinaryRegion< A: Architecture > {
 
 impl< A: Architecture > BinaryRegion< A > {
     #[inline]
-    fn binary( &self ) -> &Binary< A > {
+    pub(crate) fn binary( &self ) -> &Binary< A > {
         &self.binary
     }
 
@@ -657,7 +657,7 @@ impl< 'a > fmt::Debug for Frame< 'a > {
 
 impl< 'a > Frame< 'a > {
     #[inline]
-    fn from_address( absolute_address: u64, relative_address: u64 ) -> Self {
+    pub(crate) fn from_address( absolute_address: u64, relative_address: u64 ) -> Self {
         Frame {
             absolute_address,
             relative_address,
@@ -712,7 +712,7 @@ fn match_mapping( load_headers: &[LoadHeader], region: &Region ) -> Option< Addr
     })
 }
 
-fn reload< A: Architecture >(
+pub fn reload< A: Architecture >(
     current_binary_map: &mut HashMap< BinaryId, BinaryHandle< A > >,
     current_regions: &mut RangeMap< BinaryRegion< A > >,
     regions: Vec< Region >,

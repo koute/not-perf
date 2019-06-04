@@ -48,17 +48,17 @@ impl< A: Architecture > UnwindContext< A > {
         }
     }
 
-    pub fn set_panic_on_partial_backtrace( &mut self, value: bool ) {
+    pub(crate) fn set_panic_on_partial_backtrace( &mut self, value: bool ) {
         self.panic_on_partial_backtrace = value;
     }
 
     #[inline(always)]
-    pub fn start< 'a, M: MemoryReader< A >, T: InitializeRegs< A > >( &'a mut self, memory: &M, initializer: T ) -> UnwindHandle< 'a, A > {
+    pub(crate) fn start< 'a, M: MemoryReader< A >, T: InitializeRegs< A > >( &'a mut self, memory: &M, initializer: T ) -> UnwindHandle< 'a, A > {
         initializer.initialize_regs( &mut self.regs );
         self.start_impl( memory )
     }
 
-    pub fn clear_cache( &mut self ) {
+    pub(crate) fn clear_cache( &mut self ) {
         A::clear_cache( &mut self.state );
     }
 
