@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 byteorder = "1"
 gimli = { version = "0.18", default-features = false, features = ["std", "read"] }
-goblin = "0.0.21"
+goblin = "0.0.22"
 scroll = "0.9"
 memmap = "0.7"
 log = { version = "0.4", optional = true }
