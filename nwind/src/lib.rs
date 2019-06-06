@@ -15,20 +15,20 @@ pub extern crate proc_maps;
 
 #[allow(unused_macros)]
 #[cfg(any(not(feature = "log"), not(feature = "debug-logs")))]
-macro_rules! trace { ($($token:expr),*) => {{ $( let _ = &$token; )+ }} }
+macro_rules! trace { ($($token:expr),*) => {{ if false { $( let _ = &$token; )+ } }} }
 
 #[cfg(any(not(feature = "log"), not(feature = "debug-logs")))]
-macro_rules! debug { ($($token:expr),*) => {{ $( let _ = &$token; )+ }} }
+macro_rules! debug { ($($token:expr),*) => {{ if false { $( let _ = &$token; )+ } }} }
 
 #[allow(unused_macros)]
 #[cfg(not(feature = "log"))]
-macro_rules! info { ($($token:expr),*) => {{ $( let _ = &$token; )+ }} }
+macro_rules! info { ($($token:expr),*) => {{ if false { $( let _ = &$token; )+ } }} }
 
 #[cfg(not(feature = "log"))]
-macro_rules! warn { ($($token:expr),*) => {{ $( let _ = &$token; )+ }} }
+macro_rules! warn { ($($token:expr),*) => {{ if false { $( let _ = &$token; )+ } }} }
 
 #[cfg(not(feature = "log"))]
-macro_rules! error { ($($token:expr),*) => {{ $( let _ = &$token; )+ }} }
+macro_rules! error { ($($token:expr),*) => {{ if false { $( let _ = &$token; )+ } }} }
 
 #[cfg(any(not(feature = "log"), not(feature = "debug-logs")))]
 macro_rules! debug_logs_enabled { () => { false } }
