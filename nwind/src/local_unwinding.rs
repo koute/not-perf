@@ -920,7 +920,7 @@ fn dummy_volatile_read() {
 fn test_self_unwind() {
     let _ = ::env_logger::try_init();
 
-    let mut address_space = LocalAddressSpace::new().unwrap();
+    let address_space = LocalAddressSpace::new().unwrap();
     let mut ctx = LocalUnwindContext::new();
     let mut frames = Vec::new();
     address_space.unwind( &mut ctx, |frame| {
