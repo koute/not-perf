@@ -69,6 +69,10 @@ rustflags = [
 
 ## Basic usage
 
+Make sure you have access to the performance counters
+
+    $ echo -1 | sudo tee /proc/sys/kernel/perf_event_paranoid
+
 Profiling an already running process by its PID:
 
     $ cargo run record -p $PID_OF_YOUR_PROCESS -o datafile
