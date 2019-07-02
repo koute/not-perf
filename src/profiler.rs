@@ -244,7 +244,7 @@ mod tests {
     }
 }
 
-fn resolve_path< 'a >( path_resolver: &Option< PathResolver >, path: &'a AsRef< Path >, expected_major_minor: Option< (u32, u32) > ) -> Cow< 'a, Path > {
+fn resolve_path< 'a >( path_resolver: &Option< PathResolver >, path: &'a dyn AsRef< Path >, expected_major_minor: Option< (u32, u32) > ) -> Cow< 'a, Path > {
     let path = path.as_ref();
     trace!( "Trying to resolve {:?}...", path );
 
@@ -534,7 +534,7 @@ impl PacketWriter {
 fn initialize(
     sigint_handler: &SigintHandler,
     args: &args::GenericProfilerArgs
-) -> Result< (u32, AddressSpace< arch::native::Arch >, ExecutionQueue< PacketWriter >, Option< PathResolver >), Box< Error > >
+) -> Result< (u32, AddressSpace< arch::native::Arch >, ExecutionQueue< PacketWriter >, Option< PathResolver >), Box< dyn Error > >
 {
     let offline = args.offline;
     let target_process = args.process_filter.clone().into();
@@ -677,7 +677,7 @@ pub struct Sample< 'a > {
 }
 
 impl ProfilingController {
-    pub fn new( args: &args::GenericProfilerArgs ) -> Result< Self, Box< Error > > {
+    pub fn new( args: &args::GenericProfilerArgs ) -> Result< Self, Box< dyn Error > > {
         let sigint = SigintHandler::new();
         let (pid, address_space, writer, path_resolver) = initialize( &sigint, args )?;
 

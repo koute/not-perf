@@ -39,7 +39,7 @@ use std::error::Error;
 use std::process::exit;
 use structopt::StructOpt;
 
-fn main_impl() -> Result< (), Box< Error >  > {
+fn main_impl() -> Result< (), Box< dyn Error > > {
     if env::var( "RUST_LOG" ).is_err() {
         env::set_var( "RUST_LOG", "nperf=info" );
     }

@@ -193,7 +193,7 @@ pub struct PathResolver {
 }
 
 impl PathResolver {
-    pub fn new_for_pid( pid: u32 ) -> Result< Self, Box< Error > > {
+    pub fn new_for_pid( pid: u32 ) -> Result< Self, Box< dyn Error > > {
         let self_mount_info = read_string_lossy( "/proc/self/mountinfo" )
             .map_err( |err| format!( "cannot read /proc/self/mountinfo: {}", err ) )?;
 
@@ -210,7 +210,7 @@ impl PathResolver {
         self_mount_info: &str,
         target_mount_info: &str,
         target_root: PathBuf
-    ) -> Result< Self, Box< Error > > {
+    ) -> Result< Self, Box< dyn Error > > {
         let self_mount_info = parse_mountinfo( &self_mount_info )?;
         let target_mount_info = parse_mountinfo( &target_mount_info )?;
 

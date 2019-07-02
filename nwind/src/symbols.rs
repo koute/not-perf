@@ -14,7 +14,7 @@ trait ByteContainer: StableIndex + Index< Range< u64 >, Output = [u8] > + 'stati
 impl< T > ByteContainer for T where T: StableIndex + Index< Range< u64 >, Output = [u8] > + 'static {}
 
 pub struct Symbols {
-    strtab_owner: ManuallyDrop< Arc< ByteContainer< Output = [u8] > + Send + Sync > >,
+    strtab_owner: ManuallyDrop< Arc< dyn ByteContainer< Output = [u8] > + Send + Sync > >,
     symbols: ManuallyDrop< RangeMap< &'static str > >
 }
 
@@ -175,8 +175,8 @@ impl Symbols {
     pub fn is_owned_by< T >( &self, strtab_owner: &Arc< T > ) -> bool
         where T: StableIndex + Index< Range< u64 >, Output = [u8] > + 'static
     {
-        let lhs: &ByteContainer< Output = [u8] > = &**self.strtab_owner;
-        let rhs: &ByteContainer< Output = [u8] > = &**strtab_owner;
+        let lhs: &dyn ByteContainer< Output = [u8] > = &**self.strtab_owner;
+        let rhs: &dyn ByteContainer< Output = [u8] > = &**strtab_owner;
         to_ptr( lhs ) == to_ptr( rhs )
     }
 }

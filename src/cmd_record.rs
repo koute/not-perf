@@ -50,7 +50,7 @@ fn handle_mmap2_event( event: Mmap2Event, new_maps: &mut Vec< Region > ) {
     }
 }
 
-pub fn main( args: args::RecordArgs ) -> Result< (), Box< Error > > {
+pub fn main( args: args::RecordArgs ) -> Result< (), Box< dyn Error > > {
     let discard_all = args.discard_all;
 
     let mut controller = ProfilingController::new( &args.profiler_args )?;

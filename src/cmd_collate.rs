@@ -55,7 +55,7 @@ struct Process {
     executable: String,
     memory_regions: RangeMap< Region >,
     base_address_for_binary: HashMap< BinaryId, u64 >,
-    address_space: Box< IAddressSpace >,
+    address_space: Box< dyn IAddressSpace >,
     address_space_needs_reload: bool
 }
 
@@ -257,7 +257,7 @@ fn to_binary_id( inode: Inode, name: &str ) -> BinaryId {
     }
 }
 
-fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box< Error > >
+fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box< dyn Error > >
     where F: FnMut( &Collation, u64, &Process, u32, u32, &[UserFrame], &[u64] )
 {
     let fp = fs::File::open( args.input_path ).map_err( |err| format!( "cannot open {:?}: {}", args.input_path, err ) )?;
@@ -297,7 +297,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                 let executable = get_basename( &executable );
                 debug!( "New process with PID {}: \"{}\"", pid, executable );
 
-                let address_space: Box< IAddressSpace > = match &*machine_architecture {
+                let address_space: Box< dyn IAddressSpace > = match &*machine_architecture {
                     arch::arm::Arch::NAME => Box::new( AddressSpace::< arch::arm::Arch >::new() ),
                     arch::amd64::Arch::NAME => Box::new( AddressSpace::< arch::amd64::Arch >::new() ),
                     arch::mips64::Arch::NAME => Box::new( AddressSpace::< arch::mips64::Arch >::new() ),
@@ -796,7 +796,7 @@ fn repack_cli_args( args: &args::SharedCollationArgs ) -> (Option< Regex >, Coll
     (omit_regex, collate_args)
 }
 
-pub fn collapse_into_sorted_vec( args: &args::SharedCollationArgs ) -> Result< Vec< String >, Box< Error > > {
+pub fn collapse_into_sorted_vec( args: &args::SharedCollationArgs ) -> Result< Vec< String >, Box< dyn Error > > {
     let (omit_regex, collate_args) = repack_cli_args( args );
 
     let mut stacks: HashMap< Vec< FrameKind >, u64 > = HashMap::new();
@@ -836,7 +836,7 @@ pub fn collapse_into_sorted_vec( args: &args::SharedCollationArgs ) -> Result< V
     Ok( output )
 }
 
-pub fn main( args: args::CollateArgs ) -> Result< (), Box< Error > > {
+pub fn main( args: args::CollateArgs ) -> Result< (), Box< dyn Error > > {
     match args.format {
         CollateFormat::Collapsed => {
             let output = collapse_into_sorted_vec( &args.collation_args )?;

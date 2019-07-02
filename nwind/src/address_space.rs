@@ -258,7 +258,7 @@ impl< A: Architecture > Binary< A > {
         self.virtual_addresses.arm_extab
     }
 
-    pub fn decode_symbol_while< 'a >( &'a self, address: u64, callback: &mut FnMut( &mut Frame< 'a > ) -> bool ) {
+    pub fn decode_symbol_while< 'a >( &'a self, address: u64, callback: &mut dyn FnMut( &mut Frame< 'a > ) -> bool ) {
         let relative_address = translate_address( &self.mappings, address );
         let mut frame = Frame::from_address( address, relative_address );
         frame.library = Some( self.name.as_str().into() );
@@ -673,9 +673,9 @@ impl< 'a > Frame< 'a > {
 }
 
 pub trait IAddressSpace {
-    fn reload( &mut self, regions: Vec< Region >, try_load: &mut FnMut( &Region, &mut LoadHandle ) ) -> Reloaded;
-    fn unwind( &mut self, regs: &mut DwarfRegs, stack: &BufferReader, output: &mut Vec< UserFrame > );
-    fn decode_symbol_while< 'a >( &'a self, address: u64, callback: &mut FnMut( &mut Frame< 'a > ) -> bool );
+    fn reload( &mut self, regions: Vec< Region >, try_load: &mut dyn FnMut( &Region, &mut LoadHandle ) ) -> Reloaded;
+    fn unwind( &mut self, regs: &mut DwarfRegs, stack: &dyn BufferReader, output: &mut Vec< UserFrame > );
+    fn decode_symbol_while< 'a >( &'a self, address: u64, callback: &mut dyn FnMut( &mut Frame< 'a > ) -> bool );
     fn decode_symbol_once( &self, address: u64 ) -> Frame;
     fn set_panic_on_partial_backtrace( &mut self, value: bool );
 }
@@ -716,7 +716,7 @@ pub fn reload< A: Architecture >(
     current_binary_map: &mut HashMap< BinaryId, BinaryHandle< A > >,
     current_regions: &mut RangeMap< BinaryRegion< A > >,
     regions: Vec< Region >,
-    try_load: &mut FnMut( &Region, &mut LoadHandle )
+    try_load: &mut dyn FnMut( &Region, &mut LoadHandle )
 ) -> Reloaded {
     debug!( "Reloading..." );
 
@@ -985,12 +985,12 @@ pub fn reload< A: Architecture >(
 }
 
 impl< A: Architecture > IAddressSpace for AddressSpace< A > where A::RegTy: Primitive {
-    fn reload( &mut self, regions: Vec< Region >, try_load: &mut FnMut( &Region, &mut LoadHandle ) ) -> Reloaded {
+    fn reload( &mut self, regions: Vec< Region >, try_load: &mut dyn FnMut( &Region, &mut LoadHandle ) ) -> Reloaded {
         self.ctx.clear_cache();
         reload( &mut self.binary_map, &mut self.regions, regions, try_load )
     }
 
-    fn unwind( &mut self, dwarf_regs: &mut DwarfRegs, stack: &BufferReader, output: &mut Vec< UserFrame > ) {
+    fn unwind( &mut self, dwarf_regs: &mut DwarfRegs, stack: &dyn BufferReader, output: &mut Vec< UserFrame > ) {
         output.clear();
 
         let stack_address = match dwarf_regs.get( A::STACK_POINTER_REG ) {
@@ -1027,7 +1027,7 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > where A::RegTy: Prim
         }
     }
 
-    fn decode_symbol_while< 'a >( &'a self, address: u64, callback: &mut FnMut( &mut Frame< 'a > ) -> bool ) {
+    fn decode_symbol_while< 'a >( &'a self, address: u64, callback: &mut dyn FnMut( &mut Frame< 'a > ) -> bool ) {
         if let Some( region ) = self.regions.get_value( address ) {
             region.binary.decode_symbol_while( address, callback );
         } else {

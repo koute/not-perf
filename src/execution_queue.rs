@@ -15,7 +15,7 @@ impl< T, F > Callback< T > for F where F: Send + for <'a> FnOnce( &'a mut T ) ->
 }
 
 pub struct ExecutionQueue< T: Send > {
-    tx: Option< mpsc::SyncSender< Box< Callback< T > > > >,
+    tx: Option< mpsc::SyncSender< Box< dyn Callback< T > > > >,
     handle: Option< thread::JoinHandle< () > >,
     phantom: PhantomData< T >
 }

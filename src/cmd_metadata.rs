@@ -9,7 +9,7 @@ use crate::archive::{Packet, ArchiveReader};
 use crate::metadata::{self, Metadata};
 use crate::args;
 
-pub fn main( args: args::MetadataArgs ) -> Result< (), Box< Error > > {
+pub fn main( args: args::MetadataArgs ) -> Result< (), Box< dyn Error > > {
     let metadata = generate_metadata( args )?;
     let metadata = serde_json::to_string_pretty( &metadata ).unwrap();
     println!( "{}", metadata );
@@ -17,7 +17,7 @@ pub fn main( args: args::MetadataArgs ) -> Result< (), Box< Error > > {
     Ok(())
 }
 
-pub fn generate_metadata( args: args::MetadataArgs ) -> Result< Metadata, Box< Error > > {
+pub fn generate_metadata( args: args::MetadataArgs ) -> Result< Metadata, Box< dyn Error > > {
     let fp = fs::File::open( &args.input ).map_err( |err| format!( "cannot open {:?}: {}", args.input, err ) )?;
     let mut reader = ArchiveReader::new( fp ).validate_header().unwrap().skip_unknown();
 
