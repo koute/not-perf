@@ -72,7 +72,6 @@ mod unwind_context;
 mod debug_info_index;
 #[cfg(feature = "local-unwinding")]
 mod local_unwinding;
-mod interner;
 
 pub use crate::address_space::{
     BufferReader,
@@ -107,5 +106,3 @@ pub use crate::local_unwinding::{
     _Unwind_RaiseException,
     __cxa_throw
 };
-
-pub use crate::interner::{StringInterner, StringId};

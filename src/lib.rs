@@ -18,6 +18,7 @@ mod cmd_metadata;
 mod kallsyms;
 mod utils;
 mod metadata;
+mod interner;
 
 pub use crate::archive::*;
 pub use crate::stack_reader::StackReader;

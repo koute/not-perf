@@ -25,8 +25,6 @@ use nwind::{
     AddressSpace,
     LoadHeader,
     BinaryId,
-    StringInterner,
-    StringId,
     DebugInfoIndex,
     LoadHint
 };
@@ -35,6 +33,7 @@ use crate::args;
 use crate::archive::{Packet, Inode, Bitness, UserFrame, ArchiveReader};
 use crate::utils::StableIndex;
 use crate::kallsyms::{self, KernelSymbol};
+use crate::interner::{StringId, StringInterner};
 
 use crate::stack_reader::StackReader;
 

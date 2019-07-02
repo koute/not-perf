@@ -28,6 +28,7 @@ mod stack_reader;
 mod metadata;
 mod mount_info;
 mod profiler;
+mod interner;
 mod cmd_record;
 #[cfg(feature = "inferno")]
 mod cmd_flamegraph;
