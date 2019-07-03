@@ -1,5 +1,5 @@
 #![cfg_attr(
-    all(feature = "local-unwinding"),
+    all(feature = "local-unwinding", rust_nightly),
     feature(unwind_attributes)
 )]
 
@@ -101,8 +101,11 @@ pub use crate::local_unwinding::{
     LocalUnwindContext,
     UnwindControl,
     nwind_on_ret_trampoline,
-    nwind_ret_trampoline_personality,
+    nwind_ret_trampoline_personality
+};
 
+#[cfg(all(feature = "local-unwinding", rust_nightly))]
+pub use crate::local_unwinding::{
     _Unwind_RaiseException,
     __cxa_throw
 };

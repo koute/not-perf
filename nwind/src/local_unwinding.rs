@@ -172,6 +172,7 @@ extern {
     ) -> _Unwind_Reason_Code;
 }
 
+#[cfg(rust_nightly)]
 #[doc(hidden)]
 #[allow(non_snake_case)]
 #[unwind(allowed)]
@@ -191,6 +192,7 @@ pub unsafe fn _Unwind_RaiseException( ctx: *mut libc::c_void ) -> libc::c_int {
     (Union { raw_ptr: ptr }.function)( ctx )
 }
 
+#[cfg(rust_nightly)]
 #[doc(hidden)]
 #[unwind(allowed)]
 #[no_mangle]
@@ -723,11 +725,16 @@ impl LocalAddressSpace {
         let mut address_space = LocalAddressSpace {
             regions: RangeMap::new(),
             binary_map: HashMap::new(),
-            use_shadow_stack: true,
+            use_shadow_stack: false,
             should_load_symbols: opts.should_load_symbols,
             reload_count: 0
         };
 
+        if !cfg!( rust_nightly ) {
+            warn!( "The profiler was not compiled with Rust nightly; shadow stack based unwinding will be disabled" );
+        }
+
+        address_space.use_shadow_stack( true );
         address_space.reload()?;
 
         Ok( address_space )
@@ -759,6 +766,10 @@ impl LocalAddressSpace {
     }
 
     pub fn use_shadow_stack( &mut self, value: bool ) {
+        if !cfg!( rust_nightly ) {
+            return;
+        }
+
         self.use_shadow_stack = value;
     }
 

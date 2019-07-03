@@ -2,6 +2,17 @@
 extern crate cc;
 
 #[cfg(feature = "local-unwinding")]
+fn check_for_rust_nightly() {
+    use rustc_version::{Channel, version_meta};
+    match version_meta().unwrap().channel {
+        Channel::Nightly | Channel::Dev => {
+            println!( "cargo:rustc-cfg=rust_nightly" );
+        },
+        _ => {}
+    }
+}
+
+#[cfg(feature = "local-unwinding")]
 fn build() {
     use std::env;
 
@@ -16,6 +27,8 @@ fn build() {
     let mut build = cc::Build::new();
     build.file( source );
     build.compile( "get_regs.a" );
+
+    check_for_rust_nightly();
 }
 
 #[cfg(not(feature = "local-unwinding"))]
