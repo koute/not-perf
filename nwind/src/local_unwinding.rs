@@ -617,10 +617,10 @@ impl< A: Architecture > InitializeRegs< A > for LocalRegsInitializer< A > where 
 }
 
 #[cfg(not(target_arch = "mips64"))]
-unsafe fn patch_trampoline() {}
+unsafe fn patch_trampoline_impl() {}
 
 #[cfg(target_arch = "mips64")]
-unsafe fn patch_trampoline() {
+unsafe fn patch_trampoline_impl() {
     use std::slice;
 
     extern {
@@ -682,6 +682,16 @@ unsafe fn patch_trampoline() {
     debug!( "Trampoline successfully patched!" );
 }
 
+fn patch_trampoline() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once( || {
+        debug!( "Trampoline address: 0x{:016X}", nwind_ret_trampoline as usize );
+        unsafe {
+            patch_trampoline_impl();
+        }
+    });
+}
+
 #[derive(Debug)]
 pub struct LocalAddressSpaceOptions {
     should_load_symbols: bool
@@ -707,7 +717,8 @@ impl LocalAddressSpace {
 
     pub fn new_with_opts( opts: LocalAddressSpaceOptions ) -> Result< Self, io::Error > {
         debug!( "Initializing local address space..." );
-        debug!( "Trampoline address: 0x{:016X}", nwind_ret_trampoline as usize );
+
+        patch_trampoline();
 
         let mut address_space = LocalAddressSpace {
             regions: RangeMap::new(),
@@ -718,9 +729,6 @@ impl LocalAddressSpace {
         };
 
         address_space.reload()?;
-        unsafe {
-            patch_trampoline();
-        }
 
         Ok( address_space )
     }
