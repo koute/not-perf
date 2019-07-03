@@ -1190,6 +1190,48 @@ fn test_double_unwind_through_fresh_frames() {
 }
 
 #[test]
+fn test_unwind_multiple_contexts_and_address_spaces() {
+    let _ = ::env_logger::try_init();
+
+    #[inline(never)]
+    fn func_1() -> (usize, usize, usize) {
+        let mut count_1 = 0;
+        let address_space = LocalAddressSpace::new().unwrap();
+        let mut ctx = LocalUnwindContext::new();
+        address_space.unwind_through_fresh_frames( &mut ctx, |_| {
+            count_1 += 1;
+            UnwindControl::Continue
+        });
+
+        mem::drop( address_space );
+
+        let mut count_2 = 0;
+        let address_space = LocalAddressSpace::new().unwrap();
+        address_space.unwind_through_fresh_frames( &mut ctx, |_| {
+            count_2 += 1;
+            UnwindControl::Continue
+        });
+
+        let mut count_3 = 0;
+        let address_space_2 = LocalAddressSpace::new().unwrap();
+        let mut ctx_2 = LocalUnwindContext::new();
+        address_space_2.unwind( &mut ctx_2, |_| {
+            count_3 += 1;
+            UnwindControl::Continue
+        });
+
+        (count_1, count_2, count_3)
+    }
+
+    let (count_1, count_2, count_3) = func_1();
+    ShadowStack::get().unwrap().reset();
+
+    assert_eq!( count_1, count_3 );
+    assert_ne!( count_1, count_2 );
+    assert_eq!( count_2, 1 );
+}
+
+#[test]
 fn test_unwind_with_panic() {
     use std::panic;
 
