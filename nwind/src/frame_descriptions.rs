@@ -450,7 +450,7 @@ impl< E: Endianity > FrameDescriptions< E > {
                     }
                 }
 
-                let fde = eh_frame_hdr.table().unwrap().lookup_and_parse( address, bases, eh_frame.clone(), |_, _, offset| {
+                let fde = eh_frame_hdr.table().unwrap().fde_for_address( &eh_frame, bases, address, |_, _, offset| {
                     eh_frame.cie_from_offset( bases, offset )
                 });
 
