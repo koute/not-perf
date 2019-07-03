@@ -765,8 +765,12 @@ impl LocalAddressSpace {
         Ok(())
     }
 
+    fn is_shadow_stack_supported() -> bool {
+        cfg!( rust_nightly )
+    }
+
     pub fn use_shadow_stack( &mut self, value: bool ) {
-        if !cfg!( rust_nightly ) {
+        if !Self::is_shadow_stack_supported() {
             return;
         }
 
@@ -1030,6 +1034,7 @@ fn clear_tls() {
     });
 }
 
+#[cfg_attr(not(rust_nightly), ignore)]
 #[test]
 fn test_unwind_through_fresh_frames() {
     let _ = ::env_logger::try_init();
@@ -1183,10 +1188,17 @@ fn test_double_unwind_through_fresh_frames() {
     let mut count_2 = None;
     func_twice( &mut address_space, &mut ctx, &mut trace_1, &mut trace_2, &mut count_1, &mut count_2 );
 
-    assert_ne!( trace_1.len(), 0 );
-    assert_eq!( count_1, None );
-    assert_eq!( trace_2.len(), 1 );
-    assert_eq!( count_2, Some( 1 ) );
+    if LocalAddressSpace::is_shadow_stack_supported() {
+        assert_ne!( trace_1.len(), 0 );
+        assert_eq!( count_1, None );
+        assert_eq!( trace_2.len(), 1 );
+        assert_eq!( count_2, Some( 1 ) );
+    } else {
+        assert_ne!( trace_1.len(), 0 );
+        assert_eq!( count_1, None );
+        assert_eq!( trace_1.len(), trace_2.len() );
+        assert_eq!( count_2, None );
+    }
 }
 
 #[test]
@@ -1226,9 +1238,14 @@ fn test_unwind_multiple_contexts_and_address_spaces() {
     let (count_1, count_2, count_3) = func_1();
     ShadowStack::get().unwrap().reset();
 
-    assert_eq!( count_1, count_3 );
-    assert_ne!( count_1, count_2 );
-    assert_eq!( count_2, 1 );
+    if LocalAddressSpace::is_shadow_stack_supported() {
+        assert_eq!( count_1, count_3 );
+        assert_ne!( count_1, count_2 );
+        assert_eq!( count_2, 1 );
+    } else {
+        assert_eq!( count_1, count_2 );
+        assert_eq!( count_2, count_3 );
+    }
 }
 
 #[test]
