@@ -5,20 +5,9 @@ IFS=$'\n\t'
 
 export RUST_BACKTRACE=1
 
-set +e
-echo "$(rustc --version)" | grep -q "nightly"
-if [ "$?" = "0" ]; then
-    export IS_NIGHTLY=1
-else
-    export IS_NIGHTLY=0
-fi
-set -e
-
 cd nwind
-if [ "$IS_NIGHTLY" = "1" ]; then
-    cargo test --features local-unwinding --verbose
-    cargo test --features local-unwinding --release --verbose
-fi
+cargo test --features local-unwinding --verbose
+cargo test --features local-unwinding --release --verbose
 cargo build --verbose
 cargo test --verbose
 cargo check --no-default-features --verbose
