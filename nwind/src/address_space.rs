@@ -396,6 +396,31 @@ struct Memory< 'a, A: Architecture + 'a, T: ?Sized + BufferReader + 'a > {
     stack: &'a T
 }
 
+#[cold]
+#[inline(never)]
+fn on_out_of_bounds_read(
+    size: usize,
+    binary_name: &str,
+    memory_region: &Region,
+    address: u64,
+    relative_file_offset: u64,
+    total_file_offset: usize,
+    total_length: usize
+) {
+    warn!(
+        "Tried to read {} byte(s) from binary '{}' at address 0x{:016X} from region 0x{:016X} - 0x{:016X} with file offset 0x{:016X} + {} = {} where the binary is only {} bytes long",
+        size,
+        binary_name,
+        address,
+        memory_region.start,
+        memory_region.end,
+        memory_region.file_offset,
+        relative_file_offset,
+        total_file_offset,
+        total_length
+    );
+}
+
 impl< 'a, A: Architecture, T: ?Sized + BufferReader + 'a > Memory< 'a, A, T > {
     #[inline]
     fn get_value_at_address< V: Primitive >( &self, endianness: Endianness, address: u64 ) -> Option< V > {
@@ -408,9 +433,26 @@ impl< 'a, A: Architecture, T: ?Sized + BufferReader + 'a > Memory< 'a, A, T > {
         }
 
         if let Some( (range, region) ) = self.regions.get( address ) {
-            let offset = (region.file_offset() + (address - range.start)) as usize;
-            debug!( "Reading from binary '{}' at address 0x{:016X} (+{})", region.binary().name(), address, offset );
-            let slice = &region.binary().data()?.as_bytes()[ offset..offset + mem::size_of::< V >() ];
+            let relative_file_offset = address - range.start;
+            let total_file_offset = (region.file_offset() + relative_file_offset) as usize;
+            debug!( "Reading from binary '{}' at address 0x{:016X} (+{})", region.binary().name(), address, total_file_offset );
+            let bytes = region.binary().data()?.as_bytes();
+            let slice = match bytes.get( total_file_offset..total_file_offset + mem::size_of::< V >() ) {
+                Some( subslice ) => subslice,
+                None => {
+                    on_out_of_bounds_read(
+                        mem::size_of::< V >(),
+                        region.binary().name(),
+                        &region.memory_region,
+                        address,
+                        relative_file_offset,
+                        total_file_offset,
+                        bytes.len()
+                    );
+                    return None;
+                }
+            };
+
             let value = V::read_from_slice( endianness, slice );
             Some( value )
         } else {
