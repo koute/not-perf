@@ -128,6 +128,10 @@ impl BinaryData {
     }
 
     fn load( path: &str, blob: Blob ) -> io::Result< Self > {
+        if !blob.starts_with( b"\x7FELF" ) {
+            return Err( io::Error::new( io::ErrorKind::InvalidData, "not an ELF file" ) );
+        }
+
         let mut data_range = None;
         let mut text_range = None;
         let mut eh_frame_range = None;

@@ -321,6 +321,13 @@ fn process_maps(
             let data = match BinaryData::load_from_fs( &path ) {
                 Ok( data ) => data,
                 Err( error ) => {
+                    if error.kind() == io::ErrorKind::InvalidData {
+                        if let Some( inner_error ) = error.get_ref() {
+                            if format!( "{}", inner_error ) == "not an ELF file" {
+                                return;
+                            }
+                        }
+                    }
                     error!( "Failed to load '{}' from {:?}: {}", region.name, path, error );
                     return;
                 }
