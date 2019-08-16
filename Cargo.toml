@@ -10,7 +10,7 @@ regex = "1"
 lazy_static = "1"
 log = "0.4"
 env_logger = { version = "0.6", optional = true }
-parking_lot = "0.8"
+parking_lot = "0.9"
 num_cpus = "1"
 chrono = "0.4"
 speedy = "0.4"
