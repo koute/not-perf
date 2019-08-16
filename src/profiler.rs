@@ -650,7 +650,7 @@ fn initialize(
     address_space.set_panic_on_partial_backtrace( args.panic_on_partial_backtrace );
 
     writer.spawn( move |_| {
-        info!( "Ready to write profiling data!" );
+        info!( "Finished output file initialization" );
         Ok(())
     });
 

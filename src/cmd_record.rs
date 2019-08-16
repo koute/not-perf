@@ -55,7 +55,7 @@ pub fn main( args: args::RecordArgs ) -> Result< (), Box< dyn Error > > {
 
     let mut controller = ProfilingController::new( &args.profiler_args )?;
 
-    info!( "Opening perf events for {}...", controller.pid() );
+    info!( "Opening perf events for process with PID {}...", controller.pid() );
     let mut perf = match PerfGroup::open( controller.pid(), args.frequency, args.stack_size, args.event_source ) {
         Ok( perf ) => perf,
         Err( error ) => {
