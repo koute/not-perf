@@ -56,9 +56,27 @@ pub fn main( args: args::RecordArgs ) -> Result< (), Box< dyn Error > > {
     let mut controller = ProfilingController::new( &args.profiler_args )?;
 
     info!( "Opening perf events for {}...", controller.pid() );
-    let mut perf =
-        PerfGroup::open( controller.pid(), args.frequency, args.stack_size, args.event_source )
-            .map_err( |err| format!( "failed to start profiling: {}", err ) )?;
+    let mut perf = match PerfGroup::open( controller.pid(), args.frequency, args.stack_size, args.event_source ) {
+        Ok( perf ) => perf,
+        Err( error ) => {
+            error!( "Failed to start profiling: {}", error );
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                if let Ok( perf_event_paranoid ) = crate::utils::read_string_lossy( "/proc/sys/kernel/perf_event_paranoid" ) {
+                    let perf_event_paranoid = perf_event_paranoid.trim();
+                    match perf_event_paranoid {
+                        "2" => {
+                            warn!( "The '/proc/sys/kernel/perf_event_paranoid' is set to '{}', which is probably why you can't start the profiling", perf_event_paranoid );
+                            warn!( "You can try lowering it before trying to start the profiling again:" );
+                            warn!( "    echo '1' | sudo tee /proc/sys/kernel/perf_event_paranoid" );
+                        },
+                        _ => {}
+                    }
+                }
+            }
+
+            return Err( format!( "failed to start profiling: {}", error ).into() );
+        }
+    };
 
     let mut new_maps = Vec::new();
     for event in perf.take_initial_events() {
