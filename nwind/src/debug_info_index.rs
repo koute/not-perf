@@ -96,6 +96,7 @@ impl DebugInfoIndex {
 
     fn add_impl( &mut self, done: &mut HashSet< PathBuf >, path: &Path, is_toplevel: bool ) {
         if !path.exists() {
+            warn!( "Failed to load {:?}: file not found", path );
             return;
         }
 
