@@ -6,6 +6,7 @@ use std::mem;
 use std::slice;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use libc;
 use proc_maps;
@@ -712,6 +713,11 @@ impl LocalAddressSpaceOptions {
     }
 }
 
+pub struct AddressSpaceUpdate {
+    pub maps: String,
+    pub new_binaries: Vec< Arc< BinaryData > >
+}
+
 impl LocalAddressSpace {
     pub fn new() -> Result< Self, io::Error > {
         Self::new_with_opts( LocalAddressSpaceOptions::new() )
@@ -740,15 +746,16 @@ impl LocalAddressSpace {
         Ok( address_space )
     }
 
-    pub fn reload( &mut self ) -> Result< (), io::Error > {
+    pub fn reload( &mut self ) -> Result< AddressSpaceUpdate, io::Error > {
         trace!( "Loading maps..." );
-        let data = fs::read( "/proc/self/maps" )?;
-        let data = String::from_utf8_lossy( &data );
+        let maps = fs::read( "/proc/self/maps" )?;
+        let maps = String::from_utf8_lossy( &maps );
         trace!( "Parsing maps..." );
-        let regions = proc_maps::parse( &data );
+        let regions = proc_maps::parse( &maps );
         let should_load_symbols = self.should_load_symbols;
 
         self.reload_count += 1;
+        let mut new_binaries = Vec::new();
         reload( &mut self.binary_map, &mut self.regions, regions, &mut |region, handle| {
             handle.should_load_debug_frame( false );
             handle.should_load_symbols( should_load_symbols );
@@ -758,11 +765,18 @@ impl LocalAddressSpace {
             }
 
             if let Ok( data ) = BinaryData::load_from_fs( &region.name ) {
-                handle.set_binary( data.into() );
+                let data: Arc< BinaryData > = data.into();
+                new_binaries.push( data.clone() );
+                handle.set_binary( data );
             }
         });
 
-        Ok(())
+        let update = AddressSpaceUpdate {
+            maps: maps.into_owned(),
+            new_binaries
+        };
+
+        Ok( update )
     }
 
     fn is_shadow_stack_supported() -> bool {
