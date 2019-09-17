@@ -170,6 +170,14 @@ pub struct SharedCollationArgs {
     #[structopt(long)]
     pub without_kernel_callstacks: bool,
 
+    /// Only process the samples generated *after* this many seconds after launch.
+    #[structopt(long)]
+    pub from: Option< String >,
+
+    /// Only process the samples generated *before* this many seconds after launch.
+    #[structopt(long)]
+    pub to: Option< String >,
+
     /// The input file to use; record it with the `record` subcommand
     #[structopt(parse(from_os_str))]
     pub input: OsString

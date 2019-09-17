@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
 use std::sync::Arc;
 use std::ops::{Range, Index};
-use std::cmp::min;
+use std::cmp::{max, min};
 use std::fmt;
 use std::error::Error;
 use std::borrow::Cow;
@@ -219,7 +219,26 @@ struct CollateArgs< 'a > {
     force_stack_size: Option< u32 >,
     only_sample: Option< u64 >,
     without_kernel_callstacks: bool,
-    fde_hints: FdeHints
+    fde_hints: FdeHints,
+    from: Option< TimestampBound >,
+    to: Option< TimestampBound >
+}
+
+#[derive(Copy, Clone)]
+enum TimestampBound {
+    Relative( f64 ),
+    RelativePercent( u8 )
+}
+
+fn parse_timestamp_bound( timestamp: impl AsRef< str > ) -> TimestampBound {
+    let timestamp = timestamp.as_ref();
+    if timestamp.ends_with( "%" ) {
+        let timestamp: u8 = timestamp[ ..timestamp.len() - 1 ].parse().unwrap();
+        TimestampBound::RelativePercent( timestamp )
+    } else {
+        let timestamp: f64 = timestamp.parse().unwrap();
+        TimestampBound::Relative( timestamp )
+    }
 }
 
 struct Collation {
@@ -259,7 +278,8 @@ fn to_binary_id( inode: Inode, name: &str ) -> BinaryId {
 fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box< dyn Error > >
     where F: FnMut( &Collation, u64, &Process, u32, u32, &[UserFrame], &[u64] )
 {
-    let fp = fs::File::open( args.input_path ).map_err( |err| format!( "cannot open {:?}: {}", args.input_path, err ) )?;
+    let input_path = args.input_path;
+    let fp = fs::File::open( args.input_path ).map_err( |err| format!( "cannot open {:?}: {}", input_path.clone(), err ) )?;
     let mut reader = ArchiveReader::new( fp ).validate_header().unwrap().skip_unknown();
 
     let mut collation = Collation {
@@ -274,6 +294,8 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
     let mut machine_endianness = Endianness::LittleEndian;
     let mut machine_bitness = Bitness::B64;
     let mut sample_counter = 0;
+    let mut first_timestamp = None;
+    let mut last_timestamp = None;
 
     let debug_info_index = {
         let mut debug_info_index = DebugInfoIndex::new();
@@ -281,6 +303,70 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
             debug_info_index.add( path );
         }
         debug_info_index
+    };
+
+    fn to_s( timestamp: u64 ) -> f64 {
+        timestamp as f64 / 1_000_000_000.0
+    }
+
+    if args.from.is_some() || args.to.is_some() {
+        while let Some( packet ) = reader.next() {
+            let packet = packet.unwrap();
+            match packet {
+                Packet::Sample { timestamp, .. } | Packet::RawSample { timestamp, .. } => {
+                    if let Some( prev ) = first_timestamp {
+                        first_timestamp = Some( min( prev, timestamp ) );
+                    } else {
+                        first_timestamp = Some( timestamp );
+                    }
+
+                    if let Some( prev ) = last_timestamp {
+                        last_timestamp = Some( max( prev, timestamp ) );
+                    } else {
+                        last_timestamp = Some( timestamp );
+                    }
+                },
+                _ => {}
+            }
+        }
+
+        if let Some( last_timestamp ) = last_timestamp {
+            let elapsed = last_timestamp - first_timestamp.unwrap();
+            info!( "Elapsed: {:.02}s", to_s( elapsed ) );
+        }
+
+        let fp = fs::File::open( args.input_path ).map_err( |err| format!( "cannot open {:?}: {}", input_path, err ) )?;
+        reader = ArchiveReader::new( fp ).validate_header().unwrap().skip_unknown();
+    }
+
+    let from = args.from;
+    let to = args.to;
+    let in_bounds = |timestamp: u64| -> bool {
+        if from.is_none() && to.is_none() {
+            return true;
+        }
+
+        let relative = timestamp - first_timestamp.unwrap();
+        let relative_s = to_s( relative );
+        let relative_p = last_timestamp.map( |last_timestamp|
+            (relative_s / to_s( last_timestamp - first_timestamp.unwrap() ) * 100.0) as u8
+        );
+
+        if let Some( from ) = from {
+            match from {
+                TimestampBound::Relative( bound ) => if relative_s < bound { return false },
+                TimestampBound::RelativePercent( bound ) => if relative_p.unwrap() < bound { return false }
+            }
+        }
+
+        if let Some( to ) = to {
+            match to {
+                TimestampBound::Relative( bound ) => if relative_s > bound { return false },
+                TimestampBound::RelativePercent( bound ) => if relative_p.unwrap() > bound { return false }
+            }
+        }
+
+        true
     };
 
     while let Some( packet ) = reader.next() {
@@ -480,6 +566,10 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                 }
             },
             Packet::Sample { user_backtrace, mut kernel_backtrace, pid, tid, cpu, timestamp, .. } => {
+                if !in_bounds( timestamp ) {
+                    continue;
+                }
+
                 if let Some( only_sample ) = args.only_sample {
                     if only_sample != sample_counter {
                         sample_counter += 1;
@@ -505,6 +595,10 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                 sample_counter += 1;
             },
             Packet::RawSample { mut kernel_backtrace, pid, tid, stack, regs, cpu, timestamp, .. } => {
+                if !in_bounds( timestamp ) {
+                    continue;
+                }
+
                 if let Some( only_sample ) = args.only_sample {
                     if only_sample != sample_counter {
                         sample_counter += 1;
@@ -789,7 +883,9 @@ fn repack_cli_args( args: &args::SharedCollationArgs ) -> (Option< Regex >, Coll
             use_eh_frame_hdr: false,
             load_eh_frame: LoadHint::Always,
             load_debug_frame: true
-        }
+        },
+        from: args.from.as_ref().map( parse_timestamp_bound ),
+        to: args.to.as_ref().map( parse_timestamp_bound )
     };
 
     (omit_regex, collate_args)
@@ -899,7 +995,9 @@ mod test {
             force_stack_size: None,
             only_sample: None,
             without_kernel_callstacks: false,
-            fde_hints
+            fde_hints,
+            from: None,
+            to: None
         };
 
         let mut stacks: HashMap< Vec< FrameKind >, u64 > = HashMap::new();
