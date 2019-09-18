@@ -33,7 +33,7 @@ default-features = false
 
 [dev-dependencies]
 quickcheck = "0.8"
-criterion = "0.2"
+criterion = "0.3"
 
 [profile.release]
 lto = true
