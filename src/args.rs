@@ -196,6 +196,21 @@ pub struct FlamegraphArgs {
 
 #[derive(StructOpt, Debug)]
 #[structopt(rename_all = "kebab-case")]
+pub struct CsvArgs {
+    #[structopt(flatten)]
+    pub collation_args: SharedCollationArgs,
+
+    /// The sampling interval, in seconds
+    #[structopt(long, short = "t")]
+    pub sampling_interval: Option< f64 >,
+
+    /// The file to which the CSV will be written to (instead of the stdout)
+    #[structopt(long, short = "o", parse(from_os_str))]
+    pub output: Option< OsString >
+}
+
+#[derive(StructOpt, Debug)]
+#[structopt(rename_all = "kebab-case")]
 pub struct CollateArgs {
     #[structopt(flatten)]
     pub collation_args: SharedCollationArgs,
@@ -235,6 +250,10 @@ pub enum Opt {
     #[cfg(feature = "inferno")]
     #[structopt(name = "flamegraph")]
     Flamegraph( FlamegraphArgs ),
+
+    /// Emits a CSV file
+    #[structopt(name = "csv")]
+    Csv( CsvArgs ),
 
     /// Emits collated stack traces for use with Brendan Gregg's flamegraph script
     #[structopt(name = "collate")]

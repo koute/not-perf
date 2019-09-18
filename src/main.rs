@@ -32,6 +32,7 @@ mod interner;
 mod cmd_record;
 #[cfg(feature = "inferno")]
 mod cmd_flamegraph;
+mod cmd_csv;
 mod cmd_collate;
 mod cmd_metadata;
 
@@ -63,6 +64,9 @@ fn main_impl() -> Result< (), Box< dyn Error > > {
         #[cfg(feature = "inferno")]
         args::Opt::Flamegraph( args ) => {
             cmd_flamegraph::main( args )?;
+        },
+        args::Opt::Csv( args ) => {
+            cmd_csv::main( args )?;
         },
         args::Opt::Collate( args ) => {
             cmd_collate::main( args )?;

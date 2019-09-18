@@ -246,7 +246,8 @@ struct Collation {
     process_index_by_pid: HashMap< u32, usize >,
     processes: Vec< Process >,
     thread_names: HashMap< u32, String >,
-    binary_by_id: HashMap< BinaryId, Binary >
+    binary_by_id: HashMap< BinaryId, Binary >,
+    unfiltered_first_timestamp: Option< u64 >
 }
 
 impl Collation {
@@ -275,6 +276,10 @@ fn to_binary_id( inode: Inode, name: &str ) -> BinaryId {
     }
 }
 
+fn to_s( timestamp: u64 ) -> f64 {
+    timestamp as f64 / 1_000_000_000.0
+}
+
 fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box< dyn Error > >
     where F: FnMut( &Collation, u64, &Process, u32, u32, &[UserFrame], &[u64] )
 {
@@ -287,7 +292,8 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
         process_index_by_pid: HashMap::new(),
         processes: Vec::new(),
         thread_names: HashMap::new(),
-        binary_by_id: HashMap::new()
+        binary_by_id: HashMap::new(),
+        unfiltered_first_timestamp: None
     };
 
     let mut machine_architecture = String::new();
@@ -304,10 +310,6 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
         }
         debug_info_index
     };
-
-    fn to_s( timestamp: u64 ) -> f64 {
-        timestamp as f64 / 1_000_000_000.0
-    }
 
     if args.from.is_some() || args.to.is_some() {
         while let Some( packet ) = reader.next() {
@@ -341,7 +343,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
 
     let from = args.from;
     let to = args.to;
-    let in_bounds = |timestamp: u64| -> bool {
+    let in_bounds = |first_timestamp: Option< u64 >, timestamp: u64| -> bool {
         if from.is_none() && to.is_none() {
             return true;
         }
@@ -566,7 +568,13 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                 }
             },
             Packet::Sample { user_backtrace, mut kernel_backtrace, pid, tid, cpu, timestamp, .. } => {
-                if !in_bounds( timestamp ) {
+                if first_timestamp.is_none() {
+                    first_timestamp = Some( timestamp );
+                } else {
+                    first_timestamp = first_timestamp.map( |previous| min( previous, timestamp ) );
+                }
+
+                if !in_bounds( first_timestamp, timestamp ) {
                     continue;
                 }
 
@@ -595,7 +603,13 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                 sample_counter += 1;
             },
             Packet::RawSample { mut kernel_backtrace, pid, tid, stack, regs, cpu, timestamp, .. } => {
-                if !in_bounds( timestamp ) {
+                if first_timestamp.is_none() {
+                    first_timestamp = Some( timestamp );
+                } else {
+                    first_timestamp = first_timestamp.map( |previous| min( previous, timestamp ) );
+                }
+
+                if !in_bounds( first_timestamp, timestamp ) {
                     continue;
                 }
 
@@ -667,17 +681,25 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
         }
     }
 
-
+    collation.unfiltered_first_timestamp = first_timestamp;
     Ok( collation )
 }
 
-fn decode_user_frames( omit_regex: &Option< Regex >, process: &Process, user_backtrace: &[UserFrame], interner: &mut StringInterner, output: &mut Vec< FrameKind > ) -> bool {
+fn decode_user_frames(
+    omit_regex: &Option< Regex >,
+    process: &Process,
+    user_backtrace: &[UserFrame],
+    interner: &mut StringInterner,
+    mut output: Option< &mut Vec< FrameKind > >
+) -> bool {
     for (nth_frame, user_frame) in user_backtrace.iter().enumerate() {
         let default = FrameKind::User( user_frame.initial_address.unwrap_or( user_frame.address ) );
         let region = match process.memory_regions.get_value( user_frame.address ) {
             Some( region ) => region,
             None => {
-                output.push( default );
+                if let Some( ref mut output ) = output {
+                    output.push( default );
+                }
                 return true;
             }
         };
@@ -693,10 +715,14 @@ fn decode_user_frames( omit_regex: &Option< Regex >, process: &Process, user_bac
                     }
                 }
 
-                let string_id = interner.get_or_intern( name );
-                output.push( FrameKind::UserSymbol( binary_id.clone(), frame.absolute_address, frame.is_inline, string_id ) );
+                if let Some( ref mut output ) = output {
+                    let string_id = interner.get_or_intern( name );
+                    output.push( FrameKind::UserSymbol( binary_id.clone(), frame.absolute_address, frame.is_inline, string_id ) );
+                }
             } else {
-                output.push( FrameKind::UserBinary( binary_id.clone(), frame.absolute_address ) );
+                if let Some( ref mut output ) = output {
+                    output.push( FrameKind::UserBinary( binary_id.clone(), frame.absolute_address ) );
+                }
             }
 
             true
@@ -729,7 +755,7 @@ fn collapse_frames(
         }
     }
 
-    if !decode_user_frames( omit_regex, process, user_backtrace, interner, &mut frames ) {
+    if !decode_user_frames( omit_regex, process, user_backtrace, interner, Some( &mut frames ) ) {
         return;
     }
 
@@ -765,7 +791,7 @@ fn write_perf_like_output< T: io::Write >(
 ) -> Result< (), io::Error > {
     let mut interner = StringInterner::new();
     let mut frames = Vec::new();
-    if !decode_user_frames( omit_regex, process, user_backtrace, &mut interner, &mut frames ) {
+    if !decode_user_frames( omit_regex, process, user_backtrace, &mut interner, Some( &mut frames ) ) {
         return Ok(()); // Was filtered out.
     }
 
@@ -928,6 +954,92 @@ pub fn collapse_into_sorted_vec( args: &args::SharedCollationArgs ) -> Result< V
     }
 
     output.sort_unstable();
+    Ok( output )
+}
+
+pub struct GraphSample {
+    pub timestamp: u64,
+    pub user: u32,
+    pub kernel: u32
+}
+
+impl GraphSample {
+    pub fn timestamp_s( &self ) -> f64 {
+        to_s( self.timestamp )
+    }
+}
+
+pub fn into_graph( args: &args::SharedCollationArgs, sampling_interval: Option< f64 > ) -> Result< Vec< GraphSample >, Box< dyn Error > > {
+    let (omit_regex, collate_args) = repack_cli_args( args );
+
+    let mut interner = StringInterner::new();
+    let mut samples = Vec::new();
+    let collation = collate( collate_args, |_collation, timestamp, process, _tid, _cpu, user_backtrace, kernel_backtrace| {
+        if !decode_user_frames( &omit_regex, process, user_backtrace, &mut interner, None ) {
+            return;
+        }
+
+        let (user, kernel) = if kernel_backtrace.is_empty() {
+            (0, 1)
+        } else {
+            (1, 0)
+        };
+
+        let sample = GraphSample { timestamp, user, kernel };
+        samples.push( sample );
+    })?;
+
+    if samples.is_empty() {
+        return Ok( Vec::new() );
+    }
+
+    samples.sort_by_key( |sample| sample.timestamp );
+    let total_elapsed = samples.last().unwrap().timestamp - samples.first().unwrap().timestamp;
+
+    let interval =
+        if let Some( interval ) = sampling_interval {
+            (interval * 1_000_000_000.0) as u64
+        } else if total_elapsed >= 3_000_000_000 {
+            1_000_000_000
+        } else if total_elapsed >= 3_000_000 {
+            1_000_000
+        } else if total_elapsed >= 3_000 {
+            1_000
+        } else {
+            1
+        };
+
+    let unfiltered_first_timestamp = collation.unfiltered_first_timestamp.unwrap();
+    let first_timestamp = samples.first().unwrap().timestamp - unfiltered_first_timestamp;
+
+    let mut output = Vec::new();
+    let mut current = GraphSample {
+        timestamp: first_timestamp - (first_timestamp % interval),
+        user: 0,
+        kernel: 0
+    };
+
+    'outer: for mut sample in samples {
+        sample.timestamp -= unfiltered_first_timestamp;
+        loop {
+            if (sample.timestamp - current.timestamp) < interval {
+                current.user += sample.user;
+                current.kernel += sample.kernel;
+                continue 'outer;
+            }
+
+            let next = GraphSample {
+                timestamp: current.timestamp + interval,
+                user: 0,
+                kernel: 0
+            };
+
+            output.push( current );
+            current = next;
+        }
+    }
+
+    output.push( current );
     Ok( output )
 }
 
