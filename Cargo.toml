@@ -32,7 +32,7 @@ features = ["log"]
 default-features = false
 
 [dev-dependencies]
-quickcheck = "0.8"
+quickcheck = "0.9"
 criterion = "0.3"
 
 [profile.release]
