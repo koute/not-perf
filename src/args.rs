@@ -187,7 +187,11 @@ pub struct SharedCollationArgs {
 #[structopt(rename_all = "kebab-case")]
 pub struct FlamegraphArgs {
     #[structopt(flatten)]
-    pub collation_args: SharedCollationArgs
+    pub collation_args: SharedCollationArgs,
+
+    /// The file to which the flamegraph will be written to (instead of the stdout)
+    #[structopt(long, short = "o", parse(from_os_str))]
+    pub output: Option< OsString >
 }
 
 #[derive(StructOpt, Debug)]
