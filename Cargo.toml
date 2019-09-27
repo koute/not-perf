@@ -28,7 +28,7 @@ perf_event_open = { version = "0.1", path = "perf_event_open" }
 [dependencies.nwind]
 version = "0.1"
 path = "nwind"
-features = ["log"]
+features = ["log", "rustc-demangle"]
 default-features = false
 
 [dev-dependencies]

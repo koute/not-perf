@@ -201,10 +201,110 @@ fn process_frame< R: gimli::Reader >( raw_frame: addr2line::Frame< R >, frame: &
         if let Ok( raw_name ) = function.raw_name() {
             frame.name = Some( raw_name.into_owned().into() );
         }
-        if let Ok( demangled_name ) = function.demangle() {
-            frame.demangled_name = Some( demangled_name.into_owned().into() );
+    }
+}
+
+#[cfg(feature = "rustc-demangle")]
+fn demangle_rust_symbol( symbol: &str ) -> Option< String > {
+    rustc_demangle::try_demangle( symbol ).ok().map( |symbol| format!( "{:#}", symbol ) )
+}
+
+#[cfg(not(feature = "rustc-demangle"))]
+fn demangle_rust_symbol( _: &str ) -> Option< String > {
+    None
+}
+
+fn demangle_cpp_symbol( symbol: &str ) -> Option< String > {
+    cpp_demangle::Symbol::new( symbol ).ok()
+        .and_then( |symbol| symbol.demangle( &cpp_demangle::DemangleOptions { no_params: false } ).ok() )
+}
+
+enum SymbolKind {
+    Rust,
+    Cpp
+}
+
+fn pick_symbol( symbol: &str, cpp_name: &str, rust_name: &str ) -> SymbolKind {
+    if cpp_name == rust_name {
+        return SymbolKind::Cpp;
+    }
+
+    if symbol.contains( "$LT$" ) || symbol.contains( "$u" ) {
+        return SymbolKind::Rust;
+    }
+
+    if cpp_name.starts_with( rust_name ) {
+        if cpp_name.len() - rust_name.len() == 19 && cpp_name[ rust_name.len().. ].starts_with( "::" ) {
+            return SymbolKind::Rust;
         }
     }
+
+    SymbolKind::Cpp
+}
+
+fn demangle( symbol: &str ) -> Option< String > {
+    if !symbol.starts_with( "_" ) {
+        return None;
+    }
+
+    let symbol = strip_isra( symbol ); // TODO: Remove this once `cpp_demangle` will properly support these symbols.
+    let (symbol, is_global_init) = match strip_global( symbol ) {
+        Some( symbol ) => (symbol, true),
+        None => (symbol, false)
+    };
+
+    let demangled_name_cpp = demangle_cpp_symbol( symbol );
+    let demangled_name_rust = demangle_rust_symbol( symbol );
+    let mut demangled_name = match (demangled_name_cpp, demangled_name_rust) {
+        (None, None) => return None,
+        (Some( name ), None) => name,
+        (None, Some( name )) => name,
+        (Some( cpp_name ), Some( rust_name )) => {
+            match pick_symbol( symbol, &cpp_name, &rust_name ) {
+                SymbolKind::Rust => rust_name,
+                SymbolKind::Cpp => cpp_name
+            }
+        }
+    };
+
+    if is_global_init {
+        demangled_name = format!( "global init {}", demangled_name );
+    }
+
+    Some( demangled_name.into() )
+}
+
+#[test]
+fn test_demangle() {
+    assert_eq!(
+        demangle( "_ZN12_GLOBAL__N_111writev_dataE" ).unwrap(),
+        "(anonymous namespace)::writev_data"
+    );
+
+    assert_eq!(
+        demangle( "_ZN9nsGkAtoms4headE" ).unwrap(),
+        "nsGkAtoms::head"
+    );
+
+    assert_eq!(
+        demangle( "_ZN4core3ptr18real_drop_in_place17h12ad72ac936a11ecE" ).unwrap(),
+        "core::ptr::real_drop_in_place"
+    );
+
+    assert_eq!(
+        demangle( "_ZN5alloc7raw_vec15RawVec$LT$T$GT$14from_raw_parts17h2c9379b27997b67cE" ).unwrap(),
+        "alloc::raw_vec::RawVec<T>::from_raw_parts"
+    );
+
+    assert_eq!(
+        demangle( "_ZN12panic_unwind3imp14find_eh_action28_$u7b$$u7b$closure$u7d$$u7d$17hd5299eb0542f59b0E" ).unwrap(),
+        "panic_unwind::imp::find_eh_action::{{closure}}"
+    );
+
+    assert_eq!(
+        demangle( "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE12_M_constructIPcEEvT_S7_St20forward_iterator_tag.isra.90" ).unwrap(),
+        "void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_construct<char*>(char*, char*, std::forward_iterator_tag)"
+    );
 }
 
 struct SymbolDecodeCache {
@@ -286,6 +386,8 @@ impl< A: Architecture > Binary< A > {
                                 frame.name = Some( name );
                                 frame.demangled_name = demangled_name;
                             }
+                        } else if let Some( ref name ) = frame.name {
+                            frame.demangled_name = demangle( name ).map( |demangled| demangled.into() );
                         }
 
                         if !callback( &mut frame ) {
@@ -325,23 +427,7 @@ impl< A: Architecture > Binary< A > {
 
         for symbols in &self.symbols {
             if let Some( (_, symbol) ) = symbols.get_symbol( relative_address ) {
-                let symbol = strip_isra( symbol ); // TODO: Remove this once `cpp_demangle` will properly support these symbols.
-                let (symbol, is_global_init) = match strip_global( symbol ) {
-                    Some( symbol ) => (symbol, true),
-                    None => (symbol, false)
-                };
-
-                let demangled_name =
-                    cpp_demangle::Symbol::new( symbol ).ok()
-                        .and_then( |symbol| {
-                            symbol.demangle( &cpp_demangle::DemangleOptions { no_params: false } ).ok()
-                    }).map( |name| {
-                        if is_global_init {
-                            format!( "global init {}", name )
-                        } else {
-                            name
-                        }
-                    });
+                let demangled_name = demangle( symbol );
 
                 if let Some( symbol_decode_cache ) = self.symbol_decode_cache.as_ref() {
                     let mut cache = symbol_decode_cache.lock().unwrap();
