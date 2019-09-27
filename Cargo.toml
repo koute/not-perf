@@ -32,7 +32,7 @@ features = ["log", "rustc-demangle"]
 default-features = false
 
 [dev-dependencies]
-quickcheck = "0.9"
+quickcheck = { version = "0.9", default-features = false, features = ["log"] }
 criterion = "0.3"
 
 [profile.release]
