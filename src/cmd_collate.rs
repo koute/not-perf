@@ -65,7 +65,7 @@ struct FdeHints {
 }
 
 impl Process {
-    fn reload_if_necessary( &mut self, debug_info_index: &DebugInfoIndex, binary_by_id: &mut HashMap< BinaryId, Binary >, fde_hints: &FdeHints ) {
+    fn reload_if_necessary( &mut self, debug_info_index: &mut DebugInfoIndex, binary_by_id: &mut HashMap< BinaryId, Binary >, fde_hints: &FdeHints ) {
         if !self.address_space_needs_reload {
             return;
         }
@@ -144,12 +144,12 @@ impl Binary {
         self.build_id.as_ref().map( |build_id| build_id.as_slice() )
     }
 
-    fn load_debug_info( &mut self, debug_info_index: &DebugInfoIndex ) {
+    fn load_debug_info( &mut self, debug_info_index: &mut DebugInfoIndex ) {
         if self.debug_data.is_some() {
             return;
         }
 
-        if let Some( debug_data ) = debug_info_index.get( &self.basename, self.debuglink(), self.build_id() ) {
+        if let Some( debug_data ) = debug_info_index.get( &self.path, self.debuglink(), self.build_id() ) {
             debug!( "Found debug symbols for '{}': '{}'", self.path, debug_data.name() );
             self.debug_data = Some( debug_data.clone() );
         }
@@ -303,13 +303,10 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
     let mut first_timestamp = None;
     let mut last_timestamp = None;
 
-    let debug_info_index = {
-        let mut debug_info_index = DebugInfoIndex::new();
-        for path in args.debug_symbols {
-            debug_info_index.add( path );
-        }
-        debug_info_index
-    };
+    let mut debug_info_index = DebugInfoIndex::new();
+    for path in args.debug_symbols {
+        debug_info_index.add( path );
+    }
 
     if args.from.is_some() || args.to.is_some() {
         while let Some( packet ) = reader.next() {
@@ -378,6 +375,13 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                 machine_architecture = architecture.into_owned();
                 machine_bitness = bitness;
                 machine_endianness = endianness;
+
+                if machine_architecture == arch::native::Arch::NAME &&
+                   machine_endianness == Endianness::NATIVE &&
+                   machine_bitness == Bitness::NATIVE
+                {
+                    debug_info_index.enable_auto_load();
+                }
             },
             Packet::ProcessInfo { pid, executable, .. } => {
                 let executable = String::from_utf8_lossy( &executable ).into_owned();
@@ -438,7 +442,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
 
                 debug!( "New binary: {:?}", binary.path );
                 if let Some( ref debuglink ) = binary.debuglink {
-                    if debug_info_index.get( &binary.basename, binary.debuglink(), binary.build_id() ).is_none() {
+                    if debug_info_index.get( &binary.path, binary.debuglink(), binary.build_id() ).is_none() {
                         warn!( "Missing external debug symbols for '{}': '{}'", binary.path, String::from_utf8_lossy( debuglink ) );
                     }
                 }
@@ -592,7 +596,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                     continue;
                 }
 
-                collation.processes[ 0 ].reload_if_necessary( &debug_info_index, &mut collation.binary_by_id, &args.fde_hints );
+                collation.processes[ 0 ].reload_if_necessary( &mut debug_info_index, &mut collation.binary_by_id, &args.fde_hints );
 
                 if args.without_kernel_callstacks {
                     kernel_backtrace = Vec::new().into();
@@ -633,7 +637,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
 
                 let user_backtrace = {
                     let process = &mut collation.processes[ 0 ];
-                    process.reload_if_necessary( &debug_info_index, &mut collation.binary_by_id, &args.fde_hints );
+                    process.reload_if_necessary( &mut debug_info_index, &mut collation.binary_by_id, &args.fde_hints );
 
                     let mut dwarf_regs = DwarfRegs::new();
                     for reg in regs.iter() {

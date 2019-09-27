@@ -9,7 +9,8 @@ use crate::utils::HexString;
 
 pub struct DebugInfoIndex {
     by_filename: HashMap< Vec< u8 >, Vec< Arc< BinaryData > > >,
-    by_build_id: HashMap< Vec< u8 >, Vec< Arc< BinaryData > > >
+    by_build_id: HashMap< Vec< u8 >, Vec< Arc< BinaryData > > >,
+    auto_load: bool
 }
 
 fn check_build_id< 'a >( data: &'a Arc< BinaryData >, expected_build_id: Option< &[u8] > ) -> bool {
@@ -21,8 +22,13 @@ impl DebugInfoIndex {
     pub fn new() -> Self {
         DebugInfoIndex {
             by_filename: HashMap::new(),
-            by_build_id: HashMap::new()
+            by_build_id: HashMap::new(),
+            auto_load: false
         }
+    }
+
+    pub fn enable_auto_load( &mut self ) {
+        self.auto_load = true;
     }
 
     pub fn add< P: AsRef< Path > >( &mut self, path: P ) {
@@ -30,24 +36,25 @@ impl DebugInfoIndex {
         self.add_impl( &mut done, path.as_ref(), true );
     }
 
-    pub fn get( &self, basename: &str, debuglink: Option< &[u8] >, build_id: Option< &[u8] > ) -> Option< &Arc< BinaryData > > {
-        let (bin, dbg) = self.get_pair( basename, debuglink, build_id );
+    pub fn get( &mut self, path: &str, debuglink: Option< &[u8] >, build_id: Option< &[u8] > ) -> Option< Arc< BinaryData > > {
+        let (bin, dbg) = self.get_pair( path, debuglink, build_id );
         dbg.or( bin )
     }
 
-    pub fn get_pair( &self, basename: &str, debuglink: Option< &[u8] >, build_id: Option< &[u8] > ) -> (Option< &Arc< BinaryData > >, Option< &Arc< BinaryData > >) {
-        debug!( "Requested debug info for '{}'; debuglink = {:?}, build_id = {:?}", basename, debuglink.map( String::from_utf8_lossy ), build_id.map( HexString ) );
+    pub fn get_pair( &mut self, path: &str, debuglink: Option< &[u8] >, build_id: Option< &[u8] > ) -> (Option< Arc< BinaryData > >, Option< Arc< BinaryData > >) {
+        debug!( "Requested debug info for '{}'; debuglink = {:?}, build_id = {:?}", path, debuglink.map( String::from_utf8_lossy ), build_id.map( HexString ) );
+        let basename = &path[ path.rfind( "/" ).map( |index| index + 1 ).unwrap_or( 0 ).. ];
         let basename: &[u8] = basename.as_ref();
 
-        let mut candidates = Vec::new();
+        let mut candidates: Vec< Arc< BinaryData > > = Vec::new();
         if let Some( build_id ) = build_id {
             if let Some( entries ) = self.by_build_id.get( build_id ) {
-                candidates.extend( entries );
+                candidates.extend( entries.iter().cloned() );
 
                 for entry in entries {
                     if let Some( debuglink ) = entry.debuglink() {
                         if let Some( debug_entries ) = self.by_filename.get( debuglink ) {
-                            candidates.extend( debug_entries.iter().filter( |data| check_build_id( data, Some( build_id ) ) ) );
+                            candidates.extend( debug_entries.iter().filter( |data| check_build_id( data, Some( build_id ) ) ).cloned() );
                         }
                     }
                 }
@@ -55,12 +62,12 @@ impl DebugInfoIndex {
         }
 
         if let Some( entries ) = self.by_filename.get( basename ) {
-            candidates.extend( entries.iter().filter( |data| check_build_id( data, build_id ) ) );
+            candidates.extend( entries.iter().filter( |data| check_build_id( data, build_id ) ).cloned() );
 
             for entry in entries {
                 if let Some( debuglink ) = entry.debuglink() {
                     if let Some( debug_entries ) = self.by_filename.get( debuglink ) {
-                        candidates.extend( debug_entries.iter().filter( |data| check_build_id( data, build_id ) ) );
+                        candidates.extend( debug_entries.iter().filter( |data| check_build_id( data, build_id ) ).cloned() );
                     }
                 }
             }
@@ -68,7 +75,15 @@ impl DebugInfoIndex {
 
         if let Some( debuglink ) = debuglink {
             if let Some( entries ) = self.by_filename.get( debuglink ) {
-                candidates.extend( entries.iter().filter( |data| check_build_id( data, build_id ) ) );
+                candidates.extend( entries.iter().filter( |data| check_build_id( data, build_id ) ).cloned() );
+            }
+        }
+
+        if candidates.is_empty() && debuglink.is_none() {
+            if let Some( build_id ) = build_id {
+                if let Some( binary ) = self.try_auto_load( path, build_id ) {
+                    candidates.push( binary );
+                }
             }
         }
 
@@ -90,8 +105,29 @@ impl DebugInfoIndex {
             }
         };
 
-        debug!( "Debug info lookup result: bin = {:?}, dbg = {:?}", bin.map( |data| data.name() ), dbg.map( |data| data.name() ) );
+        debug!( "Debug info lookup result: bin = {:?}, dbg = {:?}", bin.as_ref().map( |data| data.name() ), dbg.as_ref().map( |data| data.name() ) );
         (bin, dbg)
+    }
+
+    fn try_auto_load( &mut self, path: &str, build_id: &[u8] ) -> Option< Arc< BinaryData > > {
+        if !self.auto_load || !path.starts_with( "/" ) {
+            return None;
+        }
+
+        let path = Path::new( path );
+        if !path.exists() {
+            return None;
+        }
+
+        let binary = BinaryData::load_from_fs( path ).ok()?;
+        if build_id != binary.build_id()? {
+            return None;
+        }
+
+        let binary = Arc::new( binary );
+        self.by_build_id.entry( build_id.to_vec() ).or_default().push( binary.clone() );
+
+        Some( binary )
     }
 
     fn add_impl( &mut self, done: &mut HashSet< PathBuf >, path: &Path, is_toplevel: bool ) {
