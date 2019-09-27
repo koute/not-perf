@@ -736,6 +736,11 @@ fn decode_user_frames(
     true
 }
 
+#[derive(Default)]
+struct CollapseOpts {
+    merge_threads: bool
+}
+
 fn collapse_frames(
     omit_regex: &Option< Regex >,
     collation: &Collation,
@@ -743,6 +748,7 @@ fn collapse_frames(
     tid: u32,
     user_backtrace: &[UserFrame],
     kernel_backtrace: &[u64],
+    opts: &CollapseOpts,
     interner: &mut StringInterner,
     stacks: &mut HashMap< Vec< FrameKind >, u64 >
 ) {
@@ -759,10 +765,12 @@ fn collapse_frames(
         return;
     }
 
-    if process.pid == tid {
-        frames.push( FrameKind::MainThread );
-    } else {
-        frames.push( FrameKind::Thread( tid ) );
+    if !opts.merge_threads {
+        if process.pid == tid {
+            frames.push( FrameKind::MainThread );
+        } else {
+            frames.push( FrameKind::Thread( tid ) );
+        }
     }
 
     frames.push( FrameKind::Process( process.pid ) );
@@ -839,7 +847,13 @@ fn write_perf_like_output< T: io::Write >(
     Ok(())
 }
 
-fn write_frame< T: fmt::Write >( collation: &Collation, interner: &StringInterner, output: &mut T, frame: &FrameKind ) {
+fn write_frame< T: fmt::Write >(
+    collation: &Collation,
+    interner: &StringInterner,
+    output: &mut T,
+    frame: &FrameKind
+)
+{
     match *frame {
         FrameKind::Process( pid ) => {
             if let Some( process ) = collation.get_process( pid ) {
@@ -917,8 +931,9 @@ fn repack_cli_args( args: &args::SharedCollationArgs ) -> (Option< Regex >, Coll
     (omit_regex, collate_args)
 }
 
-pub fn collapse_into_sorted_vec( args: &args::SharedCollationArgs ) -> Result< Vec< String >, Box< dyn Error > > {
+pub fn collapse_into_sorted_vec( args: &args::SharedCollationArgs, merge_threads: bool ) -> Result< Vec< String >, Box< dyn Error > > {
     let (omit_regex, collate_args) = repack_cli_args( args );
+    let opts = CollapseOpts { merge_threads };
 
     let mut stacks: HashMap< Vec< FrameKind >, u64 > = HashMap::new();
     let mut interner = StringInterner::new();
@@ -930,6 +945,7 @@ pub fn collapse_into_sorted_vec( args: &args::SharedCollationArgs ) -> Result< V
             tid,
             &user_backtrace,
             &kernel_backtrace,
+            &opts,
             &mut interner,
             &mut stacks
         );
@@ -1046,7 +1062,7 @@ pub fn into_graph( args: &args::SharedCollationArgs, sampling_interval: Option< 
 pub fn main( args: args::CollateArgs ) -> Result< (), Box< dyn Error > > {
     match args.format {
         CollateFormat::Collapsed => {
-            let output = collapse_into_sorted_vec( &args.collation_args )?;
+            let output = collapse_into_sorted_vec( &args.collation_args, args.merge_threads )?;
             let output = output.join( "\n" );
             let stdout = io::stdout();
             let mut stdout = stdout.lock();
@@ -1077,7 +1093,7 @@ pub fn main( args: args::CollateArgs ) -> Result< (), Box< dyn Error > > {
 
 #[cfg(test)]
 mod test {
-    use super::{StringInterner, CollateArgs, FrameKind, Collation, FdeHints, collate, collapse_frames};
+    use super::{StringInterner, CollateArgs, CollapseOpts, FrameKind, Collation, FdeHints, collate, collapse_frames};
     use nwind::LoadHint;
     use std::path::Path;
     use std::collections::HashMap;
@@ -1121,6 +1137,7 @@ mod test {
                 tid,
                 &user_backtrace,
                 &kernel_backtrace,
+                &CollapseOpts::default(),
                 &mut interner,
                 &mut stacks
             );

@@ -189,6 +189,10 @@ pub struct FlamegraphArgs {
     #[structopt(flatten)]
     pub collation_args: SharedCollationArgs,
 
+    /// Merge callstacks from all threads
+    #[structopt(long)]
+    pub merge_threads: bool,
+
     /// The file to which the flamegraph will be written to (instead of the stdout)
     #[structopt(long, short = "o", parse(from_os_str))]
     pub output: Option< OsString >
@@ -214,6 +218,10 @@ pub struct CsvArgs {
 pub struct CollateArgs {
     #[structopt(flatten)]
     pub collation_args: SharedCollationArgs,
+
+    /// Merge callstacks from all threads
+    #[structopt(long)]
+    pub merge_threads: bool,
 
     /// Selects the output format
     #[structopt(
