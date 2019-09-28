@@ -13,7 +13,7 @@ memmap = "0.7"
 log = { version = "0.4", optional = true }
 speedy = "0.4"
 speedy-derive = "0.3"
-lru = "0.1"
+lru = "0.2"
 cpp_demangle = "0.2"
 rustc-demangle = { version = "0.1", optional = true }
 addr2line = { version = "0.10", optional = true, default-features = false, features = ["std"] }
