@@ -29,7 +29,7 @@ use nwind::{
     LoadHint
 };
 
-use crate::args;
+use crate::args::{self, Granularity};
 use crate::archive::{Packet, Inode, Bitness, UserFrame, ArchiveReader};
 use crate::utils::StableIndex;
 use crate::kallsyms::{self, KernelSymbol};
@@ -44,7 +44,24 @@ enum FrameKind {
     MainThread,
     User( u64 ),
     UserBinary( BinaryId, u64 ),
-    UserSymbol( BinaryId, u64, bool, StringId ),
+    UserByAddress {
+        binary_id: BinaryId,
+        is_inline: bool,
+        symbol: StringId,
+        address: u64
+    },
+    UserByFunction {
+        binary_id: BinaryId,
+        is_inline: bool,
+        symbol: StringId
+    },
+    UserByLine {
+        binary_id: BinaryId,
+        is_inline: bool,
+        symbol: StringId,
+        file: StringId,
+        line: u64
+    },
     Kernel( u64 ),
     KernelSymbol( usize )
 }
@@ -203,8 +220,8 @@ impl Index< Range< u64 > > for BinaryChunks {
 
 unsafe impl StableIndex for BinaryChunks {}
 
-fn get_basename( path: &str ) -> String {
-    path[ path.rfind( "/" ).map( |index| index + 1 ).unwrap_or( 0 ).. ].to_owned()
+fn get_basename( path: &str ) -> &str {
+    &path[ path.rfind( "/" ).map( |index| index + 1 ).unwrap_or( 0 ).. ]
 }
 
 #[derive(Debug)]
@@ -385,7 +402,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
             },
             Packet::ProcessInfo { pid, executable, .. } => {
                 let executable = String::from_utf8_lossy( &executable ).into_owned();
-                let executable = get_basename( &executable );
+                let executable = get_basename( &executable ).to_owned();
                 debug!( "New process with PID {}: \"{}\"", pid, executable );
 
                 let address_space: Box< dyn IAddressSpace > = match &*machine_architecture {
@@ -426,7 +443,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
                 };
 
                 let binary = Binary {
-                    basename: get_basename( &path ),
+                    basename: get_basename( &path ).to_owned(),
                     path,
                     string_tables: Arc::new( BinaryChunks::new() ),
                     symbol_table_count,
@@ -691,6 +708,7 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
 
 fn decode_user_frames(
     omit_regex: &Option< Regex >,
+    granularity: Granularity,
     process: &Process,
     user_backtrace: &[UserFrame],
     interner: &mut StringInterner,
@@ -721,7 +739,35 @@ fn decode_user_frames(
 
                 if let Some( ref mut output ) = output {
                     let string_id = interner.get_or_intern( name );
-                    output.push( FrameKind::UserSymbol( binary_id.clone(), frame.absolute_address, frame.is_inline, string_id ) );
+                    if granularity == Granularity::Line {
+                        if let Some( ref file ) = frame.file {
+                            if let Some( line ) = frame.line {
+                                output.push( FrameKind::UserByLine {
+                                    binary_id: binary_id.clone(),
+                                    is_inline: frame.is_inline,
+                                    symbol: string_id,
+                                    file: interner.get_or_intern( file ),
+                                    line
+                                });
+                                return true;
+                            }
+                        }
+                    }
+
+                    if granularity == Granularity::Line || granularity == Granularity::Function {
+                        output.push( FrameKind::UserByFunction {
+                            binary_id: binary_id.clone(),
+                            is_inline: frame.is_inline,
+                            symbol: string_id
+                        });
+                    } else {
+                        output.push( FrameKind::UserByAddress {
+                            binary_id: binary_id.clone(),
+                            is_inline: frame.is_inline,
+                            symbol: string_id,
+                            address: frame.absolute_address
+                        });
+                    }
                 }
             } else {
                 if let Some( ref mut output ) = output {
@@ -742,7 +788,8 @@ fn decode_user_frames(
 
 #[derive(Default)]
 struct CollapseOpts {
-    merge_threads: bool
+    merge_threads: bool,
+    granularity: Granularity
 }
 
 fn collapse_frames(
@@ -765,7 +812,7 @@ fn collapse_frames(
         }
     }
 
-    if !decode_user_frames( omit_regex, process, user_backtrace, interner, Some( &mut frames ) ) {
+    if !decode_user_frames( omit_regex, opts.granularity, process, user_backtrace, interner, Some( &mut frames ) ) {
         return;
     }
 
@@ -803,7 +850,7 @@ fn write_perf_like_output< T: io::Write >(
 ) -> Result< (), io::Error > {
     let mut interner = StringInterner::new();
     let mut frames = Vec::new();
-    if !decode_user_frames( omit_regex, process, user_backtrace, &mut interner, Some( &mut frames ) ) {
+    if !decode_user_frames( omit_regex, Granularity::Address, process, user_backtrace, &mut interner, Some( &mut frames ) ) {
         return Ok(()); // Was filtered out.
     }
 
@@ -833,9 +880,9 @@ fn write_perf_like_output< T: io::Write >(
                 let binary = collation.get_binary( binary_id );
                 writeln!( output, "\t{:16X} 0x{:016X} ({})", address, address, binary.basename )?;
             },
-            FrameKind::UserSymbol( ref binary_id, address, is_inline, symbol_id ) => {
+            FrameKind::UserByAddress { ref binary_id, address, is_inline, symbol } => {
                 let binary = collation.get_binary( binary_id );
-                let symbol = interner.resolve( symbol_id ).unwrap();
+                let symbol = interner.resolve( symbol ).unwrap();
                 if is_inline {
                     writeln!( output, "\t{:16X} inline {} ({})", address, symbol, binary.basename )?;
                 } else {
@@ -876,14 +923,32 @@ fn write_frame< T: fmt::Write >(
                 write!( output, "[THREAD={}]", tid ).unwrap()
             }
         },
-        FrameKind::UserSymbol( ref binary_id, _, is_inline, symbol_id ) => {
-            let binary = collation.get_binary( binary_id );
-            let symbol = interner.resolve( symbol_id ).unwrap();
+        FrameKind::UserByLine { ref binary_id, is_inline, symbol, file, line } => {
             if is_inline {
-                write!( output, "inline {} [{}]", symbol, binary.basename ).unwrap()
-            } else {
-                write!( output, "{} [{}]", symbol, binary.basename ).unwrap()
+                write!( output, "inline " ).unwrap();
             }
+            let binary = collation.get_binary( binary_id );
+            let symbol = interner.resolve( symbol ).unwrap();
+            let file = interner.resolve( file ).unwrap();
+            let basename = get_basename( file );
+            write!( output, "{} [{}:{}, {}]", symbol, basename, line, binary.basename ).unwrap()
+        },
+        FrameKind::UserByFunction { ref binary_id, is_inline, symbol } => {
+            if is_inline {
+                write!( output, "inline " ).unwrap();
+            }
+            let binary = collation.get_binary( binary_id );
+            let symbol = interner.resolve( symbol ).unwrap();
+            write!( output, "{} [{}]", symbol, binary.basename ).unwrap()
+        },
+        FrameKind::UserByAddress { ref binary_id, is_inline, symbol, address } => {
+            write!( output, "0x{:016X} ", address ).unwrap();
+            if is_inline {
+                write!( output, "inline " ).unwrap();
+            }
+            let binary = collation.get_binary( binary_id );
+            let symbol = interner.resolve( symbol ).unwrap();
+            write!( output, "{} [{}]", symbol, binary.basename ).unwrap()
         },
         FrameKind::UserBinary( ref binary_id, addr ) => {
             let binary = collation.get_binary( binary_id );
@@ -935,9 +1000,15 @@ fn repack_cli_args( args: &args::SharedCollationArgs ) -> (Option< Regex >, Coll
     (omit_regex, collate_args)
 }
 
-pub fn collapse_into_sorted_vec( args: &args::SharedCollationArgs, merge_threads: bool ) -> Result< Vec< String >, Box< dyn Error > > {
+pub fn collapse_into_sorted_vec(
+    args: &args::SharedCollationArgs,
+    fmt_args: &args::SharedFormattingArgs,
+) -> Result< Vec< String >, Box< dyn Error > > {
     let (omit_regex, collate_args) = repack_cli_args( args );
-    let opts = CollapseOpts { merge_threads };
+    let opts = CollapseOpts {
+        merge_threads: fmt_args.merge_threads,
+        granularity: fmt_args.granularity
+    };
 
     let mut stacks: HashMap< Vec< FrameKind >, u64 > = HashMap::new();
     let mut interner = StringInterner::new();
@@ -995,7 +1066,7 @@ pub fn into_graph( args: &args::SharedCollationArgs, sampling_interval: Option< 
     let mut interner = StringInterner::new();
     let mut samples = Vec::new();
     let collation = collate( collate_args, |_collation, timestamp, process, _tid, _cpu, user_backtrace, kernel_backtrace| {
-        if !decode_user_frames( &omit_regex, process, user_backtrace, &mut interner, None ) {
+        if !decode_user_frames( &omit_regex, Granularity::Address, process, user_backtrace, &mut interner, None ) {
             return;
         }
 
@@ -1066,7 +1137,7 @@ pub fn into_graph( args: &args::SharedCollationArgs, sampling_interval: Option< 
 pub fn main( args: args::CollateArgs ) -> Result< (), Box< dyn Error > > {
     match args.format {
         CollateFormat::Collapsed => {
-            let output = collapse_into_sorted_vec( &args.collation_args, args.merge_threads )?;
+            let output = collapse_into_sorted_vec( &args.collation_args, &args.formatting_args )?;
             let output = output.join( "\n" );
             let stdout = io::stdout();
             let mut stdout = stdout.lock();
@@ -1178,9 +1249,12 @@ mod test {
                     format!( "[thread]" )
                 }
             },
-            FrameKind::UserSymbol( ref binary_id, _, _, symbol_id ) => {
+            | FrameKind::UserByFunction { ref binary_id, symbol, .. }
+            | FrameKind::UserByLine { ref binary_id, symbol, .. }
+            | FrameKind::UserByAddress { ref binary_id, symbol, .. }
+            => {
                 let binary = data.collation.get_binary( binary_id );
-                let symbol = data.interner.resolve( symbol_id ).unwrap();
+                let symbol = data.interner.resolve( symbol ).unwrap();
                 format!( "{}:{}", symbol, binary.basename )
             },
             FrameKind::UserBinary( ref binary_id, _ ) => {

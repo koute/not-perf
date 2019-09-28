@@ -85,6 +85,28 @@ impl From< ProcessFilter > for TargetProcess {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug, StructOpt)]
+pub enum Granularity {
+    Address,
+    Function,
+    Line
+}
+
+impl Default for Granularity {
+    fn default() -> Self {
+        Granularity::Function
+    }
+}
+
+fn parse_granularity( value: &str ) -> Granularity {
+    match value {
+        "address" => Granularity::Address,
+        "function" => Granularity::Function,
+        "line" => Granularity::Line,
+        _ => unreachable!()
+    }
+}
+
 #[derive(StructOpt, Debug)]
 #[structopt(rename_all = "kebab-case")]
 pub struct GenericProfilerArgs {
@@ -185,13 +207,33 @@ pub struct SharedCollationArgs {
 
 #[derive(StructOpt, Debug)]
 #[structopt(rename_all = "kebab-case")]
+pub struct SharedFormattingArgs {
+    /// Merge callstacks from all threads
+    #[structopt(long)]
+    pub merge_threads: bool,
+
+    /// Specifies at what granularity the call frames will be merged
+    #[structopt(
+        long,
+        default_value = "function",
+        parse(from_str = "parse_granularity"),
+        raw(possible_values = r#"&[
+            "address",
+            "function",
+            "line"
+        ]"#)
+    )]
+    pub granularity: Granularity
+}
+
+#[derive(StructOpt, Debug)]
+#[structopt(rename_all = "kebab-case")]
 pub struct FlamegraphArgs {
     #[structopt(flatten)]
     pub collation_args: SharedCollationArgs,
 
-    /// Merge callstacks from all threads
-    #[structopt(long)]
-    pub merge_threads: bool,
+    #[structopt(flatten)]
+    pub formatting_args: SharedFormattingArgs,
 
     /// The file to which the flamegraph will be written to (instead of the stdout)
     #[structopt(long, short = "o", parse(from_os_str))]
@@ -219,9 +261,8 @@ pub struct CollateArgs {
     #[structopt(flatten)]
     pub collation_args: SharedCollationArgs,
 
-    /// Merge callstacks from all threads
-    #[structopt(long)]
-    pub merge_threads: bool,
+    #[structopt(flatten)]
+    pub formatting_args: SharedFormattingArgs,
 
     /// Selects the output format
     #[structopt(

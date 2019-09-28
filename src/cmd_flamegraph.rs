@@ -8,7 +8,7 @@ use crate::args;
 use crate::cmd_collate::collapse_into_sorted_vec;
 
 pub fn main( args: args::FlamegraphArgs ) -> Result< (), Box< dyn Error > > {
-    let lines = collapse_into_sorted_vec( &args.collation_args, args.merge_threads )?;
+    let lines = collapse_into_sorted_vec( &args.collation_args, &args.formatting_args )?;
     let iter = lines.iter().map( |line| line.as_str() );
     let mut options = flamegraph::Options::default();
 
