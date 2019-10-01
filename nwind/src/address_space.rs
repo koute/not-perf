@@ -888,7 +888,16 @@ pub fn reload< A: Architecture >(
             continue;
         }
 
-        debug!( "Adding memory region at 0x{:016X}-0x{:016X} for '{}' with offset 0x{:08X}", region.start, region.end, region.name, region.file_offset );
+        debug!(
+            "Adding memory region at 0x{:016X}-0x{:016X} ({}{}{}) for '{}' with offset 0x{:08X}",
+            region.start,
+            region.end,
+            if region.is_read { "r" } else { "-" },
+            if region.is_write { "w" } else { "-" },
+            if region.is_executable { "x" } else { "-" },
+            region.name,
+            region.file_offset
+        );
         let id: BinaryId = (&region).into();
 
         if !new_binary_map.contains_key( &id ) {
