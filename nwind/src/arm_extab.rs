@@ -668,12 +668,7 @@ struct BytecodeIter< 'a > {
 // NOTE: This assumes that the data is little endian.
 impl< 'a > BytecodeIter< 'a > {
     fn new( inline_bytecode: u32, inline_offset: u8, bytecode: &'a [u8] ) -> Self {
-        let inline_bytecode = if cfg!( target_endian = "little" ) {
-            (inline_bytecode << (inline_offset * 8)).swap_bytes()
-        } else {
-            unimplemented!();
-        };
-
+        let inline_bytecode = (inline_bytecode << (inline_offset * 8)).swap_bytes();
         BytecodeIter {
             chunk: inline_bytecode,
             bytecode,
@@ -684,26 +679,23 @@ impl< 'a > BytecodeIter< 'a > {
 
 #[test]
 fn test_bytecode_iter_inline_bytecode() {
-    use byteorder::NativeEndian;
     let inline_bytecode = &[ 0x04, 0x03, 0x02, 0x01 ];
-    let vec: Vec< u8 > = BytecodeIter::new( NativeEndian::read_u32( inline_bytecode ), 0, &[] ).collect();
+    let vec: Vec< u8 > = BytecodeIter::new( LittleEndian::read_u32( inline_bytecode ), 0, &[] ).collect();
     assert_eq!( vec, &[ 0x01, 0x02, 0x03, 0x04 ] );
 }
 
 #[test]
 fn test_bytecode_iter_inline_bytecode_with_offset() {
-    use byteorder::NativeEndian;
     let inline_bytecode = &[ 0x04, 0x03, 0x02, 0x01 ];
-    let vec: Vec< u8 > = BytecodeIter::new( NativeEndian::read_u32( inline_bytecode ), 1, &[] ).collect();
+    let vec: Vec< u8 > = BytecodeIter::new( LittleEndian::read_u32( inline_bytecode ), 1, &[] ).collect();
     assert_eq!( vec, &[ 0x02, 0x03, 0x04 ] );
 }
 
 #[test]
 fn test_bytecode_iter_inline_bytecode_with_offset_and_with_bytecode() {
-    use byteorder::NativeEndian;
     let inline_bytecode = &[ 0x04, 0x03, 0x02, 0x01 ];
     let bytecode = &[ 0x08, 0x07, 0x06, 0x05 ];
-    let vec: Vec< u8 > = BytecodeIter::new( NativeEndian::read_u32( inline_bytecode ), 1, bytecode ).collect();
+    let vec: Vec< u8 > = BytecodeIter::new( LittleEndian::read_u32( inline_bytecode ), 1, bytecode ).collect();
     assert_eq!( vec, &[ 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 ] );
 }
 
