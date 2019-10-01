@@ -1014,6 +1014,8 @@ pub fn reload< A: Architecture >(
         if let Some( mapping ) = match_mapping( &data.load_headers, &region ) {
             debug!( "0x{:016X}-0x{:016X} from '{}' is mapped at {:016X}-{:016X} in memory", mapping.file_offset, mapping.file_offset + mapping.size, data.name, region.start, region.end );
             data.mappings.push( mapping );
+        } else if region.is_read && region.is_executable {
+            warn!( "Mapping 0x{:016X}-0x{:016X} from '{}' doesn't match any PT_LOAD entry", region.start, region.end, data.name );
         }
 
         macro_rules! section {
