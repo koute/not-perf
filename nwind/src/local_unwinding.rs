@@ -1268,7 +1268,47 @@ fn test_unwind_multiple_contexts_and_address_spaces() {
 }
 
 #[test]
-fn test_unwind_with_panic() {
+fn test_unwind_with_panic_1() {
+    use std::panic;
+
+    let _ = ::env_logger::try_init();
+    let mut address_space = LocalAddressSpace::new().unwrap();
+    let mut ctx = LocalUnwindContext::new();
+
+    #[inline(never)]
+    fn func_1( address_space: &mut LocalAddressSpace, ctx: &mut LocalUnwindContext, output: &mut Vec< usize >, should_panic: bool ) {
+        address_space.unwind( ctx, |address| {
+            output.push( address );
+            UnwindControl::Continue
+        });
+
+        if should_panic {
+            panic!();
+        }
+    }
+
+    #[inline(never)]
+    fn func_2( address_space: &mut LocalAddressSpace, ctx: &mut LocalUnwindContext, output: &mut Vec< usize >, should_panic: bool ) {
+        func_1( address_space, ctx, output, should_panic );
+    }
+
+    address_space.use_shadow_stack( true );
+
+    let mut trace_1 = Vec::new();
+    let _ = panic::catch_unwind( panic::AssertUnwindSafe( || {
+        func_2( &mut address_space, &mut ctx, &mut trace_1, true );
+    }));
+
+    let mut trace_2 = Vec::new();
+    func_2( &mut address_space, &mut ctx, &mut trace_2, false );
+
+    assert_eq!( &trace_1.last().unwrap(), &trace_2.last().unwrap() );
+
+    ShadowStack::get().unwrap().reset();
+}
+
+#[test]
+fn test_unwind_with_panic_2() {
     use std::panic;
 
     let _ = ::env_logger::try_init();
