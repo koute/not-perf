@@ -376,6 +376,11 @@ fn reset_tls( tls: *mut ShadowStackTls ) {
 
         debug!( "Clearing shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
         unsafe {
+            if cfg!( debug_assertions ) {
+                if !ShadowStack::is_trampoline_set( entry.location ) {
+                    warn!( "Slot 0x{:016X} contains 0x{:016X} instead of the trampoline address", entry.location, *(entry.location as *mut usize) );
+                }
+            }
             *(entry.location as *mut usize) = entry.return_address;
         }
     }
