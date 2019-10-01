@@ -953,6 +953,19 @@ pub fn reload< A: Architecture >(
 
                 if let Some( binary ) = handle.binary.as_ref() {
                     debug!( "Got binary for '{}' from '{}'", region.name, binary.name() );
+                    for header in binary.load_headers() {
+                        debug!(
+                            "PT_LOAD: address=0x{:08X}, file_offset=0x{:08X}, file_size=0x{:08X}, mem_size=0x{:08X}, alignment={}, {}{}{}",
+                            header.address,
+                            header.file_offset,
+                            header.file_size,
+                            header.memory_size,
+                            header.alignment,
+                            if header.is_readable { "r" } else { "-" },
+                            if header.is_writable { "w" } else { "-" },
+                            if header.is_executable { "x" } else { "-" }
+                        );
+                    }
                 }
 
                 if let Some( debug_binary ) = handle.debug_binary.as_ref() {
