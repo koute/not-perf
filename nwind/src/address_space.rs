@@ -828,16 +828,22 @@ fn match_mapping( load_headers: &[LoadHeader], region: &Region ) -> Option< Addr
         return None;
     }
 
-    let header = load_headers.iter().find( |header| {
-        header.file_offset & !(header.alignment - 1) == region.file_offset
-    })?;
+    for header in load_headers {
+        let file_offset_start = header.file_offset & !(header.alignment - 1);
+        let file_offset_end = file_offset_start + header.file_size;
 
-    Some( AddressMapping {
-        declared_address: header.address & !(header.alignment - 1),
-        actual_address: region.start,
-        file_offset: region.file_offset,
-        size: region.end - region.start
-    })
+        if region.file_offset >= file_offset_start && region.file_offset < file_offset_end {
+            let offset = region.file_offset - file_offset_start;
+            return Some( AddressMapping {
+                declared_address: (header.address & !(header.alignment - 1)) + offset,
+                actual_address: region.start,
+                file_offset: region.file_offset,
+                size: region.end - region.start
+            });
+        }
+    }
+
+    None
 }
 
 pub fn reload< A: Architecture >(
@@ -1303,7 +1309,7 @@ fn test_reload() {
 }
 
 #[test]
-fn test_match_mapping() {
+fn test_match_mapping_1() {
     let load_headers = [
         LoadHeader {
             address: 0,
@@ -1430,5 +1436,147 @@ fn test_match_mapping() {
         name: "/usr/lib/thunderbird/libxul.so".into()
     });
 
-    assert_eq!( mapping, None );
+    //                 Address      File offset
+    // -----------------------------------------
+    // Requested | 0x0000055ffee0 -> 0x4dddee0
+    //    Actual | 0x7fffee4a5000 -> 0x51f0000
+    // -----------------------------------------
+    //
+    assert_eq!( mapping, Some( AddressMapping {
+        declared_address: 0x0000055ffee0 + (0x51f0000 - 0x4dddee0),
+        actual_address: 0x7fffee4a5000,
+        file_offset: 0x51f0000,
+        size: 221184
+    }));
+}
+
+#[test]
+fn test_match_mapping_2() {
+    let load_headers = [
+        LoadHeader {
+            address: 0,
+            file_offset: 0,
+            file_size: 0xa5cc34,
+            memory_size: 0xa5cc34,
+            alignment: 65536,
+            is_readable: true,
+            is_writable: false,
+            is_executable: true,
+        },
+        LoadHeader {
+            address: 0xa6d200,
+            file_offset: 0xa5d200,
+            file_size: 0x87ba8,
+            memory_size: 0x87e28,
+            alignment: 65536,
+            is_readable: true,
+            is_writable: true,
+            is_executable: false,
+        }
+    ];
+
+    let mapping = match_mapping( &load_headers, &Region {
+        start: 0x4000000000,
+        end: 0x400044c000,
+        is_read: true,
+        is_write: false,
+        is_executable: true,
+        is_shared: false,
+        file_offset: 0,
+        major: 0,
+        minor: 47,
+        inode: 3313205,
+        name: "nwind-05342caf0862b39c".into(),
+    });
+
+    assert_eq!( mapping, Some( AddressMapping {
+        declared_address: 0,
+        actual_address: 0x4000000000,
+        file_offset: 0,
+        size: 0x44c000
+    }));
+
+    let mapping = match_mapping( &load_headers, &Region {
+        start: 0x400044c000,
+        end: 0x400044d000,
+        is_read: true,
+        is_write: false,
+        is_executable: true,
+        is_shared: false,
+        file_offset: 0x44c000,
+        major: 0,
+        minor: 47,
+        inode: 3313205,
+        name: "nwind-05342caf0862b39c".into(),
+    });
+
+    assert_eq!( mapping, Some( AddressMapping {
+        declared_address: 0x44c000,
+        actual_address: 0x400044c000,
+        file_offset: 0x44c000,
+        size: 0x1000
+    }));
+
+    let mapping = match_mapping( &load_headers, &Region {
+        start: 0x400044d000,
+        end: 0x4000a5d000,
+        is_read: true,
+        is_write: false,
+        is_executable: true,
+        is_shared: false,
+        file_offset: 0x44d000,
+        major: 0,
+        minor: 47,
+        inode: 3313205,
+        name: "nwind-05342caf0862b39c".into(),
+    });
+
+    assert_eq!( mapping, Some( AddressMapping {
+        declared_address: 0x44d000,
+        actual_address: 0x400044d000,
+        file_offset: 0x44d000,
+        size: 0x610000
+    }));
+
+    let mapping = match_mapping( &load_headers, &Region {
+        start: 0x4000a6d000,
+        end: 0x4000ad0000,
+        is_read: true,
+        is_write: false,
+        is_executable: false,
+        is_shared: false,
+        file_offset: 0xa5d000,
+        major: 0,
+        minor: 47,
+        inode: 3313205,
+        name: "nwind-05342caf0862b39c".into(),
+    });
+
+    assert_eq!( mapping, Some( AddressMapping {
+        declared_address: 0xa6d000,
+        actual_address: 0x4000a6d000,
+        file_offset: 0xa5d000,
+        size: 0x63000
+    }));
+
+    let mapping = match_mapping( &load_headers, &Region {
+        start: 0x4000ad0000,
+        end: 0x4000af5000,
+        is_read: true,
+        is_write: true,
+        is_executable: false,
+        is_shared: false,
+        file_offset: 0xac0000,
+        major: 0,
+        minor: 47,
+        inode: 3313205,
+        name: "nwind-05342caf0862b39c".into(),
+    });
+
+    assert_eq!( mapping, Some( AddressMapping {
+        declared_address: 0xad0000,
+        actual_address: 0x4000ad0000,
+        file_offset: 0xac0000,
+        size: 0x25000
+    }));
 }
