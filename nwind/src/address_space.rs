@@ -58,10 +58,6 @@ mod addr2line {
         pub fn raw_name( &self ) -> Result< Cow< str >, () > {
             Err(())
         }
-
-        pub fn demangle( &self ) -> Result< Cow< str >, () > {
-            Err(())
-        }
     }
 
     pub struct FrameIter< T >( PhantomData< T > );
