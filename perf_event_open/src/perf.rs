@@ -431,7 +431,7 @@ fn next_raw_event( buffer: *const u8, size: u64, position_cell: &mut u64 ) -> Op
         data_location
     };
 
-    debug!( "Parsed raw event: {:?}", raw_event_location );
+    trace!( "Parsed raw event: {:?}", raw_event_location );
 
     let next_position = position + event_header.size as u64;
     *position_cell = next_position;
@@ -853,7 +853,7 @@ impl< 'a > EventIter< 'a > {
             state.done = !0;
         }
 
-        debug!( "Batched {} events for PID {}", count, perf.pid );
+        trace!( "Batched {} events for PID {}", count, perf.pid );
 
         let state = perf.event_ref_state.clone();
         EventIter {
