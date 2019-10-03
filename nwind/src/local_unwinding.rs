@@ -137,98 +137,36 @@ pub unsafe extern fn nwind_on_ret_trampoline( stack_pointer: usize ) -> usize {
     }
 }
 
-#[allow(non_camel_case_types)]
-mod unwind {
-    pub type _Unwind_Reason_Code = u32;
-    pub type _Unwind_Action = u32;
-    pub type _Unwind_Exception_Class = u64;
-    pub enum _Unwind_Exception {}
-    pub enum _Unwind_Context {}
+#[doc(hidden)]
+#[no_mangle]
+pub unsafe extern fn nwind_on_exception_through_trampoline( exception: *mut libc::c_void ) -> usize {
+    let mut stack = ShadowStack::get().unwrap();
+    let return_address;
+    {
+        let tls = &mut *stack.tls;
+        if tls.tail == 0 {
+            error!( "Shadow stack underflow during unwinding" );
+            libc::abort();
+        }
+        tls.tail -= 1;
+        let index = tls.tail;
+        let entry = tls.slice()[ index ];
+        if ShadowStack::is_trampoline_set( entry.location ) {
+            error!( "Slot 0x{:016X} shouldn't contain a trampoline address", entry.location );
+            libc::abort();
+        }
+        return_address = entry.return_address;
+        debug!( "Popped return address from the shadow stack: 0x{:016X}", return_address );
+    }
+
+    stack.reset();
 
     extern {
-        pub fn _Unwind_SetIP( ctx: *const _Unwind_Context, ip: usize );
-        pub fn _Unwind_GetIP( ctx: *const _Unwind_Context ) -> usize;
-        pub fn _Unwind_Resume( exception: *const _Unwind_Exception );
-        pub fn _Unwind_SetGR( ctx: *const _Unwind_Context, reg: u32, value: usize );
-        pub fn _Unwind_GetGR( ctx: *const _Unwind_Context, reg: u32 ) -> usize;
+        fn __cxa_begin_catch( exception: *mut libc::c_void ) -> *mut libc::c_void;
     }
 
-    pub const _URC_HANDLER_FOUND: _Unwind_Reason_Code = 6;
-    pub const _URC_INSTALL_CONTEXT: _Unwind_Reason_Code = 7;
-    pub const _URC_CONTINUE_UNWIND: _Unwind_Reason_Code = 8;
-
-    pub const _UA_SEARCH_PHASE: _Unwind_Action = 1;
-}
-
-use self::unwind::*;
-
-#[link(name = "stdc++")]
-extern {
-    fn __gxx_personality_v0(
-        _version: _Unwind_Reason_Code,
-        _action: _Unwind_Action,
-        _exception_class: _Unwind_Exception_Class,
-        _exception: *const _Unwind_Exception,
-        ctx: *const _Unwind_Context
-    ) -> _Unwind_Reason_Code;
-}
-
-#[cfg(rust_nightly)]
-#[doc(hidden)]
-#[allow(non_snake_case)]
-#[unwind(allowed)]
-#[no_mangle]
-pub unsafe fn _Unwind_RaiseException( ctx: *mut libc::c_void ) -> libc::c_int {
-    debug!( "Exception raised!" );
-
-    let mut stack = ShadowStack::get().unwrap();
-    stack.reset();
-
-    union Union {
-        raw_ptr: *const libc::c_void,
-        function: unsafe extern fn( *mut libc::c_void ) -> libc::c_int
-    }
-
-    let ptr = libc::dlsym( libc::RTLD_NEXT, b"_Unwind_RaiseException\0".as_ptr() as *const libc::c_char );
-    (Union { raw_ptr: ptr }.function)( ctx )
-}
-
-#[cfg(rust_nightly)]
-#[doc(hidden)]
-#[unwind(allowed)]
-#[no_mangle]
-pub unsafe fn __cxa_throw( obj: *mut libc::c_void, tinfo: *mut libc::c_void, cb: extern "C" fn( *mut libc::c_void ) ) {
-    debug!( "__cxa_throw called" );
-
-    union Union {
-        raw_ptr: *const libc::c_void,
-        function: unsafe extern fn( *mut libc::c_void, *mut libc::c_void, extern "C" fn( *mut libc::c_void ) )
-    }
-
-    let ptr = libc::dlsym( libc::RTLD_NEXT, b"__cxa_throw\0".as_ptr() as *const libc::c_char );
-    (Union { raw_ptr: ptr }.function)( obj, tinfo, cb )
-}
-
-#[doc(hidden)]
-#[no_mangle]
-pub unsafe extern fn nwind_ret_trampoline_personality(
-    version: _Unwind_Reason_Code,
-    action: _Unwind_Action,
-    exception_class: _Unwind_Exception_Class,
-    exception: *const _Unwind_Exception,
-    ctx: *const _Unwind_Context
-) -> _Unwind_Reason_Code {
-    warn!( "Personality called!" );
-
-    let mut stack = ShadowStack::get().unwrap();
-    stack.reset();
-
-    // TODO: This will most likely crash and burn since the instruction pointer
-    // in the unwind context still points to the trampoline.
-    //
-    // It'd be nice to figure out how to make this work, however since we hook
-    // into the `_Unwind_RaiseException` it's unlikely that we'll end up here.
-    __gxx_personality_v0( version, action, exception_class, exception, ctx )
+    __cxa_begin_catch( exception );
+    return_address
 }
 
 struct ShadowStackIter< 'a > {
@@ -628,40 +566,31 @@ impl< A: Architecture > InitializeRegs< A > for LocalRegsInitializer< A > where 
 unsafe fn patch_trampoline_impl() {}
 
 #[cfg(target_arch = "mips64")]
-unsafe fn patch_trampoline_impl() {
-    use std::slice;
-
-    extern {
-        fn nwind_ret_trampoline_start();
-    }
-
-    static MIPS64_TRAMPOLINE_PATCH_PATTERN: [u32; 6] = [
-       0x3c191234, //        lui     t9,0x1234
-       0x37395678, //        ori     t9,t9,0x5678
-       0x0019cc38, //        dsll    t9,t9,0x10
-       0x3739abcd, //        ori     t9,t9,0xabcd
-       0x0019cc38, //        dsll    t9,t9,0x10
-       0x3739ef00, //        ori     t9,t9,0xef00
+unsafe fn find_offset( address: usize, n: u32 ) -> usize {
+    let pattern: [u32; 6] = [
+       0x3c191234,     //        lui     t9,0x1234
+       0x37395678,     //        ori     t9,t9,0x5678
+       0x0019cc38,     //        dsll    t9,t9,0x10
+       0x3739abcd,     //        ori     t9,t9,0xabcd
+       0x0019cc38,     //        dsll    t9,t9,0x10
+       0x3739ef00 | n, //        ori     t9,t9,0xef00
     ];
 
-    let address = nwind_ret_trampoline_start as usize;
-    assert_eq!( address % 4096, 0 );
-
-    let offset = {
-        let page = slice::from_raw_parts( address as *const u32, 4096 / mem::size_of::< u32 >() );
-        match page.windows( MIPS64_TRAMPOLINE_PATCH_PATTERN.len() ).position( |window| window == MIPS64_TRAMPOLINE_PATCH_PATTERN ) {
-            Some( offset ) => {
-                let byte_offset = offset * mem::size_of::< u32 >();
-                debug!( "Found snippet for patching at 0x{:016X} (0x{:016X} + {})", address + byte_offset, address, byte_offset );
-                offset
-            },
-            None => {
-                panic!( "Cannot find trampoline snippet to patch" );
-            }
+    let page = std::slice::from_raw_parts( address as *const u32, 4096 / mem::size_of::< u32 >() );
+    match page.windows( pattern.len() ).position( |window| window == pattern ) {
+        Some( offset ) => {
+            let byte_offset = offset * mem::size_of::< u32 >();
+            debug!( "Found snippet for patching at 0x{:016X} (0x{:016X} + {})", address + byte_offset, address, byte_offset );
+            offset
+        },
+        None => {
+            panic!( "Cannot find trampoline snippet to patch" );
         }
-    };
+    }
+}
 
-    let t = nwind_on_ret_trampoline as usize;
+#[cfg(target_arch = "mips64")]
+unsafe fn patch_offset( address: usize, offset: usize, t: usize ) {
     let code: [u32; 6] = [
         0x3c190000 | ((t >> 48) & 0xFFFF) as u32,
         0x37390000 | ((t >> 32) & 0xFFFF) as u32,
@@ -671,16 +600,33 @@ unsafe fn patch_trampoline_impl() {
         0x37390000 | ((t >>  0) & 0xFFFF) as u32
     ];
 
+    let page = std::slice::from_raw_parts_mut( address as *mut u32, 4096 / mem::size_of::< u32 >() );
+    page[ offset..offset + code.len() ].copy_from_slice( &code[..] );
+}
+
+#[cfg(target_arch = "mips64")]
+unsafe fn patch_trampoline_impl() {
+    extern {
+        fn nwind_ret_trampoline_start();
+        fn __cxa_rethrow();
+    }
+
+    let address = nwind_ret_trampoline_start as usize;
+    assert_eq!( address % 4096, 0 );
+
+    let offset_0 = find_offset( address, 0 );
+    let offset_1 = find_offset( address, 1 );
+    let offset_2 = find_offset( address, 2 );
+
     debug!( "Unprotecting 0x{:016X}...", address );
     if libc::mprotect( address as *mut libc::c_void, 4096, libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC ) < 0 {
         panic!( "Failed to unprotect the trampoline!" );
     }
 
     debug!( "Patching trampoline..." );
-    {
-        let page = slice::from_raw_parts_mut( address as *mut u32, 4096 / mem::size_of::< u32 >() );
-        page[ offset..offset + code.len() ].copy_from_slice( &code[..] );
-    }
+    patch_offset( address, offset_0, nwind_on_ret_trampoline as usize );
+    patch_offset( address, offset_1, nwind_on_exception_through_trampoline as usize );
+    patch_offset( address, offset_2, __cxa_rethrow as usize );
 
     debug!( "Protecting 0x{:016X}...", address );
     if libc::mprotect( address as *mut libc::c_void, 4096, libc::PROT_READ | libc::PROT_EXEC ) < 0 {
@@ -741,10 +687,6 @@ impl LocalAddressSpace {
             reload_count: 0
         };
 
-        if !cfg!( rust_nightly ) {
-            warn!( "The profiler was not compiled with Rust nightly; shadow stack based unwinding will be disabled" );
-        }
-
         address_space.use_shadow_stack( true );
         address_space.reload()?;
 
@@ -785,7 +727,7 @@ impl LocalAddressSpace {
     }
 
     fn is_shadow_stack_supported() -> bool {
-        cfg!( rust_nightly )
+        true
     }
 
     pub fn use_shadow_stack( &mut self, value: bool ) {
@@ -1053,7 +995,6 @@ fn clear_tls() {
     });
 }
 
-#[cfg_attr(not(rust_nightly), ignore)]
 #[test]
 fn test_unwind_through_fresh_frames() {
     let _ = ::env_logger::try_init();

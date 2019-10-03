@@ -44,31 +44,3 @@ get_regs_arm:
     bx lr
     .fnend
     .size   get_regs_arm, .-get_regs_arm
-
-.global nwind_ret_trampoline_start
-.type nwind_ret_trampoline_start, %function
-nwind_ret_trampoline_start:
-    .fnstart
-    nop
-
-.global nwind_ret_trampoline
-.type nwind_ret_trampoline, %function
-nwind_ret_trampoline:
-    /* Save the original return value. */
-    push {r0, r1}
-
-    mov r0, sp
-    add r0, r0, #8
-    bl nwind_on_ret_trampoline
-
-    /* Restore the original return address. */
-    mov lr, r0
-
-    /* Restore the original return value. */
-    pop {r0, r1}
-
-    /* Return. */
-    bx lr
-
-    .fnend
-    .size nwind_ret_trampoline, .-nwind_ret_trampoline

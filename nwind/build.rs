@@ -2,33 +2,29 @@
 extern crate cc;
 
 #[cfg(feature = "local-unwinding")]
-fn check_for_rust_nightly() {
-    use rustc_version::{Channel, version_meta};
-    match version_meta().unwrap().channel {
-        Channel::Nightly | Channel::Dev => {
-            println!( "cargo:rustc-cfg=rust_nightly" );
-        },
-        _ => {}
-    }
-}
-
-#[cfg(feature = "local-unwinding")]
 fn build() {
     use std::env;
 
-    let source = match env::var( "TARGET" ).expect( "missing TARGET environment variable which should always be exported by cargo" ).as_str() {
-        "x86_64-unknown-linux-gnu" => "src/arch/amd64_get_regs.s",
-        "mips64-unknown-linux-gnuabi64" => "src/arch/mips64_get_regs.s",
-        "armv7-unknown-linux-gnueabihf" => "src/arch/arm_get_regs.s",
-        "aarch64-unknown-linux-gnu" => "src/arch/aarch64_get_regs.s",
+    let arch = match env::var( "TARGET" ).expect( "missing TARGET environment variable which should always be exported by cargo" ).as_str() {
+        "x86_64-unknown-linux-gnu" => "amd64",
+        "mips64-unknown-linux-gnuabi64" => "mips64",
+        "armv7-unknown-linux-gnueabihf" => "arm",
+        "aarch64-unknown-linux-gnu" => "aarch64",
         target => panic!( "unsupported target: {}", target )
     };
 
+    let get_regs_s = format!( "src/arch/{}_get_regs.s", arch );
+    let trampoline_s = format!( "src/arch/{}_trampoline.s", arch );
+
+    println!( "cargo:rerun-if-changed={}", get_regs_s );
+    println!( "cargo:rerun-if-changed={}", trampoline_s );
+
     let mut build = cc::Build::new();
-    build.file( source );
+    build.file( get_regs_s );
+    build.file( trampoline_s );
     build.compile( "get_regs.a" );
 
-    check_for_rust_nightly();
+    println!( "cargo:rustc-link-lib=stdc++" );
 }
 
 #[cfg(not(feature = "local-unwinding"))]

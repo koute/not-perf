@@ -1,8 +1,3 @@
-#![cfg_attr(
-    all(feature = "local-unwinding", rust_nightly),
-    feature(unwind_attributes)
-)]
-
 #[cfg(feature = "log")]
 extern crate log;
 
@@ -99,13 +94,5 @@ pub use crate::local_unwinding::{
     LocalAddressSpace,
     LocalAddressSpaceOptions,
     LocalUnwindContext,
-    UnwindControl,
-    nwind_on_ret_trampoline,
-    nwind_ret_trampoline_personality
-};
-
-#[cfg(all(feature = "local-unwinding", rust_nightly))]
-pub use crate::local_unwinding::{
-    _Unwind_RaiseException,
-    __cxa_throw
+    UnwindControl
 };
