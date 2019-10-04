@@ -400,6 +400,12 @@ impl Drop for ShadowStack {
     }
 }
 
+enum ShadowStackResult< 'a > {
+    NotFound,
+    Found( ShadowStackIter< 'a > ),
+    Reset( usize )
+}
+
 impl ShadowStack {
     #[inline]
     fn get() -> Option< Self > {
@@ -428,14 +434,13 @@ impl ShadowStack {
     }
 
     #[inline]
-    fn push( &mut self, stack_pointer: usize, address_location: usize ) -> Option< ShadowStackIter > {
+    fn push( &mut self, stack_pointer: usize, address_location: usize ) -> ShadowStackResult {
         let slot = unsafe { &mut *(address_location as *mut usize) };
         if *slot == nwind_ret_trampoline as usize {
             debug!( "Found already set trampoline at slot 0x{:016X}", address_location );
 
-            let tls = self.tls();
-            let index = tls.tail - 1;
-            let entry = &tls.slice()[ index ];
+            let index = self.tls().tail - 1;
+            let entry = &self.tls().slice()[ index ];
             if entry.location != address_location {
                 debug!( "The address of the slot (0x{:016X}) doesn't match the slot address from the shadow stack (0x{:016X}) for shadow stack entry #{}", address_location, entry.location, index );
                 debug!( "Shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
@@ -445,15 +450,22 @@ impl ShadowStack {
                 error!( "The stack pointer (0x{:016X}) doesn't match the stack pointer from the shadow stack (0x{:016X}) for shadow stack entry #{}", stack_pointer, entry.stack_pointer, index );
                 error!( "Shadow stack #{}: return address = 0x{:016X}, slot = 0x{:016X}, stack pointer = 0x{:016X}", index, entry.return_address, entry.location, entry.stack_pointer );
 
-                unsafe {
-                    libc::abort();
+                let tls = self.tls();
+                if let Some( found_index ) = unsafe { unwind_shadow_stack( tls, stack_pointer, index ) } {
+                    let return_address = unsafe { tls.slice().get_unchecked( found_index ) }.return_address;
+                    reset_tls( tls );
+
+                    return ShadowStackResult::Reset( return_address );
+                } else {
+                    on_shadow_stack_no_entry_found( stack_pointer, index, tls );
                 }
+            } else {
+                debug!( "Found shadow stack entry at #{} matching the trampoline", index );
+
+                let tls = self.tls();
+                let tail = tls.tail;
+                return ShadowStackResult::Found( ShadowStackIter { slice: &tls.slice()[..], index: tail } );
             }
-
-            debug!( "Found shadow stack entry at #{} matching the trampoline", index );
-
-            let tail = tls.tail;
-            return Some( ShadowStackIter { slice: &tls.slice()[..], index: tail } );
         }
 
         let capacity = self.tls().slice().len();
@@ -507,7 +519,7 @@ impl ShadowStack {
         }
 
         *slot = nwind_ret_trampoline as usize;
-        None
+        ShadowStackResult::NotFound
     }
 
     fn reset( &mut self ) {
@@ -780,11 +792,11 @@ impl LocalAddressSpace {
         }
 
         loop {
-            let mut shadow_stack_iter = None;
+            let mut shadow_stack_result = ShadowStackResult::NotFound;
             if let Some( shadow_stack ) = shadow_stack.as_mut() {
                 if let Some( next_address_location ) = ctx.next_address_location() {
                     let stack_pointer = ctx.next_stack_pointer();
-                    shadow_stack_iter = shadow_stack.push( stack_pointer as usize, next_address_location as usize )
+                    shadow_stack_result = shadow_stack.push( stack_pointer as usize, next_address_location as usize )
                 }
             }
 
@@ -794,9 +806,17 @@ impl LocalAddressSpace {
                 UnwindControl::Stop => break
             }
 
-            if let Some( iter ) = shadow_stack_iter {
-                unwind_cached( iter, callback );
-                return;
+            match shadow_stack_result {
+                ShadowStackResult::Found( iter ) => {
+                    unwind_cached( iter, callback );
+                    return;
+                },
+                ShadowStackResult::NotFound => {},
+                ShadowStackResult::Reset( return_address ) => {
+                    debug!( "Replacing the return address with 0x{:016X}", return_address );
+                    ctx.replace_next_address( return_address as _ );
+                    shadow_stack = None;
+                }
             }
 
             if ctx.unwind( &memory ) == false {
@@ -856,10 +876,18 @@ impl LocalAddressSpace {
 
         loop {
             let mut is_end_of_fresh_frames = false;
-            if let Some( shadow_stack ) = shadow_stack.as_mut() {
+            if let Some( shadow_stack_ref ) = shadow_stack.as_mut() {
                 if let Some( next_address_location ) = ctx.next_address_location() {
                     let stack_pointer = ctx.next_stack_pointer();
-                    is_end_of_fresh_frames = shadow_stack.push( stack_pointer as usize, next_address_location as usize ).is_some();
+                    match shadow_stack_ref.push( stack_pointer as usize, next_address_location as usize ) {
+                        ShadowStackResult::Found( _ ) => is_end_of_fresh_frames = true,
+                        ShadowStackResult::NotFound => is_end_of_fresh_frames = false,
+                        ShadowStackResult::Reset( return_address ) => {
+                            debug!( "Replacing the return address with 0x{:016X}", return_address );
+                            ctx.replace_next_address( return_address as _ );
+                            shadow_stack = None;
+                        }
+                    }
                 }
             }
 

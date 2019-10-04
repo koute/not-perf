@@ -140,4 +140,10 @@ impl< 'a, A: Architecture > UnwindHandle< 'a, A > {
     pub fn next_stack_pointer( &self ) -> A::RegTy {
         self.ctx.regs.get( A::STACK_POINTER_REG ).unwrap()
     }
+
+    #[cfg(feature = "local-unwinding")]
+    #[inline]
+    pub fn replace_next_address( &mut self, value: A::RegTy ) {
+        self.ctx.regs.append( A::INSTRUCTION_POINTER_REG, value )
+    }
 }
