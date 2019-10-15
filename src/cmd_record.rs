@@ -54,6 +54,9 @@ pub fn main( args: args::RecordArgs ) -> Result< (), Box< dyn Error > > {
     let discard_all = args.discard_all;
 
     let mut controller = ProfilingController::new( &args.profiler_args )?;
+    controller.write_packet( Packet::ProfilingFrequency {
+        frequency: args.frequency
+    });
 
     info!( "Opening perf events for process with PID {}...", controller.pid() );
     let mut perf = match PerfGroup::open( controller.pid(), args.frequency, args.stack_size, args.event_source ) {

@@ -70,7 +70,7 @@ pub struct PerfGroup {
     event_buffer: Vec< EventRef >,
     members: BTreeMap< RawFd, Member >,
     poll_fds: Vec< libc::pollfd >,
-    frequency: u64,
+    frequency: u32,
     stack_size: u32,
     event_source: EventSource,
     initial_events: Vec< Event< 'static > >,
@@ -135,7 +135,7 @@ fn get_threads( pid: u32 ) -> Result< Vec< (u32, Option< Vec< u8 > >) >, io::Err
 }
 
 impl PerfGroup {
-    pub fn new( frequency: u64, stack_size: u32, event_source: EventSource ) -> Self {
+    pub fn new( frequency: u32, stack_size: u32, event_source: EventSource ) -> Self {
         let group = PerfGroup {
             event_buffer: Vec::new(),
             members: Default::default(),
@@ -150,7 +150,7 @@ impl PerfGroup {
         group
     }
 
-    pub fn open( pid: u32, frequency: u64, stack_size: u32, event_source: EventSource ) -> Result< Self, io::Error > {
+    pub fn open( pid: u32, frequency: u32, stack_size: u32, event_source: EventSource ) -> Result< Self, io::Error > {
         let mut group = PerfGroup::new( frequency, stack_size, event_source );
         group.open_process( pid )?;
         Ok( group )
@@ -165,7 +165,7 @@ impl PerfGroup {
             let perf = Perf::build()
                 .pid( pid )
                 .only_cpu( cpu as _ )
-                .frequency( self.frequency )
+                .frequency( self.frequency as u64 )
                 .sample_user_stack( self.stack_size )
                 .sample_user_regs( perf_arch::native::REG_MASK )
                 .sample_kernel()
@@ -180,7 +180,7 @@ impl PerfGroup {
                 let perf = Perf::build()
                     .pid( tid )
                     .only_cpu( cpu as _ )
-                    .frequency( self.frequency )
+                    .frequency( self.frequency as u64 )
                     .sample_user_stack( self.stack_size )
                     .sample_user_regs( perf_arch::native::REG_MASK )
                     .sample_kernel()

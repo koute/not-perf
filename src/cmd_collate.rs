@@ -273,7 +273,8 @@ pub(crate) struct Collation {
     thread_names: HashMap< u32, String >,
     binary_by_id: HashMap< BinaryId, Binary >,
     unfiltered_first_timestamp: Option< u64 >,
-    cpu_count: u32
+    cpu_count: u32,
+    frequency: Option< u32 >
 }
 
 impl Collation {
@@ -295,6 +296,10 @@ impl Collation {
 
     pub(crate) fn cpu_count( &self ) -> u32 {
         self.cpu_count
+    }
+
+    pub(crate) fn frequency( &self ) -> Option< u32 > {
+        self.frequency.clone()
     }
 }
 
@@ -324,7 +329,8 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
         thread_names: HashMap::new(),
         binary_by_id: HashMap::new(),
         unfiltered_first_timestamp: None,
-        cpu_count: 1
+        cpu_count: 1,
+        frequency: None
     };
 
     let mut machine_architecture = String::new();
@@ -712,6 +718,9 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
 
                 let name = String::from_utf8_lossy( &name ).into_owned();
                 collation.thread_names.insert( tid, name );
+            },
+            Packet::ProfilingFrequency { frequency } => {
+                collation.frequency = Some( frequency );
             },
             _ => {}
         }

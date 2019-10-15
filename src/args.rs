@@ -168,7 +168,7 @@ pub struct GenericProfilerArgs {
 pub struct RecordArgs {
     /// The frequency with which the measurements will be gathered
     #[structopt(long, short = "F", default_value = "900")]
-    pub frequency: u64,
+    pub frequency: u32,
 
     /// The source of perf events
     #[structopt(

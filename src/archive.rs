@@ -167,6 +167,9 @@ pub enum Packet< 'a > {
         pid: u32,
         inode: Option< Inode >,
         name: Cow< 'a, [u8] >
+    },
+    ProfilingFrequency {
+        frequency: u32
     }
 }
 

@@ -2,6 +2,7 @@ use std::error::Error;
 use std::io::{self, Write};
 use std::fs::File;
 use std::collections::{HashMap, HashSet};
+use std::cmp::{max, min};
 
 use crate::args;
 use crate::interner::StringInterner;
@@ -274,7 +275,7 @@ pub fn main( args: args::TraceEventsArgs ) -> Result< (), Box< dyn Error > > {
         merge_threads: false,
         granularity: args.arg_granularity.granularity
     };
-    let period = args.period;
+    let mut period = args.period;
 
     let mut raw_events_for_thread = HashMap::new();
     let mut interner = StringInterner::new();
@@ -293,6 +294,26 @@ pub fn main( args: args::TraceEventsArgs ) -> Result< (), Box< dyn Error > > {
             raw_events_for_thread.entry( (process.pid(), tid) ).or_insert_with( Vec::new ).push( (timestamp, frames) );
         }
     })?;
+
+    if period.is_none() {
+        if let Some( frequency ) = collation.frequency() {
+            let profiling_period = (1.0 / frequency as f64) * 1000_000_000.0;
+            let overhead =
+                max(
+                    min(
+                        ((frequency as f64).log10() * 10_000.0) as u64,
+                        40_000
+                    ),
+                    min(
+                        (profiling_period * 0.01) as u64,
+                        100_000
+                    )
+                );
+            period = Some( profiling_period as u64 + overhead );
+            info!( "Profiling data frequency: {}", frequency );
+            info!( "Trace period for frame collapsing: {}us", period.unwrap() / 1000 );
+        }
+    }
 
     let mut wrote_pid = HashSet::new();
     let mut wrote_tid = HashSet::new();
