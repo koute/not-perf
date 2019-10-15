@@ -207,11 +207,15 @@ pub struct SharedCollationArgs {
 
 #[derive(StructOpt, Debug)]
 #[structopt(rename_all = "kebab-case")]
-pub struct SharedFormattingArgs {
+pub struct ArgMergeThreads {
     /// Merge callstacks from all threads
     #[structopt(long)]
-    pub merge_threads: bool,
+    pub merge_threads: bool
+}
 
+#[derive(StructOpt, Debug)]
+#[structopt(rename_all = "kebab-case")]
+pub struct ArgGranularity {
     /// Specifies at what granularity the call frames will be merged
     #[structopt(
         long,
@@ -233,7 +237,10 @@ pub struct FlamegraphArgs {
     pub collation_args: SharedCollationArgs,
 
     #[structopt(flatten)]
-    pub formatting_args: SharedFormattingArgs,
+    pub arg_merge_threads: ArgMergeThreads,
+
+    #[structopt(flatten)]
+    pub arg_granularity: ArgGranularity,
 
     /// The file to which the flamegraph will be written to (instead of the stdout)
     #[structopt(long, short = "o", parse(from_os_str))]
@@ -262,7 +269,10 @@ pub struct CollateArgs {
     pub collation_args: SharedCollationArgs,
 
     #[structopt(flatten)]
-    pub formatting_args: SharedFormattingArgs,
+    pub arg_merge_threads: ArgMergeThreads,
+
+    #[structopt(flatten)]
+    pub arg_granularity: ArgGranularity,
 
     /// Selects the output format
     #[structopt(

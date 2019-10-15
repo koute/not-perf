@@ -1002,12 +1002,13 @@ fn repack_cli_args( args: &args::SharedCollationArgs ) -> (Option< Regex >, Coll
 
 pub fn collapse_into_sorted_vec(
     args: &args::SharedCollationArgs,
-    fmt_args: &args::SharedFormattingArgs,
+    arg_granularity: &args::ArgGranularity,
+    arg_merge_threads: &args::ArgMergeThreads
 ) -> Result< Vec< String >, Box< dyn Error > > {
     let (omit_regex, collate_args) = repack_cli_args( args );
     let opts = CollapseOpts {
-        merge_threads: fmt_args.merge_threads,
-        granularity: fmt_args.granularity
+        merge_threads: arg_merge_threads.merge_threads,
+        granularity: arg_granularity.granularity
     };
 
     let mut stacks: HashMap< Vec< FrameKind >, u64 > = HashMap::new();
@@ -1137,7 +1138,7 @@ pub fn into_graph( args: &args::SharedCollationArgs, sampling_interval: Option< 
 pub fn main( args: args::CollateArgs ) -> Result< (), Box< dyn Error > > {
     match args.format {
         CollateFormat::Collapsed => {
-            let output = collapse_into_sorted_vec( &args.collation_args, &args.formatting_args )?;
+            let output = collapse_into_sorted_vec( &args.collation_args, &args.arg_granularity, &args.arg_merge_threads )?;
             let output = output.join( "\n" );
             let stdout = io::stdout();
             let mut stdout = stdout.lock();
