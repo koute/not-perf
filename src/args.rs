@@ -24,6 +24,32 @@ fn parse_collate_format( format: &str ) -> CollateFormat {
     }
 }
 
+fn try_parse_period( period: &str ) -> Result< u64, <u64 as std::str::FromStr>::Err > {
+    let period = if period.ends_with( "ms" ) {
+        period[ 0..period.len() - 2 ].parse::< u64 >()? * 1000_000
+    } else if period.ends_with( "us" ) {
+        period[ 0..period.len() - 2 ].parse::< u64 >()? * 1000
+    } else if period.ends_with( "ns" ) {
+        period[ 0..period.len() - 2 ].parse::< u64 >()?
+    } else if period.ends_with( "s" ) {
+        period[ 0..period.len() - 1 ].parse::< u64 >()? * 1000_000_000
+    } else {
+        period.parse::< u64 >()? * 1000_000_000
+    };
+
+    Ok( period )
+}
+
+fn parse_period( period: &str ) -> u64 {
+    match try_parse_period( period ) {
+        Ok( period ) => period,
+        Err( _ ) => {
+            eprintln!( "error: invalid '--period' specified" );
+            std::process::exit( 1 );
+        }
+    }
+}
+
 pub enum TargetProcess {
     ByPid( u32 ),
     ByName( String ),
@@ -264,6 +290,27 @@ pub struct CsvArgs {
 
 #[derive(StructOpt, Debug)]
 #[structopt(rename_all = "kebab-case")]
+pub struct TraceEventsArgs {
+    #[structopt(flatten)]
+    pub collation_args: SharedCollationArgs,
+
+    #[structopt(flatten)]
+    pub arg_granularity: ArgGranularity,
+
+    #[structopt(long)]
+    pub absolute_time: bool,
+
+    /// The sampling period; samples within one sampling period will be merged together
+    #[structopt(long, short = "p", parse(from_str = "parse_period"))]
+    pub period: Option< u64 >,
+
+    /// The file to which the trace events will be written to
+    #[structopt(long, short = "o", parse(from_os_str))]
+    pub output: OsString
+}
+
+#[derive(StructOpt, Debug)]
+#[structopt(rename_all = "kebab-case")]
 pub struct CollateArgs {
     #[structopt(flatten)]
     pub collation_args: SharedCollationArgs,
@@ -313,6 +360,10 @@ pub enum Opt {
     /// Emits a CSV file
     #[structopt(name = "csv")]
     Csv( CsvArgs ),
+
+    /// Emits trace events for use with Chromium's Trace Viewer
+    #[structopt(name = "trace-events")]
+    TraceEvents( TraceEventsArgs ),
 
     /// Emits collated stack traces for use with Brendan Gregg's flamegraph script
     #[structopt(name = "collate")]

@@ -37,8 +37,8 @@ use crate::interner::{StringId, StringInterner};
 
 use crate::stack_reader::StackReader;
 
-#[derive(PartialEq, Eq, Debug, Hash)]
-enum FrameKind {
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
+pub(crate) enum FrameKind {
     Process( u32 ),
     Thread( u32 ),
     MainThread,
@@ -66,7 +66,7 @@ enum FrameKind {
     KernelSymbol( usize )
 }
 
-struct Process {
+pub(crate) struct Process {
     pid: u32,
     executable: String,
     memory_regions: RangeMap< Region >,
@@ -82,6 +82,14 @@ struct FdeHints {
 }
 
 impl Process {
+    pub(crate) fn pid( &self ) -> u32 {
+        self.pid
+    }
+
+    pub(crate) fn executable( &self ) -> &str {
+        &self.executable
+    }
+
     fn reload_if_necessary( &mut self, debug_info_index: &mut DebugInfoIndex, binary_by_id: &mut HashMap< BinaryId, Binary >, fde_hints: &FdeHints ) {
         if !self.address_space_needs_reload {
             return;
@@ -230,7 +238,7 @@ pub enum CollateFormat {
     PerfLike
 }
 
-struct CollateArgs< 'a > {
+pub(crate) struct CollateArgs< 'a > {
     input_path: &'a OsStr,
     debug_symbols: Vec< &'a OsStr >,
     force_stack_size: Option< u32 >,
@@ -258,13 +266,14 @@ fn parse_timestamp_bound( timestamp: impl AsRef< str > ) -> TimestampBound {
     }
 }
 
-struct Collation {
+pub(crate) struct Collation {
     kallsyms: RangeMap< KernelSymbol >,
     process_index_by_pid: HashMap< u32, usize >,
     processes: Vec< Process >,
     thread_names: HashMap< u32, String >,
     binary_by_id: HashMap< BinaryId, Binary >,
-    unfiltered_first_timestamp: Option< u64 >
+    unfiltered_first_timestamp: Option< u64 >,
+    cpu_count: u32
 }
 
 impl Collation {
@@ -276,12 +285,16 @@ impl Collation {
         self.binary_by_id.get( binary_id ).unwrap()
     }
 
-    fn get_thread_name( &self, tid: u32 ) -> Option< &str > {
+    pub(crate) fn get_thread_name( &self, tid: u32 ) -> Option< &str > {
         self.thread_names.get( &tid ).map( |str| str.as_str() )
     }
 
-    fn get_process( &self, pid: u32 ) -> Option< &Process > {
+    pub(crate) fn get_process( &self, pid: u32 ) -> Option< &Process > {
         self.process_index_by_pid.get( &pid ).map( |&index| &self.processes[ index ] )
+    }
+
+    pub(crate) fn cpu_count( &self ) -> u32 {
+        self.cpu_count
     }
 }
 
@@ -297,7 +310,7 @@ fn to_s( timestamp: u64 ) -> f64 {
     timestamp as f64 / 1_000_000_000.0
 }
 
-fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box< dyn Error > >
+pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box< dyn Error > >
     where F: FnMut( &Collation, u64, &Process, u32, u32, &[UserFrame], &[u64] )
 {
     let input_path = args.input_path;
@@ -310,7 +323,8 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
         processes: Vec::new(),
         thread_names: HashMap::new(),
         binary_by_id: HashMap::new(),
-        unfiltered_first_timestamp: None
+        unfiltered_first_timestamp: None,
+        cpu_count: 1
     };
 
     let mut machine_architecture = String::new();
@@ -388,10 +402,11 @@ fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box
     while let Some( packet ) = reader.next() {
         let packet = packet.unwrap();
         match packet {
-            Packet::MachineInfo { architecture, bitness, endianness, .. } => {
+            Packet::MachineInfo { architecture, bitness, endianness, cpu_count, .. } => {
                 machine_architecture = architecture.into_owned();
                 machine_bitness = bitness;
                 machine_endianness = endianness;
+                collation.cpu_count = cpu_count;
 
                 if machine_architecture == arch::native::Arch::NAME &&
                    machine_endianness == Endianness::NATIVE &&
@@ -787,12 +802,12 @@ fn decode_user_frames(
 }
 
 #[derive(Default)]
-struct CollapseOpts {
-    merge_threads: bool,
-    granularity: Granularity
+pub(crate) struct CollapseOpts {
+    pub merge_threads: bool,
+    pub granularity: Granularity
 }
 
-fn collapse_frames(
+pub(crate) fn decode(
     omit_regex: &Option< Regex >,
     collation: &Collation,
     process: &Process,
@@ -800,9 +815,8 @@ fn collapse_frames(
     user_backtrace: &[UserFrame],
     kernel_backtrace: &[u64],
     opts: &CollapseOpts,
-    interner: &mut StringInterner,
-    stacks: &mut HashMap< Vec< FrameKind >, u64 >
-) {
+    interner: &mut StringInterner
+) -> Option< Vec< FrameKind > > {
     let mut frames = Vec::with_capacity( user_backtrace.len() + kernel_backtrace.len() + 1 );
     for &addr in kernel_backtrace.iter() {
         if let Some( index ) = collation.kallsyms.get_index( addr ) {
@@ -813,7 +827,7 @@ fn collapse_frames(
     }
 
     if !decode_user_frames( omit_regex, opts.granularity, process, user_backtrace, interner, Some( &mut frames ) ) {
-        return;
+        return None;
     }
 
     if !opts.merge_threads {
@@ -825,8 +839,7 @@ fn collapse_frames(
     }
 
     frames.push( FrameKind::Process( process.pid ) );
-
-    *stacks.entry( frames ).or_insert( 0 ) += 1;
+    Some( frames )
 }
 
 fn escape< 'a >( string: &'a str ) -> Cow< 'a, str > {
@@ -898,7 +911,7 @@ fn write_perf_like_output< T: io::Write >(
     Ok(())
 }
 
-fn write_frame< T: fmt::Write >(
+pub(crate) fn write_frame< T: fmt::Write >(
     collation: &Collation,
     interner: &StringInterner,
     output: &mut T,
@@ -972,7 +985,7 @@ fn write_frame< T: fmt::Write >(
 }
 
 
-fn repack_cli_args( args: &args::SharedCollationArgs ) -> (Option< Regex >, CollateArgs) {
+pub(crate) fn repack_cli_args( args: &args::SharedCollationArgs ) -> (Option< Regex >, CollateArgs) {
     let omit_regex = if args.omit.is_empty() {
         None
     } else {
@@ -1014,7 +1027,7 @@ pub fn collapse_into_sorted_vec(
     let mut stacks: HashMap< Vec< FrameKind >, u64 > = HashMap::new();
     let mut interner = StringInterner::new();
     let collation = collate( collate_args, |collation, _timestamp, process, tid, _cpu, user_backtrace, kernel_backtrace| {
-        collapse_frames(
+        let frames = decode(
             &omit_regex,
             &collation,
             process,
@@ -1022,9 +1035,11 @@ pub fn collapse_into_sorted_vec(
             &user_backtrace,
             &kernel_backtrace,
             &opts,
-            &mut interner,
-            &mut stacks
+            &mut interner
         );
+        if let Some( frames ) = frames {
+            *stacks.entry( frames ).or_insert( 0 ) += 1;
+        }
     })?;
 
     let mut output = Vec::with_capacity( stacks.len() );
@@ -1169,7 +1184,7 @@ pub fn main( args: args::CollateArgs ) -> Result< (), Box< dyn Error > > {
 
 #[cfg(test)]
 mod test {
-    use super::{StringInterner, CollateArgs, CollapseOpts, FrameKind, Collation, FdeHints, collate, collapse_frames};
+    use super::{StringInterner, CollateArgs, CollapseOpts, FrameKind, Collation, FdeHints, collate, decode};
     use nwind::LoadHint;
     use std::path::Path;
     use std::collections::HashMap;
@@ -1206,7 +1221,7 @@ mod test {
 
         let mut stacks: HashMap< Vec< FrameKind >, u64 > = HashMap::new();
         let collation = collate( args, |collation, _timestamp, process, tid, _cpu, user_backtrace, kernel_backtrace| {
-            collapse_frames(
+            let frames = decode(
                 &None,
                 &collation,
                 process,
@@ -1214,9 +1229,11 @@ mod test {
                 &user_backtrace,
                 &kernel_backtrace,
                 &CollapseOpts::default(),
-                &mut interner,
-                &mut stacks
+                &mut interner
             );
+            if let Some( frames ) = frames {
+                *stacks.entry( frames ).or_insert( 0 ) += 1;
+            }
         }).unwrap();
 
         Data {

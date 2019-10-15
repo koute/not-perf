@@ -35,6 +35,7 @@ mod cmd_flamegraph;
 mod cmd_csv;
 mod cmd_collate;
 mod cmd_metadata;
+mod cmd_trace_events;
 
 use std::env;
 use std::error::Error;
@@ -73,6 +74,9 @@ fn main_impl() -> Result< (), Box< dyn Error > > {
         },
         args::Opt::Metadata( args ) => {
             cmd_metadata::main( args )?;
+        },
+        args::Opt::TraceEvents( args ) => {
+            cmd_trace_events::main( args )?;
         }
     }
 
