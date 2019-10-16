@@ -115,6 +115,12 @@ pub struct LostEvent {
 }
 
 #[derive(Debug)]
+pub struct ThrottleEvent {
+    pub id: u64,
+    pub timestamp: u64
+}
+
+#[derive(Debug)]
 pub enum Event< 'a > {
     Sample( SampleEvent< 'a > ),
     Comm( CommEvent ),
@@ -122,6 +128,8 @@ pub enum Event< 'a > {
     Fork( ProcessEvent ),
     Mmap2( Mmap2Event ),
     Lost( LostEvent ),
+    Throttle( ThrottleEvent ),
+    Unthrottle( ThrottleEvent ),
     Raw( RawEvent< 'a > )
 }
 
@@ -358,6 +366,23 @@ impl< 'a > RawEvent< 'a > {
                     id,
                     count
                 })
+            },
+
+            PERF_RECORD_THROTTLE | PERF_RECORD_UNTHROTTLE => {
+                let raw_data = self.data.as_slice();
+                let mut cur = io::Cursor::new( &raw_data );
+
+                let timestamp = cur.read_u64::< NativeEndian >().unwrap();
+                let id = cur.read_u64::< NativeEndian >().unwrap();
+                let event = ThrottleEvent {
+                    id,
+                    timestamp
+                };
+                if self.kind == PERF_RECORD_THROTTLE {
+                    Event::Throttle( event )
+                } else {
+                    Event::Unthrottle( event )
+                }
             },
 
             _ => Event::Raw( self )
