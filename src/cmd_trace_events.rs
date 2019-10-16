@@ -15,12 +15,12 @@ struct TraceEvent< T > {
     is_end: bool
 }
 
-fn emit_events< T >( raw_events: Vec< (u64, Vec< T >) >, period: Option< u64 > ) -> Vec< TraceEvent< T > > where T: PartialEq + Clone {
+fn emit_events< T >( raw_events: Vec< (u64, Vec< T >) >, sampling_period: u64, merge_period: Option< u64 > ) -> Vec< TraceEvent< T > > where T: PartialEq + Clone {
     let mut events = Vec::with_capacity( raw_events.len() * 2 );
     let mut current_frames: Vec< T > = Vec::new();
     let mut last_timestamp = raw_events.first().map( |&(timestamp, _)| timestamp ).unwrap_or( 0 );
     for (timestamp, frames) in raw_events {
-        let (is_timeout, period) = period.map( |period| ((timestamp - last_timestamp) > period, period) ).unwrap_or( (false, 0) );
+        let is_timeout = merge_period.map( |merge_period| (timestamp - last_timestamp) > merge_period ).unwrap_or( false );
         let common_length =
             if is_timeout {
                 0
@@ -34,7 +34,7 @@ fn emit_events< T >( raw_events: Vec< (u64, Vec< T >) >, period: Option< u64 > )
 
             events.push( TraceEvent {
                 frame,
-                timestamp: if is_timeout { last_timestamp + period } else { timestamp },
+                timestamp: if is_timeout { last_timestamp + sampling_period } else { timestamp },
                 is_end: true
             });
         }
@@ -55,7 +55,7 @@ fn emit_events< T >( raw_events: Vec< (u64, Vec< T >) >, period: Option< u64 > )
     for frame in current_frames.into_iter().rev() {
         events.push( TraceEvent {
             frame,
-            timestamp: if let Some( period ) = period { last_timestamp + period } else { last_timestamp },
+            timestamp: last_timestamp + sampling_period,
             is_end: true
        });
     }
@@ -82,8 +82,8 @@ fn ev_e< T >( timestamp: u64, frame: T ) -> TraceEvent< T > {
 }
 
 #[cfg(test)]
-fn assert_emit_events( period: Option< u64 >, raw_events: &[(u64, Vec< char >)], expected: Vec< TraceEvent< char > > ) {
-    let actual = emit_events( raw_events.iter().cloned().collect(), period );
+fn assert_emit_events( sampling_period: u64, merge_period: Option< u64 >, raw_events: &[(u64, Vec< char >)], expected: Vec< TraceEvent< char > > ) {
+    let actual = emit_events( raw_events.iter().cloned().collect(), sampling_period, merge_period );
     if actual == expected {
         return;
     }
@@ -104,7 +104,7 @@ fn assert_emit_events( period: Option< u64 >, raw_events: &[(u64, Vec< char >)],
 #[test]
 fn test_emit_events_1() {
     assert_emit_events(
-        None,
+        0, None,
         &[
             (0, vec![ 'C', 'B', 'A' ]),
             (1, vec![      'B', 'A' ])
@@ -123,7 +123,7 @@ fn test_emit_events_1() {
 #[test]
 fn test_emit_events_2() {
     assert_emit_events(
-        None,
+        0, None,
         &[
             (0, vec![ 'C', 'B', 'A' ]),
             (1, vec![      'B', 'A' ]),
@@ -143,7 +143,7 @@ fn test_emit_events_2() {
 #[test]
 fn test_emit_events_3() {
     assert_emit_events(
-        None,
+        0, None,
         &[
             (0, vec![      'B', 'A' ]),
             (1, vec![ 'C', 'B', 'A' ]),
@@ -163,7 +163,7 @@ fn test_emit_events_3() {
 #[test]
 fn test_emit_events_4() {
     assert_emit_events(
-        None,
+        0, None,
         &[
             (0, vec![ 'C', 'B', 'A' ]),
             (1, vec![ 'D', 'B', 'A' ]),
@@ -185,7 +185,7 @@ fn test_emit_events_4() {
 #[test]
 fn test_emit_events_5() {
     assert_emit_events(
-        None,
+        0, None,
         &[
             (0, vec![ 'C', 'B', 'A' ]),
             (1, vec![      'D', 'A' ]),
@@ -207,7 +207,7 @@ fn test_emit_events_5() {
 #[test]
 fn test_emit_events_6() {
     assert_emit_events(
-        Some( 1 ),
+        0, Some( 1 ),
         &[
             (0, vec![ 'C', 'B', 'A' ]),
             (1, vec![ 'C', 'B', 'A' ]),
@@ -227,11 +227,11 @@ fn test_emit_events_6() {
 #[test]
 fn test_emit_events_7() {
     assert_emit_events(
-        Some( 1 ),
+        1, Some( 2 ),
         &[
             (0, vec![ 'C', 'B', 'A' ]),
-            (2, vec![ 'C', 'B', 'A' ]),
-            (3, vec![])
+            (3, vec![ 'C', 'B', 'A' ]),
+            (4, vec![])
         ],
         vec![
             ev_s( 0, 'A' ),
@@ -241,12 +241,12 @@ fn test_emit_events_7() {
             ev_e( 1, 'B' ),
             ev_e( 1, 'A' ),
 
-            ev_s( 2, 'A' ),
-            ev_s( 2, 'B' ),
-            ev_s( 2, 'C' ),
-            ev_e( 3, 'C' ),
-            ev_e( 3, 'B' ),
-            ev_e( 3, 'A' )
+            ev_s( 3, 'A' ),
+            ev_s( 3, 'B' ),
+            ev_s( 3, 'C' ),
+            ev_e( 4, 'C' ),
+            ev_e( 4, 'B' ),
+            ev_e( 4, 'A' )
         ]
     );
 }
@@ -254,7 +254,7 @@ fn test_emit_events_7() {
 #[test]
 fn test_emit_events_8() {
     assert_emit_events(
-        Some( 5 ),
+        5, None,
         &[
             (0, vec![ 'C', 'B', 'A' ])
         ],
@@ -275,8 +275,8 @@ pub fn main( args: args::TraceEventsArgs ) -> Result< (), Box< dyn Error > > {
         merge_threads: false,
         granularity: args.arg_granularity.granularity
     };
-    let mut period = args.period;
 
+    let mut merge_period = args.period;
     let mut raw_events_for_thread = HashMap::new();
     let mut interner = StringInterner::new();
     let collation = collate( collate_args, |collation, timestamp, process, tid, _cpu, user_backtrace, kernel_backtrace| {
@@ -295,9 +295,11 @@ pub fn main( args: args::TraceEventsArgs ) -> Result< (), Box< dyn Error > > {
         }
     })?;
 
-    if period.is_none() {
-        if let Some( frequency ) = collation.frequency() {
-            let profiling_period = (1.0 / frequency as f64) * 1000_000_000.0;
+    let sampling_period = if let Some( frequency ) = collation.frequency() {
+        info!( "Profiling data frequency: {}", frequency );
+
+        let profiling_period = (1.0 / frequency as f64) * 1000_000_000.0;
+        if merge_period.is_none() {
             let overhead =
                 max(
                     min(
@@ -309,11 +311,14 @@ pub fn main( args: args::TraceEventsArgs ) -> Result< (), Box< dyn Error > > {
                         100_000
                     )
                 );
-            period = Some( profiling_period as u64 + overhead );
-            info!( "Profiling data frequency: {}", frequency );
-            info!( "Trace period for frame collapsing: {}us", period.unwrap() / 1000 );
+            merge_period = Some( profiling_period as u64 + overhead );
+            info!( "Trace period for frame collapsing: {}us", merge_period.unwrap() / 1000 );
         }
-    }
+
+        profiling_period as u64
+    } else {
+        merge_period.unwrap_or( 1_000_000 )
+    };
 
     let mut wrote_pid = HashSet::new();
     let mut wrote_tid = HashSet::new();
@@ -324,7 +329,7 @@ pub fn main( args: args::TraceEventsArgs ) -> Result< (), Box< dyn Error > > {
     write!( stream, "[" )?;
     for ((pid, tid), mut raw_events) in raw_events_for_thread {
         raw_events.sort_by_key( |(timestamp, _)| *timestamp );
-        let events = emit_events( raw_events, period.clone() );
+        let events = emit_events( raw_events, sampling_period, merge_period.clone() );
         for event in events {
 
             match event.frame {
