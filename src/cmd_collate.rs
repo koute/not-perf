@@ -496,7 +496,10 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
             Packet::MemoryRegionMap { pid, range, is_read, is_write, is_executable, is_shared, file_offset, inode, major, minor, name } => {
                 let process = match collation.process_index_by_pid.get( &pid ).cloned() {
                     Some( index ) => &mut collation.processes[ index ],
-                    None => continue
+                    None => {
+                        warn!( "Memory region mapped for a process with unknown PID={}", pid );
+                        continue;
+                    }
                 };
 
                 let region = Region {
@@ -526,7 +529,10 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
             Packet::MemoryRegionUnmap { pid, range } => {
                 let process = match collation.process_index_by_pid.get( &pid ).cloned() {
                     Some( index ) => &mut collation.processes[ index ],
-                    None => continue
+                    None => {
+                        warn!( "Memory region unmapped for a process with unknown PID={}", pid );
+                        continue;
+                    }
                 };
 
                 debug!( "Memory region unmapped for PID {}: 0x{:016X}-0x{:016X}", pid, range.start, range.end );
@@ -665,7 +671,7 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
                 debug!( "Sample #{}", sample_counter );
 
                 if collation.processes[ 0 ].pid != pid {
-                    debug!( "Sample #{} is from different process with PID {}, skipping!", sample_counter, pid );
+                    warn!( "Sample #{} is from different process with PID {}, skipping!", sample_counter, pid );
                     continue;
                 }
 
