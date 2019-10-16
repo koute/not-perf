@@ -732,7 +732,6 @@ impl Perf {
         assert!( result != -1 );
     }
 
-    #[allow(dead_code)]
     pub fn disable( &mut self ) {
         unsafe {
             libc::ioctl( self.fd, PERF_EVENT_IOC_DISABLE as _ );
