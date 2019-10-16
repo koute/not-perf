@@ -15,6 +15,7 @@ pub use perf::{
     CommEvent,
     Mmap2Event,
 
+    ContextSwitchKind,
     Event,
     EventRef,
     EventSource,

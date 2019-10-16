@@ -121,6 +121,13 @@ pub struct ThrottleEvent {
 }
 
 #[derive(Debug)]
+pub enum ContextSwitchKind {
+    In,
+    OutWhileIdle,
+    OutWhileRunning
+}
+
+#[derive(Debug)]
 pub enum Event< 'a > {
     Sample( SampleEvent< 'a > ),
     Comm( CommEvent ),
@@ -130,6 +137,7 @@ pub enum Event< 'a > {
     Lost( LostEvent ),
     Throttle( ThrottleEvent ),
     Unthrottle( ThrottleEvent ),
+    ContextSwitch( ContextSwitchKind ),
     Raw( RawEvent< 'a > )
 }
 
@@ -385,6 +393,22 @@ impl< 'a > RawEvent< 'a > {
                 }
             },
 
+            PERF_RECORD_SWITCH => {
+                let is_out = self.misc & PERF_RECORD_MISC_SWITCH_OUT != 0;
+                let is_out_preempt = self.misc & PERF_RECORD_MISC_SWITCH_OUT_PREEMPT != 0;
+                let kind = if is_out {
+                    if is_out_preempt {
+                        ContextSwitchKind::OutWhileRunning
+                    } else {
+                        ContextSwitchKind::OutWhileIdle
+                    }
+                } else {
+                    ContextSwitchKind::In
+                };
+
+                Event::ContextSwitch( kind )
+            },
+
             _ => Event::Raw( self )
         }
     }
@@ -483,7 +507,8 @@ pub struct PerfBuilder {
     event_source: EventSource,
     inherit: bool,
     start_disabled: bool,
-    exclude_kernel: bool
+    exclude_kernel: bool,
+    gather_context_switches: bool
 }
 
 impl PerfBuilder {
@@ -538,6 +563,11 @@ impl PerfBuilder {
         self
     }
 
+    pub fn gather_context_switches( mut self ) -> Self {
+        self.gather_context_switches = true;
+        self
+    }
+
     pub fn open( self ) -> io::Result< Perf > {
         let pid = self.pid;
         let cpu = self.cpu.map( |cpu| cpu as i32 ).unwrap_or( -1 );
@@ -548,6 +578,7 @@ impl PerfBuilder {
         let inherit = self.inherit;
         let start_disabled = self.start_disabled;
         let exclude_kernel = self.exclude_kernel;
+        let gather_context_switches = self.gather_context_switches;
 
         debug!(
             "Opening perf events; pid={}, cpu={}, frequency={}, stack_size={}, reg_mask=0x{:016X}, event_source={:?}, inherit={}, start_disabled={}...",
@@ -651,6 +682,10 @@ impl PerfBuilder {
             attr.flags |= PERF_ATTR_FLAG_INHERIT;
         }
 
+        if gather_context_switches {
+            attr.flags |= PERF_ATTR_FLAG_CONTEX_SWITCH;
+        }
+
         let fd = sys_perf_event_open( &attr, pid as pid_t, cpu as _, -1, PERF_FLAG_FD_CLOEXEC );
         if fd < 0 {
             let err = io::Error::from_raw_os_error( -fd );
@@ -720,7 +755,8 @@ impl Perf {
             event_source: EventSource::SwCpuClock,
             inherit: false,
             start_disabled: false,
-            exclude_kernel: true
+            exclude_kernel: true,
+            gather_context_switches: false
         }
     }
 

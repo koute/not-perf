@@ -66,6 +66,10 @@ pub const PERF_RECORD_UNTHROTTLE: u32 = 6;
 pub const PERF_RECORD_FORK: u32 = 7;
 pub const PERF_RECORD_SAMPLE: u32 = 9;
 pub const PERF_RECORD_MMAP2: u32 = 10;
+pub const PERF_RECORD_SWITCH: u32 = 14;
+
+pub const PERF_RECORD_MISC_SWITCH_OUT: u16 = 1 << 13;
+pub const PERF_RECORD_MISC_SWITCH_OUT_PREEMPT: u16 = 1 << 14;
 
 pub const PERF_SAMPLE_IP: u64              = 1 << 0;
 pub const PERF_SAMPLE_TID: u64             = 1 << 1;
