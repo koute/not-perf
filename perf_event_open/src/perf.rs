@@ -536,6 +536,15 @@ impl PerfBuilder {
             start_disabled
         );
 
+        let max_sample_rate = Perf::max_sample_rate();
+        if let Some( max_sample_rate ) = max_sample_rate {
+            debug!( "Maximum sample rate: {}", max_sample_rate );
+            if frequency > max_sample_rate {
+                let message = format!( "frequency can be at most {} as configured in /proc/sys/kernel/perf_event_max_sample_rate", max_sample_rate );
+                return Err( io::Error::new( io::ErrorKind::InvalidInput, message ) );
+            }
+        }
+
         if stack_size > 63 * 1024 {
             return Err( io::Error::new( io::ErrorKind::InvalidInput, "sample_user_stack can be at most 63kb" ) );
         }
@@ -671,6 +680,11 @@ impl PerfBuilder {
 }
 
 impl Perf {
+    pub fn max_sample_rate() -> Option< u64 > {
+        let data = std::fs::read_to_string( "/proc/sys/kernel/perf_event_max_sample_rate" ).ok()?;
+        data.trim().parse::< u64 >().ok()
+    }
+
     pub fn build() -> PerfBuilder {
         PerfBuilder {
             pid: 0,
