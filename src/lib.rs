@@ -19,6 +19,7 @@ mod kallsyms;
 mod utils;
 mod metadata;
 mod interner;
+mod data_reader;
 
 pub use crate::archive::*;
 pub use crate::stack_reader::StackReader;

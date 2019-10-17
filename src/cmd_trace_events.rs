@@ -6,7 +6,7 @@ use std::cmp::{max, min};
 
 use crate::args;
 use crate::interner::StringInterner;
-use crate::cmd_collate::{FrameKind, CollapseOpts, collate, decode, repack_cli_args, write_frame};
+use crate::data_reader::{FrameKind, CollapseOpts, collate, decode, repack_cli_args, write_frame};
 
 #[derive(PartialEq, Debug)]
 struct TraceEvent< T > {
