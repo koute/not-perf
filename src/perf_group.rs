@@ -14,7 +14,31 @@ use proc_maps;
 
 use crate::utils::read_string_lossy;
 use crate::perf_arch;
-use perf_event_open::{Perf, EventRef, Event, CommEvent, Mmap2Event, EventSource};
+use perf_event_open::{Perf, Event, CommEvent, Mmap2Event, EventSource};
+
+pub struct EventRef {
+    pid: u32,
+    cpu: u32,
+    inner: perf_event_open::EventRef
+}
+
+impl EventRef {
+    pub fn cpu( &self ) -> u32 {
+        self.cpu
+    }
+
+    pub fn pid( &self ) -> u32 {
+        self.pid
+    }
+}
+
+impl Deref for EventRef {
+    type Target = perf_event_open::EventRef;
+
+    fn deref( &self ) -> &Self::Target {
+        &self.inner
+    }
+}
 
 struct StoppedProcess( u32 );
 
@@ -40,13 +64,17 @@ impl Drop for StoppedProcess {
 }
 
 struct Member {
+    pid: u32,
+    cpu: u32,
     perf: Perf,
     is_closed: Cell< bool >
 }
 
 impl Member {
-    fn new( perf: Perf ) -> Self {
+    fn new( pid: u32, cpu: u32, perf: Perf ) -> Self {
         Member {
+            pid,
+            cpu,
             perf,
             is_closed: Cell::new( false )
         }
@@ -161,7 +189,7 @@ impl PerfGroup {
         let mut perf_events = Vec::new();
         let threads = get_threads( pid )?;
 
-        for cpu in 0..num_cpus::get() {
+        for cpu in 0..num_cpus::get() as u32 {
             let perf = Perf::build()
                 .pid( pid )
                 .only_cpu( cpu as _ )
@@ -169,12 +197,13 @@ impl PerfGroup {
                 .sample_user_stack( self.stack_size )
                 .sample_user_regs( perf_arch::native::REG_MASK )
                 .sample_kernel()
+                .gather_context_switches()
                 .event_source( self.event_source )
                 .inherit_to_children()
                 .start_disabled()
                 .open()?;
 
-            perf_events.push( perf );
+            perf_events.push( (cpu, perf) );
 
             for &(tid, _) in &threads {
                 let perf = Perf::build()
@@ -184,17 +213,18 @@ impl PerfGroup {
                     .sample_user_stack( self.stack_size )
                     .sample_user_regs( perf_arch::native::REG_MASK )
                     .sample_kernel()
+                    .gather_context_switches()
                     .event_source( self.event_source )
                     .inherit_to_children()
                     .start_disabled()
                     .open()?;
 
-                perf_events.push( perf );
+                perf_events.push( (cpu, perf) );
             }
         }
 
-        for perf in perf_events {
-            self.members.insert( perf.fd(), Member::new( perf ) );
+        for (cpu, perf) in perf_events {
+            self.members.insert( perf.fd(), Member::new( pid, cpu, perf ) );
         }
 
         let maps = read_string_lossy( &format!( "/proc/{}/maps", pid ) )?;
@@ -278,9 +308,10 @@ impl PerfGroup {
         self.event_buffer.clear();
 
         let mut fds_to_remove = Vec::new();
-        for perf in self.members.values_mut() {
+        for member in self.members.values_mut() {
+            let perf = &mut member.perf;
             if !perf.are_events_pending() {
-                if perf.is_closed.get() {
+                if member.is_closed.get() {
                     fds_to_remove.push( perf.fd() );
                     continue;
                 }
@@ -288,7 +319,15 @@ impl PerfGroup {
                 continue;
             }
 
-            self.event_buffer.extend( perf.iter() );
+            let pid = member.pid;
+            let cpu = member.cpu;
+            self.event_buffer.extend( perf.iter().map( |event| {
+                EventRef {
+                    inner: event,
+                    pid,
+                    cpu
+                }
+            }));
         }
 
         for fd in fds_to_remove {

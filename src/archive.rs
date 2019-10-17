@@ -48,6 +48,13 @@ impl< 'a, C: Context > Writable< C > for DwarfReg {
 pub const ARCHIVE_MAGIC: u32 = 0x4652504E;
 pub const ARCHIVE_VERSION: u32 = 1;
 
+#[derive(Debug, Readable, Writable)]
+pub enum ContextSwitchKind {
+    In,
+    OutWhileIdle,
+    OutWhileRunning
+}
+
 #[allow(non_camel_case_types)]
 #[derive(Debug, Readable, Writable)]
 pub enum Packet< 'a > {
@@ -170,6 +177,11 @@ pub enum Packet< 'a > {
     },
     ProfilingFrequency {
         frequency: u32
+    },
+    ContextSwitch {
+        pid: u32,
+        cpu: u32,
+        kind: ContextSwitchKind
     }
 }
 

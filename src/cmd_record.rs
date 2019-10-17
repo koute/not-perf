@@ -11,7 +11,7 @@ use crate::args;
 use perf_event_open::{Event, CommEvent, Mmap2Event};
 use crate::perf_group::PerfGroup;
 use crate::perf_arch;
-use crate::archive::Packet;
+use crate::archive::{ContextSwitchKind, Packet};
 use crate::profiler::{ProfilingController, Sample};
 
 fn handle_comm_event( event: CommEvent, controller: &ProfilingController ) {
@@ -179,6 +179,19 @@ pub fn main( args: args::RecordArgs ) -> Result< (), Box< dyn Error > > {
                         cpu: event.cpu,
                         kernel_backtrace: Cow::Borrowed( &event.callchain ),
                         stack: event.stack.into()
+                    });
+                },
+                Event::ContextSwitch( kind ) => {
+                    let kind = match kind {
+                        perf_event_open::ContextSwitchKind::In => ContextSwitchKind::In,
+                        perf_event_open::ContextSwitchKind::OutWhileIdle => ContextSwitchKind::OutWhileIdle,
+                        perf_event_open::ContextSwitchKind::OutWhileRunning => ContextSwitchKind::OutWhileRunning
+                    };
+
+                    controller.write_packet( Packet::ContextSwitch {
+                        pid: event_ref.pid(),
+                        cpu: event_ref.cpu(),
+                        kind
                     });
                 },
                 _ => {}
