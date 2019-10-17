@@ -38,6 +38,7 @@ Some of those are as follows:
 1. Install at least Rust 1.31
 2. Build it:
 
+        $ cd cli
         $ cargo build --release
 
 3. Grab the binary from `target/release/`.
