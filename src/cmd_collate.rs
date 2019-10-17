@@ -12,10 +12,6 @@ use crate::interner::StringInterner;
 
 use crate::data_reader::{Collation, CollapseOpts, Process, FrameKind, collate, decode, decode_user_frames, repack_cli_args, write_frame};
 
-fn get_basename( path: &str ) -> &str {
-    &path[ path.rfind( "/" ).map( |index| index + 1 ).unwrap_or( 0 ).. ]
-}
-
 #[derive(Debug)]
 pub enum CollateFormat {
     Collapsed,

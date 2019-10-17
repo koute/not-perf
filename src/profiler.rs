@@ -189,7 +189,6 @@ mod tests {
 
     #[test]
     fn spurious_reload_with_no_base_address_does_not_panic() {
-        #[cfg(feature = "env_logger")]
         let _ = env_logger::try_init();
         test_reload_with_regions( vec![
             vec![region( 0, 80, 0x1000, "file_1" )],
@@ -199,7 +198,6 @@ mod tests {
 
     #[test]
     fn reload_which_clears_base_address_does_not_panic() {
-        #[cfg(feature = "env_logger")]
         let _ = env_logger::try_init();
         test_reload_with_regions( vec![
             vec![region( 50, 100, 0, "file_1" )],
@@ -231,7 +229,6 @@ mod tests {
 
     quickcheck! {
         fn reloading_never_panics( all_regions: Vec< Vec< TestRegion > > ) -> bool {
-            #[cfg(feature = "env_logger")]
             let _ = env_logger::try_init();
 
             let all_regions = all_regions.into_iter().map( |regions| regions.into_iter().map( |entry| {

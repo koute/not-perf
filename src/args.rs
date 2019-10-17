@@ -256,6 +256,7 @@ pub struct ArgGranularity {
     pub granularity: Granularity
 }
 
+#[cfg(feature = "inferno")]
 #[derive(StructOpt, Debug)]
 #[structopt(rename_all = "kebab-case")]
 pub struct FlamegraphArgs {

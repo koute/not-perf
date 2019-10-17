@@ -1,29 +1,39 @@
 #[macro_use]
-extern crate log;
-#[macro_use]
 extern crate speedy_derive;
 
 #[macro_use]
 extern crate lazy_static;
 
 #[macro_use]
+extern crate log;
+
+#[macro_use]
 extern crate serde_derive;
 
-mod args;
-mod archive;
-mod stack_reader;
-mod raw_data;
-mod cmd_collate;
-mod cmd_metadata;
-mod kallsyms;
+#[cfg(test)]
+#[macro_use]
+extern crate quickcheck;
+
 mod utils;
+
+pub mod args;
+mod raw_data;
+mod perf_group;
+mod perf_arch;
+mod archive;
+mod execution_queue;
+mod kallsyms;
+mod ps;
+mod stack_reader;
 mod metadata;
+mod mount_info;
+mod profiler;
 mod interner;
 mod data_reader;
-
-pub use crate::archive::*;
-pub use crate::stack_reader::StackReader;
-pub use crate::cmd_collate::collapse_into_sorted_vec;
-pub use crate::cmd_metadata::generate_metadata;
-pub use crate::metadata::Metadata;
-pub use crate::args::{MetadataArgs, SharedCollationArgs};
+pub mod cmd_record;
+#[cfg(feature = "inferno")]
+pub mod cmd_flamegraph;
+pub mod cmd_csv;
+pub mod cmd_collate;
+pub mod cmd_metadata;
+pub mod cmd_trace_events;

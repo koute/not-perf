@@ -1,0 +1,17 @@
+[package]
+name = "nperf"
+version = "0.1.0"
+authors = ["Jan Bujak <jan.bujak@nokia.com>"]
+edition = "2018"
+
+[dependencies]
+structopt = "0.2"
+log = "0.4"
+env_logger = "0.7"
+nperf-core = { path = "..", default-features = false }
+
+[features]
+default = ["addr2line", "inferno"]
+addr2line = ["nperf-core/addr2line"]
+debug-logs = ["nperf-core/debug-logs"]
+inferno = ["nperf-core/inferno"]

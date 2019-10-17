@@ -1,47 +1,22 @@
 #[macro_use]
-extern crate speedy_derive;
-
-#[macro_use]
-extern crate lazy_static;
-
-#[macro_use]
 extern crate log;
-
-#[macro_use]
-extern crate serde_derive;
-
-#[cfg(test)]
-#[macro_use]
-extern crate quickcheck;
-
-mod utils;
-
-mod args;
-mod raw_data;
-mod perf_group;
-mod perf_arch;
-mod archive;
-mod execution_queue;
-mod kallsyms;
-mod ps;
-mod stack_reader;
-mod metadata;
-mod mount_info;
-mod profiler;
-mod interner;
-mod data_reader;
-mod cmd_record;
-#[cfg(feature = "inferno")]
-mod cmd_flamegraph;
-mod cmd_csv;
-mod cmd_collate;
-mod cmd_metadata;
-mod cmd_trace_events;
 
 use std::env;
 use std::error::Error;
 use std::process::exit;
 use structopt::StructOpt;
+
+use nperf_core::{
+    args,
+    cmd_collate,
+    cmd_csv,
+    cmd_metadata,
+    cmd_record,
+    cmd_trace_events
+};
+
+#[cfg(feature = "inferno")]
+use nperf_core::cmd_flamegraph;
 
 fn main_impl() -> Result< (), Box< dyn Error > > {
     if env::var( "RUST_LOG" ).is_err() {
