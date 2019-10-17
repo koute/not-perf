@@ -4,7 +4,7 @@ use std::fs::File;
 
 use crate::args::{self, Granularity};
 use crate::interner::StringInterner;
-use crate::data_reader::{collate, decode_user_frames, repack_cli_args, to_s};
+use crate::data_reader::{DecodeOpts, EventKind, read_data, repack_cli_args, to_s};
 
 pub struct GraphSample {
     pub timestamp: u64,
@@ -19,23 +19,35 @@ impl GraphSample {
 }
 
 pub fn into_graph( args: &args::SharedCollationArgs, sampling_interval: Option< f64 > ) -> Result< Vec< GraphSample >, Box< dyn Error > > {
-    let (omit_regex, collate_args) = repack_cli_args( args );
+    let (omit_regex, read_data_args) = repack_cli_args( args );
+    let opts = DecodeOpts {
+        omit_regex,
+        emit_kernel_frames: true,
+        emit_thread_frames: false,
+        emit_process_frames: false,
+        granularity: Granularity::Address
+    };
 
     let mut interner = StringInterner::new();
     let mut samples = Vec::new();
-    let collation = collate( collate_args, |_collation, timestamp, process, _tid, _cpu, user_backtrace, kernel_backtrace| {
-        if !decode_user_frames( &omit_regex, Granularity::Address, process, user_backtrace, &mut interner, None ) {
-            return;
+    let state = read_data( read_data_args, |event| {
+        match event.kind {
+            EventKind::Sample( sample ) => {
+                if !sample.try_decode( event.state, &opts, &mut interner, None ) {
+                    return;
+                }
+
+                let (user, kernel) = if sample.kernel_backtrace.is_empty() {
+                    (0, 1)
+                } else {
+                    (1, 0)
+                };
+
+                let sample = GraphSample { timestamp: sample.timestamp, user, kernel };
+                samples.push( sample );
+            },
+            _ => {}
         }
-
-        let (user, kernel) = if kernel_backtrace.is_empty() {
-            (0, 1)
-        } else {
-            (1, 0)
-        };
-
-        let sample = GraphSample { timestamp, user, kernel };
-        samples.push( sample );
     })?;
 
     if samples.is_empty() {
@@ -58,7 +70,7 @@ pub fn into_graph( args: &args::SharedCollationArgs, sampling_interval: Option< 
             1
         };
 
-    let unfiltered_first_timestamp = collation.unfiltered_first_timestamp().unwrap();
+    let unfiltered_first_timestamp = state.unfiltered_first_timestamp().unwrap();
     let first_timestamp = samples.first().unwrap().timestamp - unfiltered_first_timestamp;
 
     let mut output = Vec::new();

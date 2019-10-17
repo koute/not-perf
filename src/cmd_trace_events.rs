@@ -6,7 +6,7 @@ use std::cmp::{max, min};
 
 use crate::args;
 use crate::interner::StringInterner;
-use crate::data_reader::{FrameKind, CollapseOpts, collate, decode, repack_cli_args, write_frame};
+use crate::data_reader::{FrameKind, DecodeOpts, EventKind, read_data, repack_cli_args, write_frame};
 
 #[derive(PartialEq, Debug)]
 struct TraceEvent< T > {
@@ -270,32 +270,36 @@ fn test_emit_events_8() {
 }
 
 pub fn main( args: args::TraceEventsArgs ) -> Result< (), Box< dyn Error > > {
-    let (omit_regex, collate_args) = repack_cli_args( &args.collation_args );
-    let opts = CollapseOpts {
-        merge_threads: false,
+    let (omit_regex, read_data_args) = repack_cli_args( &args.collation_args );
+    let opts = DecodeOpts {
+        omit_regex,
+        emit_kernel_frames: true,
+        emit_thread_frames: false,
+        emit_process_frames: false,
         granularity: args.arg_granularity.granularity
     };
 
     let mut merge_period = args.period;
     let mut raw_events_for_thread = HashMap::new();
     let mut interner = StringInterner::new();
-    let collation = collate( collate_args, |collation, timestamp, process, tid, _cpu, user_backtrace, kernel_backtrace| {
-        let frames = decode(
-            &omit_regex,
-            &collation,
-            process,
-            tid,
-            &user_backtrace,
-            &kernel_backtrace,
-            &opts,
-            &mut interner
-        );
-        if let Some( frames ) = frames {
-            raw_events_for_thread.entry( (process.pid(), tid) ).or_insert_with( Vec::new ).push( (timestamp, frames) );
+    let state = read_data( read_data_args, |event| {
+        match event.kind {
+            EventKind::Sample( sample ) => {
+                let frames = sample.decode(
+                    &event.state,
+                    &opts,
+                    &mut interner
+                );
+                if let Some( frames ) = frames {
+                    raw_events_for_thread.entry( (sample.process.pid(), sample.tid) ).or_insert_with( Vec::new ).push( (sample.timestamp, frames) );
+                }
+            },
+            _ => {}
         }
+
     })?;
 
-    let sampling_period = if let Some( frequency ) = collation.frequency() {
+    let sampling_period = if let Some( frequency ) = state.frequency() {
         info!( "Profiling data frequency: {}", frequency );
 
         let profiling_period = (1.0 / frequency as f64) * 1000_000_000.0;
@@ -357,13 +361,13 @@ pub fn main( args: args::TraceEventsArgs ) -> Result< (), Box< dyn Error > > {
                             r#",{{"pid":{},"tid":{},"ts":0,"ph":"M","cat":"__metadata","name":"num_cpus","args":{{"number":{}}}}}"#,
                             pid,
                             pid,
-                            collation.cpu_count()
+                            state.cpu_count()
                         )?;
                         wrote_header = true;
                     }
 
                     if !wrote_pid.contains( &pid ) {
-                        if let Some( process ) = collation.get_process( pid ) {
+                        if let Some( process ) = state.get_process( pid ) {
                             let name = serde_json::to_string( process.executable() ).map_err( |error| io::Error::new( io::ErrorKind::Other, error ) )?;
                             writeln!(
                                 stream,
@@ -379,7 +383,7 @@ pub fn main( args: args::TraceEventsArgs ) -> Result< (), Box< dyn Error > > {
                 },
                 FrameKind::Thread( tid ) => {
                     if !wrote_tid.contains( &tid ) {
-                        if let Some( name ) = collation.get_thread_name( tid ) {
+                        if let Some( name ) = state.get_thread_name( tid ) {
                             let name = serde_json::to_string( &name ).map_err( |error| io::Error::new( io::ErrorKind::Other, error ) )?;
                             writeln!(
                                 stream,
@@ -395,7 +399,7 @@ pub fn main( args: args::TraceEventsArgs ) -> Result< (), Box< dyn Error > > {
                 },
                 FrameKind::MainThread => {
                     if !wrote_tid.contains( &last_pid ) {
-                        if let Some( name ) = collation.get_thread_name( last_pid ).or_else( || collation.get_process( last_pid ).map( |process| process.executable() ) ) {
+                        if let Some( name ) = state.get_thread_name( last_pid ).or_else( || state.get_process( last_pid ).map( |process| process.executable() ) ) {
                             let name = serde_json::to_string( &name ).map_err( |error| io::Error::new( io::ErrorKind::Other, error ) )?;
                             writeln!(
                                 stream,
@@ -415,7 +419,7 @@ pub fn main( args: args::TraceEventsArgs ) -> Result< (), Box< dyn Error > > {
             write!( stream, ",{{" )?;
             write!( stream, "\"name\": " )?;
             let mut name = String::new();
-            write_frame( &collation, &interner, &mut name, &event.frame );
+            write_frame( &state, &interner, &mut name, &event.frame );
             serde_json::to_writer( &mut stream, &name ).map_err( |error| io::Error::new( io::ErrorKind::Other, error ) )?;
             write!( stream, ",\"ph\": \"{}\"", if event.is_end { "E" } else { "B" } )?;
             write!( stream, ",\"ts\": {}", event.timestamp as f64 / 1000.0 )?;

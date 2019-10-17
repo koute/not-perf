@@ -4,13 +4,10 @@ use std::fmt::Write as FmtWrite;
 use std::error::Error;
 use std::borrow::Cow;
 
-use regex::Regex;
-
 use crate::args::{self, Granularity};
-use crate::archive::UserFrame;
 use crate::interner::StringInterner;
 
-use crate::data_reader::{Collation, CollapseOpts, Process, FrameKind, collate, decode, decode_user_frames, repack_cli_args, write_frame};
+use crate::data_reader::{State, DecodeOpts, EventKind, EventSample, FrameKind, read_data, repack_cli_args, write_frame};
 
 #[derive(Debug)]
 pub enum CollateFormat {
@@ -27,29 +24,20 @@ fn escape< 'a >( string: &'a str ) -> Cow< 'a, str > {
 }
 
 fn write_perf_like_output< T: io::Write >(
-    omit_regex: &Option< Regex >,
-    collation: &Collation,
-    process: &Process,
-    tid: u32,
-    user_backtrace: &[UserFrame],
-    kernel_backtrace: &[u64],
-    cpu: u32,
-    timestamp: u64,
+    state: &State,
+    sample: EventSample,
+    frames: &[FrameKind],
+    interner: &mut StringInterner,
     output: &mut T
 ) -> Result< (), io::Error > {
-    let mut interner = StringInterner::new();
-    let mut frames = Vec::new();
-    if !decode_user_frames( omit_regex, Granularity::Address, process, user_backtrace, &mut interner, Some( &mut frames ) ) {
-        return Ok(()); // Was filtered out.
-    }
-
+    let timestamp = sample.timestamp;
     let secs = timestamp / 1000_000_000;
     let nsecs = timestamp - (secs * 1000_000_000);
-    write!( output, "{}", escape( process.executable() ) )?;
-    writeln!( output, " {}/{} [{:03}] {}.{:09}: cpu-clock: ", process.pid(), tid, cpu, secs, nsecs )?;
+    write!( output, "{}", escape( sample.process.executable() ) )?;
+    writeln!( output, " {}/{} [{:03}] {}.{:09}: cpu-clock: ", sample.process.pid(), sample.tid, sample.cpu, secs, nsecs )?;
 
-    for &address in kernel_backtrace {
-        if let Some( symbol ) = collation.get_kernel_symbol_by_address( address ) {
+    for &address in sample.kernel_backtrace {
+        if let Some( symbol ) = state.get_kernel_symbol_by_address( address ) {
             if let Some( module ) = symbol.module.as_ref() {
                 writeln!( output, "\t{:16X} {} ([linux:{}])", address, symbol.name, module ).unwrap()
             } else {
@@ -66,13 +54,13 @@ fn write_perf_like_output< T: io::Write >(
                 writeln!( output, "\t{:16X} 0x{:016X} ([unknown])", address, address )?;
             },
             FrameKind::UserBinary( ref binary_id, address ) => {
-                let binary = collation.get_binary( binary_id );
+                let binary = state.get_binary( binary_id );
                 writeln!( output, "\t{:16X} 0x{:016X} ({})", address, address, binary.basename() )?;
             },
             FrameKind::UserByAddress { ref binary_id, address, is_inline, symbol } => {
-                let binary = collation.get_binary( binary_id );
-                let symbol = interner.resolve( symbol ).unwrap();
-                if is_inline {
+                let binary = state.get_binary( binary_id );
+                let symbol = interner.resolve( *symbol ).unwrap();
+                if *is_inline {
                     writeln!( output, "\t{:16X} inline {} ({})", address, symbol, binary.basename() )?;
                 } else {
                     writeln!( output, "\t{:16X} {} ({})", address, symbol, binary.basename() )?;
@@ -92,27 +80,26 @@ pub fn collapse_into_sorted_vec(
     arg_granularity: &args::ArgGranularity,
     arg_merge_threads: &args::ArgMergeThreads
 ) -> Result< Vec< String >, Box< dyn Error > > {
-    let (omit_regex, collate_args) = repack_cli_args( args );
-    let opts = CollapseOpts {
-        merge_threads: arg_merge_threads.merge_threads,
+    let (omit_regex, read_data_args) = repack_cli_args( args );
+    let opts = DecodeOpts {
+        omit_regex,
+        emit_kernel_frames: true,
+        emit_thread_frames: !arg_merge_threads.merge_threads,
+        emit_process_frames: true,
         granularity: arg_granularity.granularity
     };
 
     let mut stacks: HashMap< Vec< FrameKind >, u64 > = HashMap::new();
     let mut interner = StringInterner::new();
-    let collation = collate( collate_args, |collation, _timestamp, process, tid, _cpu, user_backtrace, kernel_backtrace| {
-        let frames = decode(
-            &omit_regex,
-            &collation,
-            process,
-            tid,
-            &user_backtrace,
-            &kernel_backtrace,
-            &opts,
-            &mut interner
-        );
-        if let Some( frames ) = frames {
-            *stacks.entry( frames ).or_insert( 0 ) += 1;
+    let state = read_data( read_data_args, |event| {
+        match event.kind {
+            EventKind::Sample( sample ) => {
+                let frames = sample.decode( &event.state, &opts, &mut interner );
+                if let Some( frames ) = frames {
+                    *stacks.entry( frames ).or_insert( 0 ) += 1;
+                }
+            },
+            _ => {}
         }
     })?;
 
@@ -127,7 +114,7 @@ pub fn collapse_into_sorted_vec(
                 line.push( ';' );
             }
 
-            write_frame( &collation, &interner, &mut line, frame );
+            write_frame( &state, &interner, &mut line, frame );
         }
 
         write!( &mut line, " {}", count ).unwrap();
@@ -148,21 +135,39 @@ pub fn main( args: args::CollateArgs ) -> Result< (), Box< dyn Error > > {
             stdout.write_all( output.as_bytes() ).unwrap();
         },
         CollateFormat::PerfLike => {
-            let (omit_regex, collate_args) = repack_cli_args( &args.collation_args );
+            let (omit_regex, read_data_args) = repack_cli_args( &args.collation_args );
             let stdout = io::stdout();
             let mut stdout = stdout.lock();
-            collate( collate_args, |collation, timestamp, process, tid, cpu, user_backtrace, kernel_backtrace| {
-                write_perf_like_output(
-                    &omit_regex,
-                    &collation,
-                    process,
-                    tid,
-                    &user_backtrace,
-                    &kernel_backtrace,
-                    cpu,
-                    timestamp,
-                    &mut stdout
-                ).unwrap();
+
+            let mut interner = StringInterner::new();
+            let mut frames = Vec::new();
+            let opts = DecodeOpts {
+                omit_regex,
+                emit_kernel_frames: false,
+                emit_thread_frames: false,
+                emit_process_frames: false,
+                granularity: Granularity::Address
+            };
+
+            read_data( read_data_args, |event| {
+                match event.kind {
+                    EventKind::Sample( sample ) => {
+                        if !sample.try_decode( &event.state, &opts, &mut interner, Some( &mut frames ) ) {
+                            return; // Was filtered out.
+                        }
+
+                        write_perf_like_output(
+                            &event.state,
+                            sample,
+                            &frames,
+                            &mut interner,
+                            &mut stdout
+                        ).unwrap();
+
+                        frames.clear();
+                    },
+                    _ => {}
+                }
             })?;
         }
     }

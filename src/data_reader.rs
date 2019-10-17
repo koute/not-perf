@@ -233,7 +233,7 @@ fn get_basename( path: &str ) -> &str {
     &path[ path.rfind( "/" ).map( |index| index + 1 ).unwrap_or( 0 ).. ]
 }
 
-pub(crate) struct CollateArgs< 'a > {
+pub(crate) struct ReadDataArgs< 'a > {
     input_path: &'a OsStr,
     debug_symbols: Vec< &'a OsStr >,
     force_stack_size: Option< u32 >,
@@ -261,7 +261,7 @@ fn parse_timestamp_bound( timestamp: impl AsRef< str > ) -> TimestampBound {
     }
 }
 
-pub(crate) struct Collation {
+pub(crate) struct State {
     kallsyms: RangeMap< KernelSymbol >,
     process_index_by_pid: HashMap< u32, usize >,
     processes: Vec< Process >,
@@ -272,7 +272,7 @@ pub(crate) struct Collation {
     frequency: Option< u32 >
 }
 
-impl Collation {
+impl State {
     fn get_kernel_symbol( &self, symbol_index: usize ) -> &KernelSymbol {
         self.kallsyms.get_value_by_index( symbol_index ).unwrap()
     }
@@ -318,14 +318,170 @@ pub(crate) fn to_s( timestamp: u64 ) -> f64 {
     timestamp as f64 / 1_000_000_000.0
 }
 
-pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Collation, Box< dyn Error > >
-    where F: FnMut( &Collation, u64, &Process, u32, u32, &[UserFrame], &[u64] )
+pub(crate) struct EventSample< 'a > {
+    pub timestamp: u64,
+    pub process: &'a Process,
+    pub tid: u32,
+    pub cpu: u32,
+    pub user_backtrace: &'a [UserFrame],
+    pub kernel_backtrace: &'a [u64]
+}
+
+impl< 'a > EventSample< 'a > {
+    pub fn decode(
+        &self,
+        state: &State,
+        opts: &DecodeOpts,
+        interner: &mut StringInterner
+    ) -> Option< Vec< FrameKind > > {
+        let mut frames = Vec::new();
+
+        if !self.try_decode( state, opts, interner, Some( &mut frames ) ) {
+            return None;
+        }
+
+        Some( frames )
+    }
+
+    pub fn try_decode(
+        &self,
+        state: &State,
+        opts: &DecodeOpts,
+        interner: &mut StringInterner,
+        mut output: Option< &mut Vec< FrameKind > >
+    ) -> bool {
+        if let Some( ref mut output ) = output {
+            let mut length = 0;
+            length += self.user_backtrace.len();
+            if opts.emit_kernel_frames {
+                length += self.kernel_backtrace.len();
+            }
+            if opts.emit_thread_frames {
+                length += 1;
+            }
+            if opts.emit_process_frames {
+                length += 1;
+            }
+            output.reserve( length );
+
+            if opts.emit_kernel_frames {
+                for &addr in self.kernel_backtrace.iter() {
+                    if let Some( index ) = state.kallsyms.get_index( addr ) {
+                        output.push( FrameKind::KernelSymbol( index ) );
+                    } else {
+                        output.push( FrameKind::Kernel( addr ) );
+                    }
+                }
+            }
+        }
+
+        for (nth_frame, user_frame) in self.user_backtrace.iter().enumerate() {
+            let default = FrameKind::User( user_frame.initial_address.unwrap_or( user_frame.address ) );
+            let region = match self.process.memory_regions.get_value( user_frame.address ) {
+                Some( region ) => region,
+                None => {
+                    if let Some( ref mut output ) = output {
+                        output.push( default );
+                    }
+                    return true;
+                }
+            };
+
+            let binary_id: BinaryId = region.into();
+            let mut omit = false;
+            self.process.address_space.decode_symbol_while( if nth_frame == 0 { user_frame.address } else { user_frame.address - 1 }, &mut |frame| {
+                if let Some( name ) = frame.demangled_name.take().or_else( || frame.name.take() ) {
+                    if let Some( ref regex ) = opts.omit_regex {
+                        if regex.is_match( &name ) {
+                            omit = true;
+                            return false;
+                        }
+                    }
+
+                    if let Some( ref mut output ) = output {
+                        let string_id = interner.get_or_intern( name );
+                        if opts.granularity == Granularity::Line {
+                            if let Some( ref file ) = frame.file {
+                                if let Some( line ) = frame.line {
+                                    output.push( FrameKind::UserByLine {
+                                        binary_id: binary_id.clone(),
+                                        is_inline: frame.is_inline,
+                                        symbol: string_id,
+                                        file: interner.get_or_intern( file ),
+                                        line
+                                    });
+                                    return true;
+                                }
+                            }
+                        }
+
+                        if opts.granularity == Granularity::Line || opts.granularity == Granularity::Function {
+                            output.push( FrameKind::UserByFunction {
+                                binary_id: binary_id.clone(),
+                                is_inline: frame.is_inline,
+                                symbol: string_id
+                            });
+                        } else {
+                            output.push( FrameKind::UserByAddress {
+                                binary_id: binary_id.clone(),
+                                is_inline: frame.is_inline,
+                                symbol: string_id,
+                                address: frame.absolute_address
+                            });
+                        }
+                    }
+                } else {
+                    if let Some( ref mut output ) = output {
+                        output.push( FrameKind::UserBinary( binary_id.clone(), frame.absolute_address ) );
+                    }
+                }
+
+                true
+            });
+
+            if omit {
+                return false;
+            }
+        }
+
+        if let Some( ref mut output ) = output {
+            if opts.emit_thread_frames {
+                if self.process.pid == self.tid {
+                    output.push( FrameKind::MainThread );
+                } else {
+                    output.push( FrameKind::Thread( self.tid ) );
+                }
+            }
+
+            if opts.emit_process_frames {
+                output.push( FrameKind::Process( self.process.pid ) );
+            }
+        }
+
+        true
+    }
+}
+
+pub(crate) enum EventKind< 'a > {
+    Sample( EventSample< 'a > ),
+
+    #[doc(hidden)]
+    __NonExhaustive
+}
+
+pub(crate) struct Event< 'a > {
+    pub state: &'a State,
+    pub kind: EventKind< 'a >
+}
+
+pub(crate) fn read_data< F >( args: ReadDataArgs, mut on_event: F ) -> Result< State, Box< dyn Error > >
+    where F: FnMut( Event )
 {
     let input_path = args.input_path;
     let fp = fs::File::open( args.input_path ).map_err( |err| format!( "cannot open {:?}: {}", input_path.clone(), err ) )?;
     let mut reader = ArchiveReader::new( fp ).validate_header().unwrap().skip_unknown();
 
-    let mut collation = Collation {
+    let mut state = State {
         kallsyms: RangeMap::new(),
         process_index_by_pid: HashMap::new(),
         processes: Vec::new(),
@@ -415,7 +571,7 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
                 machine_architecture = architecture.into_owned();
                 machine_bitness = bitness;
                 machine_endianness = endianness;
-                collation.cpu_count = cpu_count;
+                state.cpu_count = cpu_count;
 
                 if machine_architecture == arch::native::Arch::NAME &&
                    machine_endianness == Endianness::NATIVE &&
@@ -446,9 +602,9 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
                     address_space_needs_reload: true
                 };
 
-                let process_index = collation.processes.len();
-                collation.processes.push( process );
-                collation.process_index_by_pid.insert( pid, process_index );
+                let process_index = state.processes.len();
+                state.processes.push( process );
+                state.process_index_by_pid.insert( pid, process_index );
             },
             Packet::BinaryInfo { inode, symbol_table_count, path, debuglink, load_headers, .. } => {
                 let debuglink_length = debuglink.iter().position( |&byte| byte == 0 ).unwrap_or( debuglink.len() );
@@ -488,17 +644,17 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
                     }
                 }
 
-                collation.binary_by_id.insert( binary_id, binary );
+                state.binary_by_id.insert( binary_id, binary );
             },
             Packet::BuildId { inode, path, build_id } => {
                 let binary_name = String::from_utf8_lossy( &path );
                 let binary_id = to_binary_id( inode, &binary_name );
-                let binary = collation.binary_by_id.get_mut( &binary_id ).unwrap();
+                let binary = state.binary_by_id.get_mut( &binary_id ).unwrap();
                 binary.build_id = Some( build_id );
             },
             Packet::MemoryRegionMap { pid, range, is_read, is_write, is_executable, is_shared, file_offset, inode, major, minor, name } => {
-                let process = match collation.process_index_by_pid.get( &pid ).cloned() {
-                    Some( index ) => &mut collation.processes[ index ],
+                let process = match state.process_index_by_pid.get( &pid ).cloned() {
+                    Some( index ) => &mut state.processes[ index ],
                     None => {
                         warn!( "Memory region mapped for a process with unknown PID={}", pid );
                         continue;
@@ -530,8 +686,8 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
                 process.address_space_needs_reload = true;
             },
             Packet::MemoryRegionUnmap { pid, range } => {
-                let process = match collation.process_index_by_pid.get( &pid ).cloned() {
-                    Some( index ) => &mut collation.processes[ index ],
+                let process = match state.process_index_by_pid.get( &pid ).cloned() {
+                    Some( index ) => &mut state.processes[ index ],
                     None => {
                         warn!( "Memory region unmapped for a process with unknown PID={}", pid );
                         continue;
@@ -543,13 +699,13 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
                 process.address_space_needs_reload = true;
             },
             Packet::Deprecated_BinaryMap { pid, inode, base_address } => {
-                let process = match collation.process_index_by_pid.get( &pid ).cloned() {
-                    Some( index ) => &mut collation.processes[ index ],
+                let process = match state.process_index_by_pid.get( &pid ).cloned() {
+                    Some( index ) => &mut state.processes[ index ],
                     None => continue
                 };
 
                 let id = BinaryId::ByInode( inode );
-                let binary = match collation.binary_by_id.get( &id ) {
+                let binary = match state.binary_by_id.get( &id ) {
                     Some( binary ) => binary,
                     None => {
                         warn!( "Unknown binary mapped for PID {}: {:?}", pid, id );
@@ -562,13 +718,13 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
                 process.address_space_needs_reload = true;
             },
             Packet::Deprecated_BinaryUnmap { pid, inode, .. } => {
-                let process = match collation.process_index_by_pid.get( &pid ).cloned() {
-                    Some( index ) => &mut collation.processes[ index ],
+                let process = match state.process_index_by_pid.get( &pid ).cloned() {
+                    Some( index ) => &mut state.processes[ index ],
                     None => continue
                 };
 
                 let binary_id = BinaryId::ByInode( inode );
-                let binary = match collation.binary_by_id.get( &binary_id ) {
+                let binary = match state.binary_by_id.get( &binary_id ) {
                     Some( binary ) => binary,
                     None => {
                         warn!( "Unknown binary unmapped for PID {}: {:?}", pid, binary_id );
@@ -583,13 +739,13 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
             Packet::StringTable { inode, offset, data, path } => {
                 let binary_name = String::from_utf8_lossy( &path );
                 let binary_id = to_binary_id( inode, &binary_name );
-                let binary = collation.binary_by_id.get_mut( &binary_id ).unwrap();
+                let binary = state.binary_by_id.get_mut( &binary_id ).unwrap();
                 Arc::get_mut( &mut binary.string_tables ).unwrap().add( offset, data.into_owned() );
             },
             Packet::SymbolTable { inode, offset, data, string_table_offset, is_dynamic, path } => {
                 let binary_name = String::from_utf8_lossy( &path );
                 let binary_id = to_binary_id( inode, &binary_name );
-                let binary = collation.binary_by_id.get_mut( &binary_id ).unwrap();
+                let binary = state.binary_by_id.get_mut( &binary_id ).unwrap();
 
                 let range = offset..offset + data.len() as u64;
                 let strtab_range = binary.string_tables.range_by_offset( string_table_offset );
@@ -638,18 +794,28 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
 
                 debug!( "Sample #{}", sample_counter );
 
-                if collation.processes[ 0 ].pid != pid {
+                if state.processes[ 0 ].pid != pid {
                     debug!( "Sample #{} is from different process with PID {}, skipping!", sample_counter, pid );
                     continue;
                 }
 
-                collation.processes[ 0 ].reload_if_necessary( &mut debug_info_index, &mut collation.binary_by_id, &args.fde_hints );
+                state.processes[ 0 ].reload_if_necessary( &mut debug_info_index, &mut state.binary_by_id, &args.fde_hints );
 
                 if args.without_kernel_callstacks {
                     kernel_backtrace = Vec::new().into();
                 }
 
-                on_sample( &collation, timestamp, &collation.processes[ 0 ], tid, cpu, &user_backtrace, &kernel_backtrace );
+                on_event( Event {
+                    state: &state,
+                    kind: EventKind::Sample( EventSample {
+                        timestamp,
+                        process: &state.processes[ 0 ],
+                        tid,
+                        cpu,
+                        user_backtrace: &user_backtrace,
+                        kernel_backtrace: &kernel_backtrace
+                    }
+                )});
 
                 sample_counter += 1;
             },
@@ -673,7 +839,7 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
 
                 debug!( "Sample #{}", sample_counter );
 
-                if collation.processes[ 0 ].pid != pid {
+                if state.processes[ 0 ].pid != pid {
                     warn!( "Sample #{} is from different process with PID {}, skipping!", sample_counter, pid );
                     continue;
                 }
@@ -683,8 +849,8 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
                 }
 
                 let user_backtrace = {
-                    let process = &mut collation.processes[ 0 ];
-                    process.reload_if_necessary( &mut debug_info_index, &mut collation.binary_by_id, &args.fde_hints );
+                    let process = &mut state.processes[ 0 ];
+                    process.reload_if_necessary( &mut debug_info_index, &mut state.binary_by_id, &args.fde_hints );
 
                     let mut dwarf_regs = DwarfRegs::new();
                     for reg in regs.iter() {
@@ -702,7 +868,18 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
                     user_backtrace
                 };
 
-                on_sample( &collation, timestamp, &collation.processes[ 0 ], tid, cpu, &user_backtrace, &kernel_backtrace );
+                on_event( Event {
+                    state: &state,
+                    kind: EventKind::Sample( EventSample {
+                        timestamp,
+                        process: &state.processes[ 0 ],
+                        tid,
+                        cpu,
+                        user_backtrace: &user_backtrace,
+                        kernel_backtrace: &kernel_backtrace
+                    }
+                )});
+
                 sample_counter += 1;
             },
             Packet::BinaryBlob { inode, path, data } => {
@@ -714,154 +891,41 @@ pub(crate) fn collate< F >( args: CollateArgs, mut on_sample: F ) -> Result< Col
 
                 let binary_name = String::from_utf8_lossy( &path );
                 let binary_id = to_binary_id( inode, &binary_name );
-                collation.binary_by_id.get_mut( &binary_id ).unwrap().data = Some( Arc::new( data ) );
+                state.binary_by_id.get_mut( &binary_id ).unwrap().data = Some( Arc::new( data ) );
             },
             Packet::FileBlob { ref path, ref data } if path.as_ref() == b"/proc/kallsyms" => {
-                collation.kallsyms = kallsyms::parse( data.as_ref() );
+                state.kallsyms = kallsyms::parse( data.as_ref() );
             },
             Packet::ThreadName { tid, name, .. } => {
                 if name.is_empty() {
-                    collation.thread_names.remove( &tid );
+                    state.thread_names.remove( &tid );
                     continue;
                 }
 
                 let name = String::from_utf8_lossy( &name ).into_owned();
-                collation.thread_names.insert( tid, name );
+                state.thread_names.insert( tid, name );
             },
             Packet::ProfilingFrequency { frequency } => {
-                collation.frequency = Some( frequency );
+                state.frequency = Some( frequency );
             },
             _ => {}
         }
     }
 
-    collation.unfiltered_first_timestamp = first_timestamp;
-    Ok( collation )
+    state.unfiltered_first_timestamp = first_timestamp;
+    Ok( state )
 }
 
-pub(crate) fn decode_user_frames(
-    omit_regex: &Option< Regex >,
-    granularity: Granularity,
-    process: &Process,
-    user_backtrace: &[UserFrame],
-    interner: &mut StringInterner,
-    mut output: Option< &mut Vec< FrameKind > >
-) -> bool {
-    for (nth_frame, user_frame) in user_backtrace.iter().enumerate() {
-        let default = FrameKind::User( user_frame.initial_address.unwrap_or( user_frame.address ) );
-        let region = match process.memory_regions.get_value( user_frame.address ) {
-            Some( region ) => region,
-            None => {
-                if let Some( ref mut output ) = output {
-                    output.push( default );
-                }
-                return true;
-            }
-        };
-
-        let binary_id: BinaryId = region.into();
-        let mut omit = false;
-        process.address_space.decode_symbol_while( if nth_frame == 0 { user_frame.address } else { user_frame.address - 1 }, &mut |frame| {
-            if let Some( name ) = frame.demangled_name.take().or_else( || frame.name.take() ) {
-                if let Some( ref regex ) = *omit_regex {
-                    if regex.is_match( &name ) {
-                        omit = true;
-                        return false;
-                    }
-                }
-
-                if let Some( ref mut output ) = output {
-                    let string_id = interner.get_or_intern( name );
-                    if granularity == Granularity::Line {
-                        if let Some( ref file ) = frame.file {
-                            if let Some( line ) = frame.line {
-                                output.push( FrameKind::UserByLine {
-                                    binary_id: binary_id.clone(),
-                                    is_inline: frame.is_inline,
-                                    symbol: string_id,
-                                    file: interner.get_or_intern( file ),
-                                    line
-                                });
-                                return true;
-                            }
-                        }
-                    }
-
-                    if granularity == Granularity::Line || granularity == Granularity::Function {
-                        output.push( FrameKind::UserByFunction {
-                            binary_id: binary_id.clone(),
-                            is_inline: frame.is_inline,
-                            symbol: string_id
-                        });
-                    } else {
-                        output.push( FrameKind::UserByAddress {
-                            binary_id: binary_id.clone(),
-                            is_inline: frame.is_inline,
-                            symbol: string_id,
-                            address: frame.absolute_address
-                        });
-                    }
-                }
-            } else {
-                if let Some( ref mut output ) = output {
-                    output.push( FrameKind::UserBinary( binary_id.clone(), frame.absolute_address ) );
-                }
-            }
-
-            true
-        });
-
-        if omit {
-            return false;
-        }
-    }
-
-    true
-}
-
-#[derive(Default)]
-pub(crate) struct CollapseOpts {
-    pub merge_threads: bool,
+pub(crate) struct DecodeOpts {
+    pub omit_regex: Option< Regex >,
+    pub emit_kernel_frames: bool,
+    pub emit_thread_frames: bool,
+    pub emit_process_frames: bool,
     pub granularity: Granularity
 }
 
-pub(crate) fn decode(
-    omit_regex: &Option< Regex >,
-    collation: &Collation,
-    process: &Process,
-    tid: u32,
-    user_backtrace: &[UserFrame],
-    kernel_backtrace: &[u64],
-    opts: &CollapseOpts,
-    interner: &mut StringInterner
-) -> Option< Vec< FrameKind > > {
-    let mut frames = Vec::with_capacity( user_backtrace.len() + kernel_backtrace.len() + 1 );
-    for &addr in kernel_backtrace.iter() {
-        if let Some( index ) = collation.kallsyms.get_index( addr ) {
-            frames.push( FrameKind::KernelSymbol( index ) );
-        } else {
-            frames.push( FrameKind::Kernel( addr ) );
-        }
-    }
-
-    if !decode_user_frames( omit_regex, opts.granularity, process, user_backtrace, interner, Some( &mut frames ) ) {
-        return None;
-    }
-
-    if !opts.merge_threads {
-        if process.pid == tid {
-            frames.push( FrameKind::MainThread );
-        } else {
-            frames.push( FrameKind::Thread( tid ) );
-        }
-    }
-
-    frames.push( FrameKind::Process( process.pid ) );
-    Some( frames )
-}
-
 pub(crate) fn write_frame< T: fmt::Write >(
-    collation: &Collation,
+    state: &State,
     interner: &StringInterner,
     output: &mut T,
     frame: &FrameKind
@@ -869,7 +933,7 @@ pub(crate) fn write_frame< T: fmt::Write >(
 {
     match *frame {
         FrameKind::Process( pid ) => {
-            if let Some( process ) = collation.get_process( pid ) {
+            if let Some( process ) = state.get_process( pid ) {
                 write!( output, "{} [PID={}]", process.executable, pid ).unwrap()
             } else {
                 write!( output, "[PID={}]", pid ).unwrap()
@@ -879,7 +943,7 @@ pub(crate) fn write_frame< T: fmt::Write >(
             write!( output, "[MAIN_THREAD]" ).unwrap()
         },
         FrameKind::Thread( tid ) => {
-            if let Some( name ) = collation.get_thread_name( tid ) {
+            if let Some( name ) = state.get_thread_name( tid ) {
                 write!( output, "{} [THREAD={}]", name, tid ).unwrap()
             } else {
                 write!( output, "[THREAD={}]", tid ).unwrap()
@@ -889,7 +953,7 @@ pub(crate) fn write_frame< T: fmt::Write >(
             if is_inline {
                 write!( output, "inline " ).unwrap();
             }
-            let binary = collation.get_binary( binary_id );
+            let binary = state.get_binary( binary_id );
             let symbol = interner.resolve( symbol ).unwrap();
             let file = interner.resolve( file ).unwrap();
             let basename = get_basename( file );
@@ -899,7 +963,7 @@ pub(crate) fn write_frame< T: fmt::Write >(
             if is_inline {
                 write!( output, "inline " ).unwrap();
             }
-            let binary = collation.get_binary( binary_id );
+            let binary = state.get_binary( binary_id );
             let symbol = interner.resolve( symbol ).unwrap();
             write!( output, "{} [{}]", symbol, binary.basename ).unwrap()
         },
@@ -908,19 +972,19 @@ pub(crate) fn write_frame< T: fmt::Write >(
             if is_inline {
                 write!( output, "inline " ).unwrap();
             }
-            let binary = collation.get_binary( binary_id );
+            let binary = state.get_binary( binary_id );
             let symbol = interner.resolve( symbol ).unwrap();
             write!( output, "{} [{}]", symbol, binary.basename ).unwrap()
         },
         FrameKind::UserBinary( ref binary_id, addr ) => {
-            let binary = collation.get_binary( binary_id );
+            let binary = state.get_binary( binary_id );
             write!( output, "0x{:016X} [{}]", addr, binary.basename ).unwrap()
         },
         FrameKind::User( addr ) => {
             write!( output, "0x{:016X}", addr ).unwrap()
         },
         FrameKind::KernelSymbol( symbol_index ) => {
-            let symbol = collation.get_kernel_symbol( symbol_index );
+            let symbol = state.get_kernel_symbol( symbol_index );
             if let Some( module ) = symbol.module.as_ref() {
                 write!( output, "{} [linux:{}]_[k]", symbol.name, module ).unwrap()
             } else {
@@ -934,7 +998,7 @@ pub(crate) fn write_frame< T: fmt::Write >(
 }
 
 
-pub(crate) fn repack_cli_args( args: &args::SharedCollationArgs ) -> (Option< Regex >, CollateArgs) {
+pub(crate) fn repack_cli_args( args: &args::SharedCollationArgs ) -> (Option< Regex >, ReadDataArgs) {
     let omit_regex = if args.omit.is_empty() {
         None
     } else {
@@ -944,7 +1008,7 @@ pub(crate) fn repack_cli_args( args: &args::SharedCollationArgs ) -> (Option< Re
     };
 
     let debug_symbols: Vec< _ > = args.debug_symbols.iter().map( |path| path.as_os_str() ).collect();
-    let collate_args = CollateArgs {
+    let read_data_args = ReadDataArgs {
         input_path: &args.input,
         debug_symbols,
         force_stack_size: args.force_stack_size,
@@ -959,18 +1023,20 @@ pub(crate) fn repack_cli_args( args: &args::SharedCollationArgs ) -> (Option< Re
         to: args.to.as_ref().map( parse_timestamp_bound )
     };
 
-    (omit_regex, collate_args)
+    (omit_regex, read_data_args)
 }
 
 #[cfg(test)]
 mod test {
-    use super::{StringInterner, CollateArgs, CollapseOpts, FrameKind, Collation, FdeHints, collate, decode};
+    use super::{StringInterner, ReadDataArgs, DecodeOpts, EventKind, FrameKind, State, FdeHints, read_data};
     use nwind::LoadHint;
     use std::path::Path;
     use std::collections::HashMap;
 
+    use crate::args::Granularity;
+
     struct Data {
-        collation: Collation,
+        state: State,
         stacks: HashMap< Vec< FrameKind >, u64 >,
         interner: StringInterner
     }
@@ -987,7 +1053,7 @@ mod test {
         let _ = env_logger::try_init();
         let mut interner = StringInterner::new();
         let path = Path::new( env!( "CARGO_MANIFEST_DIR" ) ).join( "test-data" ).join( "artifacts" ).join( filename );
-        let args = CollateArgs {
+        let args = ReadDataArgs {
             input_path: path.as_os_str(),
             debug_symbols: Vec::new(),
             force_stack_size: None,
@@ -998,25 +1064,33 @@ mod test {
             to: None
         };
 
+        let opts = DecodeOpts {
+            omit_regex: None,
+            emit_kernel_frames: true,
+            emit_thread_frames: true,
+            emit_process_frames: true,
+            granularity: Granularity::Function
+        };
+
         let mut stacks: HashMap< Vec< FrameKind >, u64 > = HashMap::new();
-        let collation = collate( args, |collation, _timestamp, process, tid, _cpu, user_backtrace, kernel_backtrace| {
-            let frames = decode(
-                &None,
-                &collation,
-                process,
-                tid,
-                &user_backtrace,
-                &kernel_backtrace,
-                &CollapseOpts::default(),
-                &mut interner
-            );
-            if let Some( frames ) = frames {
-                *stacks.entry( frames ).or_insert( 0 ) += 1;
+        let state = read_data( args, |event| {
+            match event.kind {
+                EventKind::Sample( sample ) => {
+                    let frames = sample.decode(
+                        &event.state,
+                        &opts,
+                        &mut interner
+                    );
+                    if let Some( frames ) = frames {
+                        *stacks.entry( frames ).or_insert( 0 ) += 1;
+                    }
+                },
+                _ => {}
             }
         }).unwrap();
 
         Data {
-            collation,
+            state,
             stacks,
             interner
         }
@@ -1030,7 +1104,7 @@ mod test {
     fn frame_to_str( data: &Data, frame: &FrameKind ) -> String {
         match *frame {
             FrameKind::Process( pid ) => {
-                if let Some( process ) = data.collation.get_process( pid ) {
+                if let Some( process ) = data.state.get_process( pid ) {
                     format!( "[process:{}]", process.executable )
                 } else {
                     format!( "[process]" )
@@ -1040,7 +1114,7 @@ mod test {
                 format!( "[main_thread]" )
             },
             FrameKind::Thread( tid ) => {
-                if let Some( name ) = data.collation.get_thread_name( tid ) {
+                if let Some( name ) = data.state.get_thread_name( tid ) {
                     format!( "[thread:{}]", name )
                 } else {
                     format!( "[thread]" )
@@ -1050,19 +1124,19 @@ mod test {
             | FrameKind::UserByLine { ref binary_id, symbol, .. }
             | FrameKind::UserByAddress { ref binary_id, symbol, .. }
             => {
-                let binary = data.collation.get_binary( binary_id );
+                let binary = data.state.get_binary( binary_id );
                 let symbol = data.interner.resolve( symbol ).unwrap();
                 format!( "{}:{}", symbol, binary.basename )
             },
             FrameKind::UserBinary( ref binary_id, _ ) => {
-                let binary = data.collation.get_binary( binary_id );
+                let binary = data.state.get_binary( binary_id );
                 format!( "?:{}", binary.basename )
             },
             FrameKind::User( _ ) => {
                 format!( "?" )
             },
             FrameKind::KernelSymbol( symbol_index ) => {
-                let symbol = data.collation.get_kernel_symbol( symbol_index );
+                let symbol = data.state.get_kernel_symbol( symbol_index );
                 if let Some( module ) = symbol.module.as_ref() {
                     format!( "{}:{}:linux", symbol.name, module )
                 } else {
