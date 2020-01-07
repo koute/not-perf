@@ -102,7 +102,8 @@ pub struct PerfGroup {
     stack_size: u32,
     event_source: EventSource,
     initial_events: Vec< Event< 'static > >,
-    stopped_processes: Vec< StoppedProcess >
+    stopped_processes: Vec< StoppedProcess >,
+    stop_processes: bool
 }
 
 fn poll_events< 'a, I >( poll_fds: &mut Vec< libc::pollfd >, iter: I ) where I: IntoIterator< Item = &'a Member >, <I as IntoIterator>::IntoIter: Clone {
@@ -163,7 +164,7 @@ fn get_threads( pid: u32 ) -> Result< Vec< (u32, Option< Vec< u8 > >) >, io::Err
 }
 
 impl PerfGroup {
-    pub fn new( frequency: u32, stack_size: u32, event_source: EventSource ) -> Self {
+    pub fn new( frequency: u32, stack_size: u32, event_source: EventSource, stop_processes: bool ) -> Self {
         let group = PerfGroup {
             event_buffer: Vec::new(),
             members: Default::default(),
@@ -172,20 +173,24 @@ impl PerfGroup {
             stack_size,
             event_source,
             initial_events: Vec::new(),
-            stopped_processes: Vec::new()
+            stopped_processes: Vec::new(),
+            stop_processes: stop_processes
         };
 
         group
     }
 
-    pub fn open( pid: u32, frequency: u32, stack_size: u32, event_source: EventSource ) -> Result< Self, io::Error > {
-        let mut group = PerfGroup::new( frequency, stack_size, event_source );
+    pub fn open( pid: u32, frequency: u32, stack_size: u32, event_source: EventSource, stop_processes: bool ) -> Result< Self, io::Error > {
+        let mut group = PerfGroup::new( frequency, stack_size, event_source, stop_processes );
         group.open_process( pid )?;
         Ok( group )
     }
 
     pub fn open_process( &mut self, pid: u32 ) -> Result< (), io::Error > {
-        self.stopped_processes.push( StoppedProcess::new( pid )? );
+        if self.stop_processes {
+            self.stopped_processes.push( StoppedProcess::new( pid )? );
+        }
+
         let mut perf_events = Vec::new();
         let threads = get_threads( pid )?;
 

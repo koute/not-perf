@@ -195,7 +195,11 @@ pub struct RecordArgs {
     pub discard_all: bool,
 
     #[structopt(flatten)]
-    pub profiler_args: GenericProfilerArgs
+    pub profiler_args: GenericProfilerArgs,
+
+    #[structopt(long)]
+    /// Do not stop processes before gathering its info
+    pub dont_stop_processes: bool
 }
 
 #[derive(StructOpt, Debug)]

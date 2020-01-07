@@ -59,7 +59,7 @@ pub fn main( args: args::RecordArgs ) -> Result< (), Box< dyn Error > > {
     });
 
     info!( "Opening perf events for process with PID {}...", controller.pid() );
-    let mut perf = match PerfGroup::open( controller.pid(), args.frequency, args.stack_size, args.event_source ) {
+    let mut perf = match PerfGroup::open( controller.pid(), args.frequency, args.stack_size, args.event_source, !args.dont_stop_processes ) {
         Ok( perf ) => perf,
         Err( error ) => {
             error!( "Failed to start profiling: {}", error );
