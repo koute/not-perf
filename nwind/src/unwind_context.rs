@@ -98,7 +98,7 @@ impl< 'a, A: Architecture > UnwindHandle< 'a, A > {
 
         // avoid infinite loops
         if self.ctx.nth_frame > 1000 {
-            warn!("infinite loop detected and avoided");
+            warn!("possible infinite loop detected and avoided");
             return false;
         }
 
