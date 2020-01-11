@@ -103,7 +103,7 @@ pub struct PerfGroup {
     event_source: EventSource,
     initial_events: Vec< Event< 'static > >,
     stopped_processes: Vec< StoppedProcess >,
-    stop_processes: bool
+    stop_processes: bool,
 }
 
 fn poll_events< 'a, I >( poll_fds: &mut Vec< libc::pollfd >, iter: I ) where I: IntoIterator< Item = &'a Member >, <I as IntoIterator>::IntoIter: Clone {
