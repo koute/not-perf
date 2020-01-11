@@ -199,7 +199,7 @@ pub struct RecordArgs {
 
     #[structopt(long)]
     /// Do not stop processes before gathering its info
-    pub dont_stop_processes: bool
+    pub dont_stop_processes: bool,
 }
 
 #[derive(StructOpt, Debug)]
