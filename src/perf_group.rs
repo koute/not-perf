@@ -174,7 +174,7 @@ impl PerfGroup {
             event_source,
             initial_events: Vec::new(),
             stopped_processes: Vec::new(),
-            stop_processes: stop_processes
+            stop_processes
         };
 
         group
