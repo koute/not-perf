@@ -345,7 +345,7 @@ pub struct MetadataArgs {
 
 #[derive(StructOpt, Debug)]
 #[structopt(
-    raw(author = "\"Jan Bujak <jan.bujak@nokia.com>\""),
+    raw(author = "\"Jan Bujak <j@exia.io>\""),
     raw(setting = "structopt::clap::AppSettings::ArgRequiredElseHelp")
 )]
 pub enum Opt {
