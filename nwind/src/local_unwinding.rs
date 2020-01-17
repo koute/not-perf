@@ -152,10 +152,6 @@ pub unsafe extern fn nwind_on_exception_through_trampoline( exception: *mut libc
         tls.tail -= 1;
         let index = tls.tail;
         let entry = tls.slice()[ index ];
-        if ShadowStack::is_trampoline_set( entry.location ) {
-            error!( "Slot 0x{:016X} shouldn't contain a trampoline address", entry.location );
-            abort();
-        }
         return_address = entry.return_address;
         debug!( "Popped return address from the shadow stack: 0x{:016X}", return_address );
     }
