@@ -198,8 +198,8 @@ pub struct RecordArgs {
     pub profiler_args: GenericProfilerArgs,
 
     #[structopt(long)]
-    /// Do not stop processes before gathering its info
-    pub dont_stop_processes: bool,
+    /// Do not send SIGSTOP before hooking into the process
+    pub do_not_send_sigstop: bool,
 }
 
 #[derive(StructOpt, Debug)]
