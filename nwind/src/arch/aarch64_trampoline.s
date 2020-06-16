@@ -10,7 +10,7 @@ nwind_ret_trampoline_start:
     .cfi_startproc
     .cfi_personality 0x9b,DW.ref.__gxx_personality_v0
     .cfi_lsda 0x1b,.LLSDA0
-    .cfi_undefined lr
+    .cfi_undefined x30
 .LEHB0:
     nop
 .LEHE0:
