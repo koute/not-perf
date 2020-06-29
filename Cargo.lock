@@ -452,6 +452,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "nperf"
 version = "0.1.0"
 dependencies = [
+ "env_logger 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "nperf-core 0.1.0",
+ "structopt 0.2.18 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "nperf-core"
+version = "0.1.0"
+dependencies = [
  "chrono 0.4.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "criterion 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
