@@ -199,7 +199,7 @@ impl IndexEntry {
 }
 
 const EXIDX_CANTUNWIND: u32 = 0x1;
-const EXIDX_INLINE_MASK: u32 = (1 << 31);
+const EXIDX_INLINE_MASK: u32 = 1 << 31;
 
 const EXTAB_OP_ADD_VSP: u8                  = 0b0000_0000;
 const EXTAB_OP_ADD_VSP_MASK: u8             = 0b1100_0000;
