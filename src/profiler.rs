@@ -9,7 +9,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::ops::{Deref, DerefMut, Range};
 use std::error::Error;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::prelude::*;
 use speedy::{Writable, Endianness};
@@ -538,7 +538,7 @@ impl PacketWriter {
 fn initialize(
     sigint_handler: &SigintHandler,
     args: &args::GenericProfilerArgs
-) -> Result< (u32, AddressSpace< arch::native::Arch >, ExecutionQueue< PacketWriter >, Option< PathResolver >), Box< dyn Error > >
+) -> Result< (u32, AddressSpace< arch::native::Arch >, ExecutionQueue< PacketWriter >, Option< PathResolver >, PathBuf), Box< dyn Error > >
 {
     let offline = args.offline;
     let target_process = args.process_filter.clone().into();
@@ -609,6 +609,7 @@ fn initialize(
         OsStr::new( &filename ).to_os_string()
     };
 
+    let output_path: PathBuf = output_path.into();
     info!( "Opening {:?} for writing...", output_path );
     let fp = File::create( &output_path ).map_err( |err| format!( "cannot open {:?} for writing: {}", output_path, err ) )?;
     let fp = PacketWriter {
@@ -654,7 +655,7 @@ fn initialize(
     let elapsed = start_timestamp.elapsed();
     debug!( "Initial initialization done; took {}ms", get_ms( elapsed ) );
 
-    Ok( (pid, address_space, writer, path_resolver) )
+    Ok( (pid, address_space, writer, path_resolver, output_path) )
 }
 
 pub struct ProfilingController {
@@ -668,7 +669,8 @@ pub struct ProfilingController {
     time_limit: Option< u64 >,
     sample_counter: u64,
     profiling_started_ts: Instant,
-    maps: RangeMap< Region >
+    maps: RangeMap< Region >,
+    output_path: PathBuf
 }
 
 pub struct Sample< 'a > {
@@ -683,7 +685,7 @@ pub struct Sample< 'a > {
 impl ProfilingController {
     pub fn new( args: &args::GenericProfilerArgs ) -> Result< Self, Box< dyn Error > > {
         let sigint = SigintHandler::new();
-        let (pid, address_space, writer, path_resolver) = initialize( &sigint, args )?;
+        let (pid, address_space, writer, path_resolver, output_path) = initialize( &sigint, args )?;
 
         Ok( ProfilingController {
             sigint,
@@ -696,8 +698,13 @@ impl ProfilingController {
             time_limit: args.time_limit,
             sample_counter: 0,
             profiling_started_ts: Instant::now(),
-            maps: RangeMap::new()
+            maps: RangeMap::new(),
+            output_path
         })
+    }
+
+    pub fn output_path( &self ) -> &Path {
+        &self.output_path
     }
 
     pub fn pid( &self ) -> u32 {

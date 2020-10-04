@@ -77,6 +77,7 @@ pub fn main( args: args::RecordArgs ) -> Result< (), Box< dyn Error > > {
                 }
             }
 
+            let _ = std::fs::remove_file( controller.output_path() );
             return Err( format!( "failed to start profiling: {}", error ).into() );
         }
     };
