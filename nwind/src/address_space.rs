@@ -824,22 +824,41 @@ fn match_mapping( load_headers: &[LoadHeader], region: &Region ) -> Option< Addr
         return None;
     }
 
+    let mut matched = None;
+    let mut match_count = 0;
     for header in load_headers {
         let file_offset_start = header.file_offset & !(header.alignment - 1);
         let file_offset_end = file_offset_start + header.file_size;
 
+        if header.is_executable != region.is_executable {
+            continue;
+        }
+
         if region.file_offset >= file_offset_start && region.file_offset < file_offset_end {
             let offset = region.file_offset - file_offset_start;
-            return Some( AddressMapping {
+            let current_match = AddressMapping {
                 declared_address: (header.address & !(header.alignment - 1)) + offset,
                 actual_address: region.start,
                 file_offset: region.file_offset,
                 size: region.end - region.start
-            });
+            };
+
+            match_count += 1;
+            if matched.is_none() {
+                matched = Some( current_match );
+            } else {
+                if match_count == 2 {
+                    warn!( "Duplicate PT_LOAD matches for a single memory region: {:?}", region );
+                    warn!( "  Match #0: {:?} => {:?}", header, matched.as_ref().unwrap() );
+                }
+
+                warn!( "  Match #{}: {:?} => {:?}", match_count - 1, header, current_match );
+            }
         }
     }
 
-    None
+    debug_assert!( match_count <= 1 );
+    matched
 }
 
 pub fn reload< A: Architecture >(
@@ -1576,5 +1595,75 @@ fn test_match_mapping_2() {
         actual_address: 0x4000ad0000,
         file_offset: 0xac0000,
         size: 0x25000
+    }));
+}
+
+#[test]
+fn test_match_mapping_3() {
+    // LLD likes to emit PT_LOAD entries such as these where
+    // a single memory region might partially match multiple
+    // PT_LOAD entries due to alignment offsets.
+    let load_headers = &[
+        LoadHeader {
+            address: 0,
+            file_offset: 0,
+            file_size: 63724,
+            memory_size: 63724,
+            alignment: 4096,
+            is_readable: true,
+            is_writable: false,
+            is_executable: false,
+        },
+        LoadHeader {
+            address: 67824,
+            file_offset: 63728,
+            file_size: 187584,
+            memory_size: 187584,
+            alignment: 4096,
+            is_readable: true,
+            is_writable: false,
+            is_executable: true,
+        },
+        LoadHeader {
+            address: 259504,
+            file_offset: 251312,
+            file_size: 9928,
+            memory_size: 9928,
+            alignment: 4096,
+            is_readable: true,
+            is_writable: true,
+            is_executable: false,
+        },
+        LoadHeader {
+            address: 273528,
+            file_offset: 261240,
+            file_size: 56,
+            memory_size: 475,
+            alignment: 4096,
+            is_readable: true,
+            is_writable: true,
+            is_executable: false,
+        },
+    ][..];
+
+    let mapping = match_mapping( &load_headers, &Region {
+        start: 94266316427264,
+        end: 94266316619776,
+        is_read: true,
+        is_write: false,
+        is_executable: true,
+        is_shared: false,
+        file_offset: 61440,
+        major: 0,
+        minor: 46,
+        inode: 408946,
+        name: "test".into(),
+    });
+
+    assert_eq!( mapping, Some( AddressMapping {
+        declared_address: 65536,
+        actual_address: 94266316427264,
+        file_offset: 61440,
+        size: 192512
     }));
 }
