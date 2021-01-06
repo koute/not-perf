@@ -8,8 +8,8 @@ fn build() {
     let arch = match env::var( "TARGET" ).expect( "missing TARGET environment variable which should always be exported by cargo" ).as_str() {
         "x86_64-unknown-linux-gnu" => "amd64",
         "mips64-unknown-linux-gnuabi64" => "mips64",
-        "armv7-unknown-linux-gnueabihf" => "arm",
-        "aarch64-unknown-linux-gnu" => "aarch64",
+        "armv7-linux-androideabi" | "armv7-unknown-linux-gnueabihf" => "arm",
+        "aarch64-linux-android" | "aarch64-unknown-linux-gnu" => "aarch64",
         target => panic!( "unsupported target: {}", target )
     };
 

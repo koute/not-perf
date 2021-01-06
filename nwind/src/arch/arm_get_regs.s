@@ -1,5 +1,4 @@
 .cpu cortex-a15
-.eabi_attribute 28, 1
 .eabi_attribute 20, 1
 .eabi_attribute 21, 1
 .eabi_attribute 23, 3

@@ -1,5 +1,5 @@
     .arch armv7-a
-    .eabi_attribute 28, 1
+    .fpu softvfp
     .eabi_attribute 20, 1
     .eabi_attribute 21, 1
     .eabi_attribute 23, 3
@@ -18,7 +18,6 @@
     .syntax unified
     .thumb
     .thumb_func
-    .fpu vfpv3-d16
     .type    nwind_ret_trampoline_start, %function
 nwind_ret_trampoline_start:
     .fnstart
