@@ -188,9 +188,9 @@ fn process_frame< R: gimli::Reader >( raw_frame: addr2line::Frame< R >, frame: &
     frame.demangled_name = None;
 
     if let Some( location ) = raw_frame.location {
-        frame.file = location.file;
-        frame.line = location.line;
-        frame.column = location.column;
+        frame.file = location.file.map( |file| file.into() );
+        frame.line = location.line.map( |line| line.into() );
+        frame.column = location.column.map( |column| column.into() );
     }
 
     if let Some( function ) = raw_frame.function {
