@@ -1,8 +1,6 @@
 #[cfg(feature = "log")]
 extern crate log;
 
-#[macro_use]
-extern crate speedy_derive;
 #[cfg(feature = "addr2line")]
 extern crate addr2line;
 

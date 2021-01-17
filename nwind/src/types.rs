@@ -1,5 +1,3 @@
-use std::io;
-
 use speedy::{Readable, Writable, Context, Reader, Writer};
 
 pub use speedy::Endianness;
@@ -73,7 +71,7 @@ pub struct UserFrame {
 
 impl< 'a, C: Context > Readable< 'a, C > for UserFrame {
     #[inline]
-    fn read_from< R: Reader< 'a, C > >( reader: &mut R ) -> io::Result< Self > {
+    fn read_from< R: Reader< 'a, C > >( reader: &mut R ) -> Result< Self, C::Error > {
         let address = reader.read_u64()?;
         let initial_address = match reader.read_u64()? {
             0 => None,
@@ -86,7 +84,7 @@ impl< 'a, C: Context > Readable< 'a, C > for UserFrame {
 
 impl< 'a, C: Context > Writable< C > for UserFrame {
     #[inline]
-    fn write_to< 'this, T: ?Sized + Writer< 'this, C > >( &'this self, writer: &mut T ) -> io::Result< () > {
+    fn write_to< T: ?Sized + Writer< C > >( &self, writer: &mut T ) -> Result< (), C::Error > {
         writer.write_u64( self.address )?;
         writer.write_u64( self.initial_address.unwrap_or( 0 ) )?;
         Ok(())

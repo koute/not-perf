@@ -1,7 +1,4 @@
 #[macro_use]
-extern crate speedy_derive;
-
-#[macro_use]
 extern crate lazy_static;
 
 #[macro_use]

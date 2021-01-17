@@ -13,6 +13,7 @@ use goblin::elf::header as elf_header;
 use goblin::elf::section_header::{SHT_SYMTAB, SHT_DYNSYM, SHT_STRTAB};
 use goblin::elf::program_header::PT_LOAD;
 use gimli;
+use speedy::{Readable, Writable};
 
 use crate::elf::{self, Endian};
 use crate::utils::{StableIndex, get_major, get_minor};

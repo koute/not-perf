@@ -23,7 +23,7 @@ pub struct DwarfReg {
 
 impl< 'a, C: Context > Readable< 'a, C > for DwarfReg {
     #[inline]
-    fn read_from< R: Reader< 'a, C > >( reader: &mut R ) -> io::Result< Self > {
+    fn read_from< R: Reader< 'a, C > >( reader: &mut R ) -> Result< Self, C::Error > {
         let mut register = reader.read_u16()?;
         let value = reader.read_u64()?;
 
@@ -38,7 +38,7 @@ impl< 'a, C: Context > Readable< 'a, C > for DwarfReg {
 
 impl< 'a, C: Context > Writable< C > for DwarfReg {
     #[inline]
-    fn write_to< 'this, T: ?Sized + Writer< 'this, C > >( &'this self, writer: &mut T ) -> io::Result< () > {
+    fn write_to< T: ?Sized + Writer< C > >( &self, writer: &mut T ) -> Result< (), C::Error > {
         writer.write_u16( self.register )?;
         writer.write_u64( self.value )?;
         Ok(())
@@ -192,18 +192,18 @@ pub enum FramedPacket< 'a > {
 }
 
 impl< 'a, C: Context > Readable< 'a, C > for FramedPacket< 'a > {
-    fn read_from< R: Reader< 'a, C > >( reader: &mut R ) -> io::Result< Self > {
+    fn read_from< R: Reader< 'a, C > >( reader: &mut R ) -> Result< Self, C::Error > {
         let length = reader.read_u32()? as usize;
-        let bytes = reader.read_bytes_cow( length )?;
+        let bytes = reader.read_cow( length )?;
         match bytes {
             Cow::Borrowed( bytes ) => {
-                match Packet::read_from_buffer( Endianness::LittleEndian, &bytes ) {
+                match Packet::read_from_buffer( &bytes ) {
                     Ok( packet ) => Ok( FramedPacket::Known( packet ) ),
                     Err( _ ) => Ok( FramedPacket::Unknown( Cow::Borrowed( bytes ) ) )
                 }
             },
             Cow::Owned( bytes ) => {
-                match Packet::read_from_buffer_owned( Endianness::LittleEndian, &bytes ) {
+                match Packet::read_from_buffer_owned( &bytes ) {
                     Ok( packet ) => Ok( FramedPacket::Known( packet ) ),
                     Err( _ ) => Ok( FramedPacket::Unknown( Cow::Owned( bytes ) ) )
                 }
@@ -213,10 +213,10 @@ impl< 'a, C: Context > Readable< 'a, C > for FramedPacket< 'a > {
 }
 
 impl< 'a, C: Context > Writable< C > for FramedPacket< 'a > {
-    fn write_to< 'this, T: ?Sized + Writer< 'this, C > >( &'this self, writer: &mut T ) -> io::Result< () > {
+    fn write_to< T: ?Sized + Writer< C > >( &self, writer: &mut T ) -> Result< (), C::Error > {
         match self {
             &FramedPacket::Known( ref packet ) => {
-                let length = Writable::< C >::bytes_needed( packet ) as u32;
+                let length = Writable::< C >::bytes_needed( packet )? as u32;
                 writer.write_u32( length )?;
                 writer.write_value( packet )?;
 
@@ -242,7 +242,7 @@ impl< T: io::Read > ArchiveReader< T > {
         ArchiveReader { inner }
     }
 
-    pub fn validate_header( mut self ) -> io::Result< Self > {
+    pub fn validate_header( mut self ) -> Result< Self, io::Error > {
         match self.next() {
             None => Ok( self ),
             Some( Err( error ) ) => Err( error ),
@@ -263,13 +263,13 @@ impl< T: io::Read > ArchiveReader< T > {
         }
     }
 
-    pub fn skip_unknown( self ) -> iter::FilterMap< Self, fn( io::Result< FramedPacket< 'static > > ) -> Option< io::Result< Packet< 'static > > > > {
+    pub fn skip_unknown( self ) -> iter::FilterMap< Self, fn( Result< FramedPacket< 'static >, io::Error > ) -> Option< Result< Packet< 'static >, io::Error > > > {
         self.filter_map( |packet| {
             match packet {
                 Err( error ) => Some( Err( error ) ),
                 Ok( FramedPacket::Known( packet ) ) => Some( Ok( packet ) ),
                 Ok( FramedPacket::Unknown( bytes ) ) => {
-                    let id: u32 = Readable::read_from_buffer( Endianness::LittleEndian, &bytes ).unwrap();
+                    let id: u32 = Readable::read_from_buffer( &bytes ).unwrap();
                     warn!( "Unknown packet encountered: id = 0x{:02X}", id );
                     None
                 }
@@ -281,10 +281,16 @@ impl< T: io::Read > ArchiveReader< T > {
 impl< T: io::Read > Iterator for ArchiveReader< T > {
     type Item = io::Result< FramedPacket< 'static > >;
     fn next( &mut self ) -> Option< Self::Item > {
-        match Readable::read_from_stream( Endianness::LittleEndian, &mut self.inner ) {
+        match Readable::read_from_stream_unbuffered( &mut self.inner ) {
             Ok( framed ) => Some( Ok( framed ) ),
-            Err( ref err ) if err.kind() == io::ErrorKind::UnexpectedEof => None,
-            Err( err ) => Some( Err( err ) )
+            Err( err ) => {
+                let err: io::Error = err.into();
+                if err.kind() == io::ErrorKind::UnexpectedEof {
+                    None
+                } else {
+                    Some( Err( err ) )
+                }
+            }
         }
     }
 }

@@ -399,7 +399,7 @@ impl io::Write for PacketWriter {
 
 impl PacketWriter {
     fn write_packet( &mut self, packet: Packet ) -> io::Result< () > {
-        FramedPacket::Known( packet ).write_to_stream( Endianness::LittleEndian, &mut self.fp )
+        Ok( FramedPacket::Known( packet ).write_to_stream( &mut self.fp )? )
     }
 
     fn write_header( &mut self ) -> io::Result< () > {
@@ -719,7 +719,7 @@ impl ProfilingController {
 
     pub fn write_borrowed_packet( &self, packet: Packet ) {
         let framed = FramedPacket::Known( packet );
-        let bytes = framed.write_to_vec( Endianness::LittleEndian ).unwrap();
+        let bytes = framed.write_to_vec().unwrap();
         self.writer.spawn( move |fp| {
             fp.write_all( &bytes )
         });
@@ -792,7 +792,7 @@ impl ProfilingController {
         }
 
         let framed = FramedPacket::Known( packet );
-        let bytes = framed.write_to_vec( Endianness::LittleEndian ).unwrap();
+        let bytes = framed.write_to_vec().unwrap();
         self.writer.spawn( move |fp| {
             fp.write_all( &bytes )
         });

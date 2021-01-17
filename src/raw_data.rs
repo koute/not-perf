@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::fmt;
-use std::io;
 
 use speedy::{Readable, Writable, Reader, Writer, Context};
 use perf_event_open::RawData;
@@ -30,14 +29,14 @@ impl< 'a > fmt::Debug for CowRawData< 'a > {
 }
 
 impl< 'a, C: Context > Readable< 'a, C > for CowRawData< 'a > {
-    fn read_from< R: Reader< 'a, C > >( reader: &mut R ) -> io::Result< Self > {
+    fn read_from< R: Reader< 'a, C > >( reader: &mut R ) -> Result< Self, C::Error > {
         let bytes = reader.read_value()?;
         Ok( CowRawData::Owned( bytes ) )
     }
 }
 
 impl< 'a, C: Context > Writable< C > for CowRawData< 'a > {
-    fn write_to< 'this, T: ?Sized + Writer< 'this, C > >( &'this self, writer: &mut T ) -> io::Result< () > {
+    fn write_to< T: ?Sized + Writer< C > >( &self, writer: &mut T ) -> Result< (), C::Error > {
         match *self {
             CowRawData::Owned( ref data ) => data.write_to( writer ),
             CowRawData::Borrowed( RawData::Single( ref data ) ) => data.write_to( writer ),
