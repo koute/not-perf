@@ -824,8 +824,9 @@ fn match_mapping( load_headers: &[LoadHeader], region: &Region ) -> Option< Addr
         return None;
     }
 
-    let mut matched = None;
+    let mut matched: Option< (AddressMapping, &LoadHeader) > = None;
     let mut match_count = 0;
+    let mut duplicate_matches = false;
     for header in load_headers {
         let file_offset_start = header.file_offset & !(header.alignment - 1);
         let file_offset_end = file_offset_start + header.file_size;
@@ -836,7 +837,7 @@ fn match_mapping( load_headers: &[LoadHeader], region: &Region ) -> Option< Addr
 
         if region.file_offset >= file_offset_start && region.file_offset < file_offset_end {
             let offset = region.file_offset - file_offset_start;
-            let current_match = AddressMapping {
+            let current_mapping = AddressMapping {
                 declared_address: (header.address & !(header.alignment - 1)) + offset,
                 actual_address: region.start,
                 file_offset: region.file_offset,
@@ -844,21 +845,36 @@ fn match_mapping( load_headers: &[LoadHeader], region: &Region ) -> Option< Addr
             };
 
             match_count += 1;
-            if matched.is_none() {
-                matched = Some( current_match );
-            } else {
-                if match_count == 2 {
-                    warn!( "Duplicate PT_LOAD matches for a single memory region: {:?}", region );
-                    warn!( "  Match #0: {:?} => {:?}", header, matched.as_ref().unwrap() );
-                }
+            if let Some( (_, ref previous_header) ) = matched {
+                let previous_file_offset_match = previous_header.file_offset == region.file_offset;
+                let current_file_offset_match = header.file_offset == region.file_offset;
+                let previous_permissions_match = previous_header.is_readable == region.is_read && previous_header.is_writable == region.is_write;
+                let current_permissions_match = header.is_readable == region.is_read && header.is_writable == region.is_write;
 
-                warn!( "  Match #{}: {:?} => {:?}", match_count - 1, header, current_match );
+                let previous_score = previous_file_offset_match as usize + previous_permissions_match as usize;
+                let current_score = current_file_offset_match as usize + current_permissions_match as usize;
+
+                if current_score != previous_score {
+                    if current_score > previous_score {
+                        matched = Some( (current_mapping, header) );
+                    }
+                } else {
+                    if match_count == 2 {
+                        warn!( "Duplicate PT_LOAD matches for a single memory region: {:?}", region );
+                        warn!( "  Match #0: {:?} => {:?}", previous_header, matched.as_ref().unwrap() );
+                    }
+
+                    warn!( "  Match #{}: {:?} => {:?}", match_count - 1, header, current_mapping );
+                    duplicate_matches = true;
+                }
+            } else {
+                matched = Some( (current_mapping, header) );
             }
         }
     }
 
-    debug_assert!( match_count <= 1 );
-    matched
+    debug_assert!( !duplicate_matches );
+    matched.map( |(mapping, _)| mapping )
 }
 
 pub fn reload< A: Architecture >(
@@ -1665,5 +1681,99 @@ fn test_match_mapping_3() {
         actual_address: 94266316427264,
         file_offset: 61440,
         size: 192512
+    }));
+}
+
+#[test]
+fn test_match_mapping_4() {
+    let load_headers = &[
+        LoadHeader {
+            address: 12288,
+            file_offset: 12288,
+            file_size: 1360,
+            memory_size: 1360,
+            alignment: 4096,
+            is_readable: true,
+            is_writable: false,
+            is_executable: false,
+        },
+        LoadHeader {
+            address: 19664,
+            file_offset: 15568,
+            file_size: 824,
+            memory_size: 960,
+            alignment: 4096,
+            is_readable: true,
+            is_writable: true,
+            is_executable: false,
+        }
+    ][..];
+
+    let mapping = match_mapping( &load_headers, &Region {
+        start: 139634006765568,
+        end: 139634006769664,
+        is_read: true,
+        is_write: false,
+        is_executable: false,
+        is_shared: false,
+        file_offset: 12288,
+        major: 0,
+        minor: 25,
+        inode: 206336,
+        name: "/usr/lib/libdl-2.32.so".into(),
+    });
+
+    assert_eq!( mapping, Some( AddressMapping {
+        declared_address: 12288,
+        actual_address: 139634006765568,
+        file_offset: 12288,
+        size: 4096,
+    }));
+}
+
+#[test]
+fn test_match_mapping_5() {
+    let load_headers = &[
+        LoadHeader {
+            address: 94208,
+            file_offset: 94208,
+            file_size: 17632,
+            memory_size: 17632,
+            alignment: 4096,
+            is_readable: true,
+            is_writable: false,
+            is_executable: false
+        },
+        LoadHeader {
+            address: 117192,
+            file_offset: 113096,
+            file_size: 1672,
+            memory_size: 18408,
+            alignment: 4096,
+            is_readable: true,
+            is_writable: true,
+            is_executable: false
+        }
+    ][..];
+
+    let mapping = match_mapping( &load_headers, &Region {
+        start: 139654335762432,
+        end: 139654335766528,
+        is_read: true,
+        is_write: false,
+        is_executable: false,
+        is_shared: false,
+        file_offset: 110592,
+        major: 0,
+        minor: 25,
+        inode: 206371,
+        name: "/usr/lib/libpthread-2.32.so".into()
+    });
+
+    assert_eq!( mapping, Some( AddressMapping {
+        declared_address: 110592,
+        actual_address: 139654335762432,
+        file_offset: 110592,
+        size: 4096,
     }));
 }
