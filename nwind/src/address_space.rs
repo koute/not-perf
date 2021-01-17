@@ -152,8 +152,14 @@ pub struct Binary< A: Architecture > {
     debug_data: Option< Arc< BinaryData > >,
     symbols: Vec< Symbols >,
     frame_descriptions: Option< FrameDescriptions< A::Endianity > >,
-    context: Option< addr2line::Context< BinaryDataReader > >,
+    context: Option< Mutex< addr2line::Context< BinaryDataReader > > >,
     symbol_decode_cache: Option< Mutex< SymbolDecodeCache > >
+}
+
+#[test]
+fn test_binary_is_sync() {
+    fn assert_is_sync< T: Sync >() {}
+    assert_is_sync::< Binary< crate::arch::native::Arch > >();
 }
 
 pub type BinaryHandle< A > = Arc< Binary< A > >;
@@ -361,7 +367,7 @@ impl< A: Architecture > Binary< A > {
 
         let mut found = false;
         if let Some( context ) = self.context.as_ref() {
-            if let Ok( mut raw_frames ) = context.find_frames( relative_address ) {
+            if let Ok( mut raw_frames ) = context.lock().unwrap().find_frames( relative_address ) {
                 if let Ok( Some( raw_frame ) ) = raw_frames.next() {
                     found = true;
                     process_frame( raw_frame, &mut frame );
@@ -901,7 +907,7 @@ pub fn reload< A: Architecture >(
         load_debug_frame: bool,
         load_frame_descriptions: bool,
         is_old: bool,
-        context: Option< addr2line::Context< BinaryDataReader > >
+        context: Option< Mutex< addr2line::Context< BinaryDataReader > > >
     }
 
     let mut reloaded = Reloaded::default();
@@ -1103,7 +1109,7 @@ pub fn reload< A: Architecture >(
                     );
 
                     match ctx {
-                        Ok( ctx ) => context = Some( ctx ),
+                        Ok( ctx ) => context = Some( Mutex::new( ctx ) ),
                         Err( error ) => {
                             warn!( "Failed to create addr2line context: {:?}", error );
                         }
