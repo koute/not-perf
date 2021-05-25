@@ -32,7 +32,7 @@ default-features = false
 [dev-dependencies]
 quickcheck = { version = "0.9", default-features = false, features = ["log"] }
 criterion = "0.3"
-env_logger = "0.7"
+env_logger = "0.8"
 
 [profile.release]
 lto = true
