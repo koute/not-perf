@@ -876,6 +876,7 @@ impl LocalAddressSpace {
             }
         }
 
+        let mut fresh_count = 0;
         loop {
             let mut is_end_of_fresh_frames = false;
             if let Some( shadow_stack_ref ) = shadow_stack.as_mut() {
@@ -883,7 +884,10 @@ impl LocalAddressSpace {
                     let stack_pointer = ctx.next_stack_pointer();
                     match shadow_stack_ref.push( stack_pointer as usize, next_address_location as usize ) {
                         ShadowStackResult::Found( _ ) => is_end_of_fresh_frames = true,
-                        ShadowStackResult::NotFound => is_end_of_fresh_frames = false,
+                        ShadowStackResult::NotFound => {
+                            fresh_count += 1;
+                            is_end_of_fresh_frames = false;
+                        },
                         ShadowStackResult::Reset( return_address ) => {
                             debug!( "Replacing the return address with 0x{:016X}", return_address );
                             ctx.replace_next_address( return_address as _ );
@@ -900,6 +904,12 @@ impl LocalAddressSpace {
             };
 
             if is_end_of_fresh_frames {
+                debug!(
+                    "Finished unwinding through fresh frames (fresh count = {}, non-fresh count = {}, popped since last unwind = {})",
+                    fresh_count + 1,
+                    shadow_stack.as_mut().map( |ss| ss.tls().tail ).unwrap_or( 0 ),
+                    entries_popped_since_last_unwind + 1
+                );
                 return Some( entries_popped_since_last_unwind + 1 );
             }
 
