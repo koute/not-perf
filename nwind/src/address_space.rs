@@ -218,7 +218,7 @@ fn demangle_rust_symbol( _: &str ) -> Option< String > {
 
 fn demangle_cpp_symbol( symbol: &str ) -> Option< String > {
     cpp_demangle::Symbol::new( symbol ).ok()
-        .and_then( |symbol| symbol.demangle( &cpp_demangle::DemangleOptions { no_params: false } ).ok() )
+        .and_then( |symbol| symbol.demangle( &cpp_demangle::DemangleOptions::new() ).ok() )
 }
 
 enum SymbolKind {
