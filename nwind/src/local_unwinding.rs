@@ -83,6 +83,13 @@ fn on_shadow_stack_no_entry_found( stack_pointer: usize, expected_index: usize, 
 
 #[cold]
 #[inline(never)]
+fn on_shadow_stack_incomplete_unwinding( shadow_stack_ref: &mut ShadowStack ) {
+    error!( "Failed to fully unwind; some of the stack traces will be incomplete. (Are you using a JIT compiler?)" );
+    shadow_stack_ref.reset();
+}
+
+#[cold]
+#[inline(never)]
 unsafe fn unwind_shadow_stack( tls: &mut ShadowStackTls, stack_pointer: usize, expected_index: usize ) -> Option< usize > {
     loop {
         if tls.tail == 0 {
@@ -896,7 +903,16 @@ impl LocalAddressSpace {
                 return Some( entries_popped_since_last_unwind + 1 );
             }
 
-            if stop || ctx.unwind( &memory ) == false {
+            if stop {
+                return None;
+            }
+
+            if ctx.unwind( &memory ) == false {
+                if let Some( shadow_stack_ref ) = shadow_stack.as_mut() {
+                    if shadow_stack_ref.tls().tail > 0 {
+                        on_shadow_stack_incomplete_unwinding( shadow_stack_ref );
+                    }
+                }
                 return None;
             }
         }
