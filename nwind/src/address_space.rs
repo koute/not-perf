@@ -343,14 +343,12 @@ impl< A: Architecture > Binary< A > {
         self.data.as_ref()
     }
 
-    pub fn lookup_unwind_row< 'a, F, R >( &'a self, ctx_cache: &'a mut ContextCache< A::Endianity >, address: u64, callback: F ) -> Option< R >
-        where F: FnOnce( UnwindInfo< 'a, A::Endianity > ) -> R
-    {
-        if let Some( ref frame_descriptions ) = self.frame_descriptions {
-            frame_descriptions.find_unwind_info( ctx_cache, &self.mappings, address, callback )
-        } else {
-            None
-        }
+    pub fn lookup_unwind_row< 'a >(
+        &self,
+        ctx_cache: &'a mut ContextCache< A::Endianity >,
+        address: u64
+    ) -> Option< UnwindInfo< 'a, A::Endianity > > {
+        self.frame_descriptions.as_ref().and_then( move |fde| fde.find_unwind_info( ctx_cache, &self.mappings, address ) )
     }
 
     pub fn arm_exidx_address( &self ) -> Option< u64 > {

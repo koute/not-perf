@@ -49,3 +49,6 @@ members = [".", "cli", "nwind", "proc-maps", "perf_event_open"]
 [[bench]]
 name = "unwinding"
 harness = false
+
+[patch.crates-io]
+gimli = { git = "https://github.com/gimli-rs/gimli.git", rev = "4ea297a" }
