@@ -76,6 +76,7 @@ mod addr2line {
         pub fn from_sections(
             _: gimli::DebugAbbrev< T >,
             _: gimli::DebugAddr< T >,
+            _: gimli::DebugAranges< T >,
             _: gimli::DebugInfo< T >,
             _: gimli::DebugLine< T >,
             _: gimli::DebugLineStr< T >,
@@ -1096,6 +1097,7 @@ pub fn reload< A: Architecture >(
                 } else if context.is_none() {
                     debug!( "Creating addr2line context for '{}' from '{}'...", data.name, binary_data.name() );
                     let ctx = addr2line::Context::from_sections(
+                        BinaryData::get_section_or_empty( &binary_data ),
                         BinaryData::get_section_or_empty( &binary_data ),
                         BinaryData::get_section_or_empty( &binary_data ),
                         BinaryData::get_section_or_empty( &binary_data ),
