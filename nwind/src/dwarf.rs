@@ -45,15 +45,14 @@ fn dwarf_get_reg< A: Architecture, M: MemoryReader< A >, R: gimli::Reader >( nth
     Some( (value_address, value.into()) )
 }
 
-pub fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
+fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
     nth_frame: usize,
     memory: &M,
-    unwind_cache: Option< &mut UnwindInfoCache >,
     regs: &A::Regs,
     unwind_info: &UnwindInfo< A::Endianity >,
     next_regs: &mut Vec< (u16, u64) >,
     ra_address: &mut Option< u64 >
-) -> Option< u64 > {
+) -> Option< (u64, bool) > {
     debug!( "Initial address for frame #{}: 0x{:016X}", nth_frame, unwind_info.initial_absolute_address() );
 
     let cfa = unwind_info.cfa();
@@ -156,13 +155,7 @@ pub fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
         }
     });
 
-    if cacheable {
-        if let Some( unwind_cache ) = unwind_cache {
-            unwind_info.cache_into( unwind_cache );
-        }
-    }
-
-    Some( cfa_value )
+    Some( (cfa_value, cacheable) )
 }
 
 pub fn dwarf_unwind< A: Architecture, M: MemoryReader< A > >(
@@ -182,46 +175,48 @@ pub fn dwarf_unwind< A: Architecture, M: MemoryReader< A > >(
     }
 
     let address = if nth_frame == 0 { address } else { address - 1 };
-    if let Some( unwind_info ) = unwind_cache.lookup( address ) {
-        let mut ra_address = None;
-        let cfa = dwarf_unwind_impl(
-            nth_frame,
-            memory,
-            None,
-            regs,
-            &unwind_info,
-            next_regs,
-            &mut ra_address
-        );
+    let cached_unwind_info = unwind_cache.lookup( address );
+    let mut uncached_unwind_info = None;
 
-        return Some( DwarfResult {
-            initial_address: unwind_info.initial_absolute_address(),
-            cfa,
-            ra_address
-        });
+    if cached_unwind_info.is_none() {
+        let binary = lookup_binary( nth_frame, memory, regs )?;
+        uncached_unwind_info = binary.lookup_unwind_row( ctx_cache, address );
     }
 
-    let binary = lookup_binary( nth_frame, memory, regs )?;
-    let unwind_info = binary.lookup_unwind_row( ctx_cache, address );
-    if let Some( unwind_info ) = unwind_info {
-        let mut ra_address = None;
-        let cfa = dwarf_unwind_impl(
-            nth_frame,
-            memory,
-            Some( unwind_cache ),
-            regs,
-            &unwind_info,
-            next_regs,
-            &mut ra_address
-        );
+    let unwind_info = match cached_unwind_info.as_ref().or( uncached_unwind_info.as_ref() ) {
+        Some( unwind_info ) => unwind_info,
+        None => {
+            debug!( "No unwind info for address 0x{:016X}", address );
+            return None;
+        }
+    };
 
-        return Some( DwarfResult {
-            initial_address: unwind_info.initial_absolute_address(),
-            cfa,
-            ra_address
-        });
-    }
+    let mut ra_address = None;
+    let result = dwarf_unwind_impl(
+        nth_frame,
+        memory,
+        regs,
+        unwind_info,
+        next_regs,
+        &mut ra_address
+    );
 
-    debug!( "No unwind info for address 0x{:016X}", address );
-    return None;
+    let initial_address = unwind_info.initial_absolute_address();
+    let cfa = match result {
+        Some( (cfa, cacheable) ) => {
+            if cacheable {
+                if let Some( uncached_unwind_info ) = uncached_unwind_info {
+                    uncached_unwind_info.cache_into( unwind_cache );
+                }
+            }
+            Some( cfa )
+        },
+        None => None
+    };
+
+    Some( DwarfResult {
+        initial_address,
+        cfa,
+        ra_address
+    })
 }
