@@ -37,7 +37,9 @@ impl< 'a > MemoryReader< arch::native::Arch > for LocalMemory< 'a > {
 
     #[inline(always)]
     fn get_pointer_at_address( &self, address: <arch::native::Arch as Architecture>::RegTy ) -> Option< <arch::native::Arch as Architecture>::RegTy > {
-        let value = unsafe { *(address as usize as *const usize) };
+        let value = unsafe {
+            std::ptr::read_unaligned( address as usize as *const usize )
+        };
         Some( value as _ )
     }
 
