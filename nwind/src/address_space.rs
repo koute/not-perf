@@ -859,8 +859,8 @@ fn match_mapping( load_headers: &[LoadHeader], region: &Region ) -> Option< Addr
                 let previous_permissions_match = previous_header.is_readable == region.is_read && previous_header.is_writable == region.is_write;
                 let current_permissions_match = header.is_readable == region.is_read && header.is_writable == region.is_write;
 
-                let previous_score = previous_file_offset_match as usize + previous_permissions_match as usize;
-                let current_score = current_file_offset_match as usize + current_permissions_match as usize;
+                let previous_score = previous_file_offset_match as usize * 2 + previous_permissions_match as usize;
+                let current_score = current_file_offset_match as usize * 2 + current_permissions_match as usize;
 
                 if current_score != previous_score {
                     if current_score > previous_score {
@@ -1784,5 +1784,34 @@ fn test_match_mapping_5() {
         actual_address: 139654335762432,
         file_offset: 110592,
         size: 4096,
+    }));
+}
+
+#[test]
+fn test_match_mapping_6() {
+    let load_headers = &[
+        LoadHeader { address: 8192, file_offset: 8192, file_size: 132, memory_size: 132, alignment: 4096, is_readable: true, is_writable: false, is_executable: false },
+        LoadHeader { address: 15872, file_offset: 11776, file_size: 552, memory_size: 560, alignment: 4096, is_readable: true, is_writable: true, is_executable: false }
+    ][..];
+
+    let mapping = match_mapping( &load_headers, &Region {
+        start: 140464087232512,
+        end: 140464087240704,
+        is_read: true,
+        is_write: true,
+        is_executable: false,
+        is_shared: false,
+        file_offset: 8192,
+        major: 0,
+        minor: 40,
+        inode: 430567,
+        name: "/scratch/cargo/target/dlopen_so".into()
+    });
+
+    assert_eq!( mapping, Some( AddressMapping {
+        declared_address: 8192,
+        actual_address: 140464087232512,
+        file_offset: 8192,
+        size: 8192
     }));
 }
