@@ -13,6 +13,7 @@ use proc_maps;
 
 use crate::address_space::{BinaryHandle, BinaryRegion, MemoryReader, Frame, reload};
 use crate::binary::BinaryData;
+use crate::frame_descriptions::DynamicFdeRegistry;
 use crate::range_map::RangeMap;
 use crate::arch::{self, LocalRegs, Architecture};
 use crate::unwind_context::{InitializeRegs, UnwindContext};
@@ -25,7 +26,8 @@ pub enum UnwindControl {
 }
 
 struct LocalMemory< 'a > {
-    regions: &'a RangeMap< BinaryRegion< arch::native::Arch > >
+    regions: &'a RangeMap< BinaryRegion< arch::native::Arch > >,
+    dynamic_fde_registry: &'a DynamicFdeRegistry< gimli::NativeEndian >
 }
 
 impl< 'a > MemoryReader< arch::native::Arch > for LocalMemory< 'a > {
@@ -41,6 +43,10 @@ impl< 'a > MemoryReader< arch::native::Arch > for LocalMemory< 'a > {
 
     fn is_stack_address( &self, _: u64 ) -> bool {
         false
+    }
+
+    fn dynamic_fde_registry( &self ) -> Option< &DynamicFdeRegistry< gimli::NativeEndian > > {
+        Some( self.dynamic_fde_registry )
     }
 }
 
@@ -557,7 +563,8 @@ pub struct LocalAddressSpace {
     binary_map: HashMap< BinaryId, BinaryHandle< arch::native::Arch > >,
     use_shadow_stack: bool,
     should_load_symbols: bool,
-    reload_count: usize
+    reload_count: usize,
+    dynamic_fde_registry: DynamicFdeRegistry< gimli::NativeEndian >
 }
 
 struct LocalRegsInitializer< A: Architecture >( PhantomData< A > );
@@ -698,13 +705,22 @@ impl LocalAddressSpace {
             binary_map: HashMap::new(),
             use_shadow_stack: false,
             should_load_symbols: opts.should_load_symbols,
-            reload_count: 0
+            reload_count: 0,
+            dynamic_fde_registry: Default::default()
         };
 
         address_space.use_shadow_stack( true );
         address_space.reload()?;
 
         Ok( address_space )
+    }
+
+    pub unsafe fn register_fde_from_pointer( &mut self, fde: *const u8 ) {
+        self.dynamic_fde_registry.register_fde_from_pointer( fde )
+    }
+
+    pub fn unregister_fde_from_pointer( &mut self, fde: *const u8 ) {
+        self.dynamic_fde_registry.unregister_fde_from_pointer( fde )
     }
 
     pub fn reload( &mut self ) -> Result< AddressSpaceUpdate, io::Error > {
@@ -768,7 +784,8 @@ impl LocalAddressSpace {
         self.clear_cache_if_necessary( ctx );
 
         let memory = LocalMemory {
-            regions: &self.regions
+            regions: &self.regions,
+            dynamic_fde_registry: &self.dynamic_fde_registry
         };
 
         let use_shadow_stack = self.is_shadow_stack_enabled();
@@ -840,7 +857,8 @@ impl LocalAddressSpace {
         self.clear_cache_if_necessary( ctx );
 
         let memory = LocalMemory {
-            regions: &self.regions
+            regions: &self.regions,
+            dynamic_fde_registry: &self.dynamic_fde_registry
         };
 
         let use_shadow_stack = self.is_shadow_stack_enabled();

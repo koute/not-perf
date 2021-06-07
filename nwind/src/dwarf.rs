@@ -179,8 +179,13 @@ pub fn dwarf_unwind< A: Architecture, M: MemoryReader< A > >(
     let mut uncached_unwind_info = None;
 
     if cached_unwind_info.is_none() {
-        let binary = lookup_binary( nth_frame, memory, regs )?;
-        uncached_unwind_info = binary.lookup_unwind_row( ctx_cache, address );
+        if let Some( binary ) = lookup_binary( nth_frame, memory, regs ) {
+            uncached_unwind_info = binary.lookup_unwind_row( ctx_cache, address );
+        } else if let Some( registry ) = memory.dynamic_fde_registry() {
+            uncached_unwind_info = registry.lookup_unwind_row( ctx_cache, address );
+        } else {
+            return None;
+        }
     }
 
     let unwind_info = match cached_unwind_info.as_ref().or( uncached_unwind_info.as_ref() ) {

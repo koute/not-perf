@@ -23,7 +23,7 @@ use crate::range_map::RangeMap;
 use crate::unwind_context::UnwindContext;
 use crate::binary::{BinaryData, LoadHeader, BinaryDataReader};
 use crate::symbols::Symbols;
-use crate::frame_descriptions::{FrameDescriptions, ContextCache, UnwindInfo, AddressMapping, LoadHint};
+use crate::frame_descriptions::{DynamicFdeRegistry, FrameDescriptions, ContextCache, UnwindInfo, AddressMapping, LoadHint};
 use crate::types::{Inode, UserFrame, Endianness, BinaryId};
 
 #[cfg(not(feature = "addr2line"))]
@@ -651,6 +651,9 @@ pub trait MemoryReader< A: Architecture > {
     fn get_region_at_address( &self, address: u64 ) -> Option< &BinaryRegion< A > >;
     fn get_pointer_at_address( &self, address: A::RegTy ) -> Option< A::RegTy >;
     fn is_stack_address( &self, address: u64 ) -> bool;
+    fn dynamic_fde_registry( &self ) -> Option< &DynamicFdeRegistry< A::Endianity > > {
+        None
+    }
 }
 
 pub trait Primitive: Sized + fmt::UpperHex {

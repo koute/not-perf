@@ -239,7 +239,7 @@ impl< E: Endianity > FrameDescriptions< E > {
             let (ref bases, ref debug_frame) = debug_frame.as_ref().unwrap();
 
             let start_timestamp = Instant::now();
-            debug_descriptions = Self::load_section( bases, binary, debug_frame );
+            debug_descriptions = Self::load_section( bases, binary.name(), debug_frame );
             let elapsed = start_timestamp.elapsed();
 
             debug!( "Loaded {} FDEs from .debug_frame for '{}' in {}ms", debug_descriptions.len(), binary.name(), get_ms( elapsed ) );
@@ -254,7 +254,7 @@ impl< E: Endianity > FrameDescriptions< E > {
             let (ref bases, ref eh_frame) = eh_frame.as_ref().unwrap();
 
             let start_timestamp = Instant::now();
-            eh_descriptions = Self::load_section( bases, binary, eh_frame );
+            eh_descriptions = Self::load_section( bases, binary.name(), eh_frame );
             let elapsed = start_timestamp.elapsed();
 
             debug!( "Loaded {} FDEs from .eh_frame for '{}' in {}ms", eh_descriptions.len(), binary.name(), get_ms( elapsed ) );
@@ -329,8 +329,10 @@ impl< E: Endianity > FrameDescriptions< E > {
         Some( (bases, eh_frame_hdr) )
     }
 
-    fn load_section< R: gimli::Reader< Offset = usize >, U: UnwindSection< R > >( bases: &BaseAddresses, binary: &Arc< BinaryData >, section: &U ) -> RangeMap< FrameDescriptionEntry< R > >
-        where <U as UnwindSection< R >>::Offset: UnwindOffset
+    fn load_section< R, U >( bases: &BaseAddresses, name: &str, section: &U ) -> RangeMap< FrameDescriptionEntry< R > >
+        where R: gimli::Reader< Offset = usize >,
+              U: UnwindSection< R >,
+              <U as UnwindSection< R >>::Offset: UnwindOffset
     {
         let mut entries = section.entries( bases );
         let mut descriptions = Vec::new();
@@ -343,13 +345,13 @@ impl< E: Endianity > FrameDescriptions< E > {
                             descriptions.push( (fde.initial_address()..fde.initial_address() + fde.len(), fde) );
                         },
                         Err( error ) => {
-                            warn!( "Failed to parse FDE for '{}': {}", binary.name(), error );
+                            warn!( "Failed to parse FDE for '{}': {}", name, error );
                         }
                     }
                 },
                 Ok( None ) => break,
                 Err( error ) => {
-                    warn!( "Failed to iterate FDEs for '{}': {}", binary.name(), error );
+                    warn!( "Failed to iterate FDEs for '{}': {}", name, error );
                     break;
                 }
             }
@@ -595,5 +597,110 @@ impl< 'a, E: Endianity > UnwindInfo< 'a, E > {
 
         let info = CachedUnwindInfo { rules, cfa, initial_address: self.initial_address, address: self.address };
         cache.put( self.absolute_address, info );
+    }
+}
+
+unsafe fn calculate_fde_length( fde: *const u8 ) -> usize {
+    let mut p = fde;
+    loop {
+        let entry_length = std::ptr::read_unaligned( p as *const u32 );
+        p = p.add( 4 );
+
+        if entry_length == 0 {
+            break;
+        }
+
+        if entry_length != 0xFFFFFFFF {
+            p = p.add( entry_length as usize );
+        } else {
+            let entry_length = std::ptr::read_unaligned( p as *const u64 );
+            p = p.add( entry_length as usize + 8 );
+        }
+    }
+
+    p as usize - fde as usize
+}
+
+struct DynamicTable< E > where E: Endianity {
+    bases: BaseAddresses,
+    section: EhFrame< EndianSlice< 'static, E > >,
+    fde_map: RangeMap< FrameDescriptionEntry< EndianSlice< 'static, E > > >
+}
+
+#[derive(Default)]
+pub struct DynamicFdeRegistry< E > where E: Endianity {
+    tables: Vec< (usize, DynamicTable< E >) >
+}
+
+impl< E > DynamicFdeRegistry< E > where E: Endianity {
+    pub fn lookup_unwind_row< 'a >(
+        &self,
+        ctx_cache: &'a mut ContextCache< E >,
+        address: u64
+    ) -> Option< UnwindInfo< 'a, E > > {
+        let ctx = &mut ctx_cache.cached_context;
+        for (_, table) in &self.tables {
+            if let Some( fde ) = table.fde_map.get_value( address ) {
+                let initial_address = fde.initial_address();
+
+                let ctx = unsafe { launder_lifetime( ctx ) };
+                if let Ok( mut table ) = UnwindTable::new( &table.section, &table.bases, ctx, &fde ) {
+                    loop {
+                        match table.next_row() {
+                            Ok( Some( row ) ) => {
+                                if !row.contains( address ) {
+                                    continue;
+                                }
+                            },
+                            Ok( None ) => break,
+                            Err( error ) => {
+                                error!( "Failed to iterate the unwind table: {:?}", error );
+                                break;
+                            }
+                        }
+
+                        return Some( UnwindInfo {
+                            initial_address,
+                            address,
+                            absolute_address: address,
+                            kind: UnwindInfoKind::Uncached( table.into_current_row().unwrap() )
+                        });
+                    }
+                }
+            }
+        }
+
+        None
+    }
+}
+
+impl DynamicFdeRegistry< gimli::NativeEndian > {
+    pub unsafe fn register_fde_from_pointer( &mut self, fde: *const u8 ) {
+        let length = calculate_fde_length( fde );
+        let slice = std::slice::from_raw_parts( fde, length );
+        let mut bases = BaseAddresses::default();
+        bases = bases.set_eh_frame( fde as u64 );
+
+        let section = gimli::read::EhFrame::new( slice, gimli::NativeEndian );
+        let fde_map = FrameDescriptions::< gimli::NativeEndian >::load_section( &bases, "<dynamic>", &section );
+        let table = DynamicTable {
+            bases,
+            section,
+            fde_map
+        };
+        self.tables.push( (fde as usize, table) );
+    }
+
+    pub fn unregister_fde_from_pointer( &mut self, fde: *const u8 ) {
+        if let Some( (last_fde, _) ) = self.tables.last() {
+            if *last_fde == fde as usize {
+                self.tables.pop();
+                return;
+            }
+        }
+
+        if let Some( index ) = self.tables.iter().position( |(key, _)| *key == fde as usize ) {
+            self.tables.remove( index );
+        }
     }
 }
