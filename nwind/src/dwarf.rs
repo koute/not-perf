@@ -45,6 +45,76 @@ fn dwarf_get_reg< A: Architecture, M: MemoryReader< A >, R: gimli::Reader >( nth
     Some( (value_address, value.into()) )
 }
 
+fn evaluate_dwarf_expression< A, M, R >(
+    _memory: &M,
+    regs: &A::Regs,
+    expr: gimli::read::Expression< R >
+) -> Option< u64 > where A: Architecture, M: MemoryReader< A >, R: gimli::Reader {
+    let address_size = match A::BITNESS {
+        Bitness::B32 => 4,
+        Bitness::B64 => 8,
+    };
+    let encoding = gimli::Encoding {
+        // TODO: use CIE format?
+        format: Format::Dwarf32,
+        // This doesn't currently matter for expressions.
+        version: 0,
+        address_size,
+    };
+
+    let mut evaluation = expr.evaluation( encoding );
+    let mut result = evaluation.evaluate();
+    let value;
+    loop {
+        match result {
+            Ok( EvaluationResult::Complete ) => {
+                let mut pieces = evaluation.result();
+                if pieces.len() == 1 {
+                    match pieces.pop().unwrap() {
+                        Piece {
+                            size_in_bits: None,
+                            bit_offset: None,
+                            location: Location::Address { address },
+                            ..
+                        } => {
+                            value = address;
+                            break;
+                        },
+                        piece => {
+                            error!( "Unhandled DWARF evaluation result: {:?}", piece );
+                            return None;
+                        }
+                    }
+                } else {
+                    error!( "Unhandled DWARF evaluation result: {:?}", pieces );
+                    return None;
+                }
+            },
+            Ok( EvaluationResult::RequiresRegister { register, .. } ) => {
+                let reg_value = match regs.get( register.0 ) {
+                    Some( reg_value ) => reg_value.into(),
+                    None => {
+                        error!( "Failed to evaluate DWARF expression due to a missing value of register {:?}", A::register_name( register.0 ) );
+                        return None;
+                    }
+                };
+
+                result = evaluation.resume_with_register( Value::Generic( reg_value ) );
+            },
+            Ok( result ) => {
+                error!( "Failed to evaluate DWARF expression due to unhandled requirement: {:?}", result );
+                return None;
+            },
+            Err( error ) => {
+                error!( "Failed to evaluate DWARF expression: {:?}", error );
+                return None;
+            }
+        }
+    }
+
+    Some( value )
+}
+
 fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
     nth_frame: usize,
     memory: &M,
@@ -73,68 +143,7 @@ fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
             value
         },
         CfaRule::Expression( expr ) => {
-            let address_size = match A::BITNESS {
-                Bitness::B32 => 4,
-                Bitness::B64 => 8,
-            };
-            let encoding = gimli::Encoding {
-                // TODO: use CIE format?
-                format: Format::Dwarf32,
-                // This doesn't currently matter for expressions.
-                version: 0,
-                address_size,
-            };
-
-            let mut evaluation = expr.evaluation( encoding );
-            let mut result = evaluation.evaluate();
-            let value;
-            loop {
-                match result {
-                    Ok( EvaluationResult::Complete ) => {
-                        let mut pieces = evaluation.result();
-                        if pieces.len() == 1 {
-                            match pieces.pop().unwrap() {
-                                Piece {
-                                    size_in_bits: None,
-                                    bit_offset: None,
-                                    location: Location::Address { address },
-                                    ..
-                                } => {
-                                    value = address;
-                                    break;
-                                },
-                                piece => {
-                                    error!( "Unhandled CFA evaluation result: {:?}", piece );
-                                    return None;
-                                }
-                            }
-                        } else {
-                            error!( "Unhandled CFA evaluation result: {:?}", pieces );
-                            return None;
-                        }
-                    },
-                    Ok( EvaluationResult::RequiresRegister { register, .. } ) => {
-                        let reg_value = match regs.get( register.0 ) {
-                            Some( reg_value ) => reg_value.into(),
-                            None => {
-                                error!( "Failed to evaluate CFA rule due to a missing value of register {:?}", A::register_name( register.0 ) );
-                                return None;
-                            }
-                        };
-
-                        result = evaluation.resume_with_register( Value::Generic( reg_value ) );
-                    },
-                    Ok( result ) => {
-                        error!( "Failed to evaluate CFA rule due to unhandled requirement: {:?}", result );
-                        return None;
-                    },
-                    Err( error ) => {
-                        error!( "Failed to evaluate CFA rule: {:?}", error );
-                        return None;
-                    }
-                }
-            }
-
+            let value = evaluate_dwarf_expression( memory, regs, expr )?;
             debug!( "Evaluated CFA for frame #{}: 0x{:016X}", nth_frame, value );
             value
         },
