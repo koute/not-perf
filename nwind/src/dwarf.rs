@@ -20,7 +20,14 @@ pub struct DwarfResult {
     pub ra_address: Option< u64 >
 }
 
-fn dwarf_get_reg< A: Architecture, M: MemoryReader< A >, R: gimli::Reader >( nth_frame: usize, register: u16, memory: &M, cfa_value: u64, rule: &RegisterRule< R > ) -> Option< (u64, u64) > {
+fn dwarf_get_reg< A, M, R >(
+    nth_frame: usize,
+    register: u16,
+    memory: &M,
+    regs: &A::Regs,
+    cfa_value: u64,
+    rule: &RegisterRule< R >
+) -> Option< (u64, u64) > where A: Architecture, M: MemoryReader< A >, R: gimli::Reader, <R as gimli::Reader>::Offset: Default {
     let (value_address, value) = match *rule {
         RegisterRule::Offset( offset ) => {
             let value_address = (cfa_value as i64 + offset) as u64;
@@ -33,6 +40,25 @@ fn dwarf_get_reg< A: Architecture, M: MemoryReader< A >, R: gimli::Reader >( nth
                     return None;
                 }
             };
+            (value_address, value)
+        },
+        RegisterRule::Expression( ref expression ) => {
+            let value_address = match evaluate_dwarf_expression( memory, regs, expression.clone() ) {
+                Some( value ) => value,
+                None => {
+                    debug!( "Cannot grab register {:?} for frame #{}: failed to evaluate DWARF bytecode", A::register_name( register ), nth_frame );
+                    return None;
+                }
+            };
+
+            let value = match memory.get_pointer_at_address( value_address.try_into().unwrap() ) {
+                Some( value ) => value,
+                None => {
+                    debug!( "Cannot grab register {:?} for frame #{}: failed to fetch it from 0x{:016X}", A::register_name( register ), nth_frame, value_address );
+                    return None;
+                }
+            };
+
             (value_address, value)
         },
         ref rule => {
@@ -167,7 +193,7 @@ fn dwarf_unwind_impl< A: Architecture, M: MemoryReader< A > >(
     unwind_info.each_register( |(register, rule)| {
         debug!( "  Register {:?}: {:?}", A::register_name( register.0 ), rule );
 
-        if let Some( (value_address, value) ) = dwarf_get_reg( nth_frame + 1, register.0, memory, cfa_value, rule ) {
+        if let Some( (value_address, value) ) = dwarf_get_reg( nth_frame + 1, register.0, memory, regs, cfa_value, rule ) {
             if register.0 == A::RETURN_ADDRESS_REG {
                 *ra_address = Some( value_address );
             }
