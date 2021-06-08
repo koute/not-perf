@@ -107,6 +107,7 @@ impl UnwindInfoCache {
             initial_address: info.initial_address,
             address: info.address,
             absolute_address,
+            is_signal_frame: info.is_signal_frame,
             kind: UnwindInfoKind::Cached( info )
         });
     }
@@ -127,7 +128,8 @@ struct CachedUnwindInfo {
     cfa: (Register, i64),
     rules: Vec< (Register, SimpleRegisterRule) >,
     initial_address: u64,
-    address: u64
+    address: u64,
+    is_signal_frame: bool
 }
 
 impl< T: ::gimli::Reader > Into< RegisterRule< T > > for SimpleRegisterRule {
@@ -399,6 +401,7 @@ impl< E: Endianity > FrameDescriptions< E > {
                             initial_address,
                             address,
                             absolute_address,
+                            is_signal_frame: fde.is_signal_trampoline(),
                             kind: UnwindInfoKind::Uncached( table.into_current_row().unwrap() )
                         });
                     }
@@ -431,6 +434,7 @@ impl< E: Endianity > FrameDescriptions< E > {
                             initial_address,
                             address,
                             absolute_address,
+                            is_signal_frame: fde.is_signal_trampoline(),
                             kind: UnwindInfoKind::Uncached( table.into_current_row().unwrap() )
                         });
                     }
@@ -476,6 +480,7 @@ impl< E: Endianity > FrameDescriptions< E > {
                                 initial_address,
                                 address,
                                 absolute_address,
+                                is_signal_frame: fde.is_signal_trampoline(),
                                 kind: UnwindInfoKind::Uncached( table.into_current_row().unwrap() )
                             });
                         }
@@ -500,10 +505,16 @@ pub struct UnwindInfo< 'a, E: Endianity + 'a > {
     initial_address: u64,
     address: u64,
     absolute_address: u64,
+    is_signal_frame: bool,
     kind: UnwindInfoKind< 'a, E >
 }
 
 impl< 'a, E: Endianity > UnwindInfo< 'a, E > {
+    #[inline]
+    pub fn is_signal_frame( &self ) -> bool {
+        self.is_signal_frame
+    }
+
     #[inline]
     pub fn initial_absolute_address( &self ) -> u64 {
         ((self.absolute_address as i64) + ((self.initial_address as i64) - (self.address as i64))) as u64
@@ -595,7 +606,7 @@ impl< 'a, E: Endianity > UnwindInfo< 'a, E > {
             rules.push( (register, rule) );
         }
 
-        let info = CachedUnwindInfo { rules, cfa, initial_address: self.initial_address, address: self.address };
+        let info = CachedUnwindInfo { rules, cfa, initial_address: self.initial_address, address: self.address, is_signal_frame: self.is_signal_frame };
         cache.put( self.absolute_address, info );
     }
 }
@@ -663,6 +674,7 @@ impl< E > DynamicFdeRegistry< E > where E: Endianity {
                             initial_address,
                             address,
                             absolute_address: address,
+                            is_signal_frame: fde.is_signal_trampoline(),
                             kind: UnwindInfoKind::Uncached( table.into_current_row().unwrap() )
                         });
                     }

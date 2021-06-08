@@ -217,6 +217,12 @@ pub fn dwarf_unwind< A: Architecture, M: MemoryReader< A > >(
         }
     };
 
+    if unwind_info.is_signal_frame() {
+        debug!( "Frame #{} is a signal frame!", nth_frame );
+        // TODO: AFAIK this requires some special handling to be 100% correct, although until I can get a testcase that
+        // can demonstrate the necessity of it I'd rather not do anything blind.
+    }
+
     let mut ra_address = None;
     let result = dwarf_unwind_impl(
         nth_frame,
