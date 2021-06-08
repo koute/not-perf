@@ -49,7 +49,7 @@ fn evaluate_dwarf_expression< A, M, R >(
     _memory: &M,
     regs: &A::Regs,
     expr: gimli::read::Expression< R >
-) -> Option< u64 > where A: Architecture, M: MemoryReader< A >, R: gimli::Reader {
+) -> Option< u64 > where A: Architecture, M: MemoryReader< A >, R: gimli::Reader, <R as gimli::Reader>::Offset: Default {
     let address_size = match A::BITNESS {
         Bitness::B32 => 4,
         Bitness::B64 => 8,
@@ -98,7 +98,12 @@ fn evaluate_dwarf_expression< A, M, R >(
                     return None;
                 }
             },
-            Ok( EvaluationResult::RequiresRegister { register, .. } ) => {
+            Ok( EvaluationResult::RequiresRegister { register, base_type } ) => {
+                if base_type != gimli::UnitOffset( Default::default() ) {
+                    error!( "Failed to evaluate DWARF expression: unsupported base type in RequiresRegister rule: {:?}", base_type );
+                    return None;
+                }
+
                 let reg_value = match regs.get( register.0 ) {
                     Some( reg_value ) => reg_value.into(),
                     None => {
