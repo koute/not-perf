@@ -206,8 +206,6 @@ pub fn dwarf_unwind< A: Architecture, M: MemoryReader< A > >(
             uncached_unwind_info = binary.lookup_unwind_row( ctx_cache, address );
         } else if let Some( registry ) = memory.dynamic_fde_registry() {
             uncached_unwind_info = registry.lookup_unwind_row( ctx_cache, address );
-        } else {
-            return None;
         }
     }
 
