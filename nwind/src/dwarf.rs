@@ -72,7 +72,7 @@ fn dwarf_get_reg< A, M, R >(
 }
 
 fn evaluate_dwarf_expression< A, M, R >(
-    _memory: &M,
+    memory: &M,
     regs: &A::Regs,
     expr: gimli::read::Expression< R >
 ) -> Option< u64 > where A: Architecture, M: MemoryReader< A >, R: gimli::Reader, <R as gimli::Reader>::Offset: Default {
@@ -140,6 +140,38 @@ fn evaluate_dwarf_expression< A, M, R >(
 
                 debug!( "Fetched register {:?}: 0x{:016X}", A::register_name( register.0 ), reg_value );
                 result = evaluation.resume_with_register( Value::Generic( reg_value ) );
+            },
+            Ok( EvaluationResult::RequiresMemory { address, size, space: None, base_type } ) if size as usize == std::mem::size_of::< A::RegTy >() => {
+                if base_type != gimli::UnitOffset( Default::default() ) {
+                    error!( "Failed to evaluate DWARF expression: unsupported base type in RequiresMemory rule: {:?}", base_type );
+                    return None;
+                }
+
+                let address = match crate::arch::TryFrom::try_from( address ) {
+                    Some( address ) => address,
+                    None => {
+                        error!( "Failed to evaluate DWARF expression: out of range address in a RequiresMemory rule: 0x{:016X}", address );
+                        return None;
+                    }
+                };
+                let raw_value = match memory.get_pointer_at_address( address ) {
+                    Some( raw_value ) => raw_value.into(),
+                    None => {
+                        error!( "Failed to evaluate DWARF expression: couldn't fetch {} bytes from 0x{:016X}", size, address );
+                        return None;
+                    }
+                };
+
+                debug!( "Fetched memory from 0x{:016X}: 0x{:X}", address, raw_value );
+
+                let value;
+                if std::mem::size_of::< A::RegTy >() == 4 {
+                    value = gimli::Value::U32( raw_value as u32 );
+                } else {
+                    value = gimli::Value::U64( raw_value );
+                }
+
+                result = evaluation.resume_with_memory( value );
             },
             Ok( result ) => {
                 error!( "Failed to evaluate DWARF expression due to unhandled requirement: {:?}", result );
