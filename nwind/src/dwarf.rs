@@ -62,6 +62,14 @@ fn evaluate_dwarf_expression< A, M, R >(
         address_size,
     };
 
+    if debug_logs_enabled!() {
+        debug!( "Evaluating DWARF expression:" );
+        let mut iter = expr.clone().operations( encoding.clone() );
+        while let Ok( Some( op ) ) = iter.next() {
+            debug!( "  {:?}", op );
+        }
+    }
+
     let mut evaluation = expr.evaluation( encoding );
     let mut result = evaluation.evaluate();
     let value;
@@ -99,6 +107,7 @@ fn evaluate_dwarf_expression< A, M, R >(
                     }
                 };
 
+                debug!( "Fetched register {:?}: 0x{:016X}", A::register_name( register.0 ), reg_value );
                 result = evaluation.resume_with_register( Value::Generic( reg_value ) );
             },
             Ok( result ) => {
