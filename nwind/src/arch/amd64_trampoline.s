@@ -24,12 +24,22 @@ nwind_ret_trampoline:
     /* Save the return value of the original function. */
     push rax
     push rdx
+    /*
+        I don't think this is technically part of the SYSV ABI,
+        but at least Rust's ABI uses this register in certain
+        cases as a return register.
+    */
+    push rcx
+    /* Align the stack. */
+    sub rsp, 8
 
     mov rdi, rsp
-    add rdi, 16
+    add rdi, 32
     call nwind_on_ret_trampoline
 
     mov rsi, rax
+    add rsp, 8
+    pop rcx
     pop rdx
     pop rax
     jmp rsi
