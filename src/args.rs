@@ -174,7 +174,6 @@ pub struct RecordArgs {
     #[structopt(
         long,
         short = "s",
-        default_value = "hw_cpu_cycles",
         parse(from_str = "parse_event_source"),
         raw(possible_values = r#"&[
             "hw_cpu_cycles",
@@ -184,7 +183,7 @@ pub struct RecordArgs {
             "sw_dummy"
         ]"#)
     )]
-    pub event_source: EventSource,
+    pub event_source: Option< EventSource >,
 
     /// Size of the gathered stack payloads (in bytes)
     #[structopt(long, default_value = "24576")]

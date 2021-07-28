@@ -8,7 +8,7 @@ use nwind::arch::Registers;
 use nwind::DwarfRegs;
 
 use crate::args;
-use perf_event_open::{Event, CommEvent, Mmap2Event};
+use perf_event_open::{Event, EventSource, CommEvent, Mmap2Event};
 use crate::perf_group::PerfGroup;
 use crate::perf_arch;
 use crate::archive::{ContextSwitchKind, Packet};
@@ -59,7 +59,12 @@ pub fn main( args: args::RecordArgs ) -> Result< (), Box< dyn Error > > {
     });
 
     info!( "Opening perf events for process with PID {}...", controller.pid() );
-    let mut perf = match PerfGroup::open( controller.pid(), args.frequency, args.stack_size, args.event_source ) {
+    let mut perf = PerfGroup::open( controller.pid(), args.frequency, args.stack_size, args.event_source.unwrap_or( EventSource::HwCpuCycles ) );
+    if perf.is_err() && args.event_source.is_none() {
+        perf = PerfGroup::open( controller.pid(), args.frequency, args.stack_size, args.event_source.unwrap_or( EventSource::SwCpuClock ) );
+    }
+
+    let mut perf = match perf {
         Ok( perf ) => perf,
         Err( error ) => {
             error!( "Failed to start profiling: {}", error );
