@@ -4,9 +4,9 @@ version = 3
 
 [[package]]
 name = "addr2line"
-version = "0.15.2"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7a2e47a1fbe209ee101dd6d61285226744c6c8d3c21c8dc878ba6cb9f467f3a"
+checksum = "3e61f2b7f93d2c7d2b08263acaa4a363b3e276806c68af6134c44f523bf1aacd"
 dependencies = [
  "gimli",
 ]
@@ -358,8 +358,9 @@ dependencies = [
 
 [[package]]
 name = "gimli"
-version = "0.24.0"
-source = "git+https://github.com/gimli-rs/gimli.git?rev=4ea297a#4ea297a35db98ca2aa19f1a8105ab2992f29422f"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0a01e0497841a3b2db4f8afa483cce65f7e96a3498bd6c541734792aeac8fe7"
 dependencies = [
  "fallible-iterator",
  "stable_deref_trait",
