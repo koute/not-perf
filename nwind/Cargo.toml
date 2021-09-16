@@ -11,7 +11,7 @@ goblin = "0.0.24"
 scroll = "0.9"
 memmap = "0.7"
 log = { version = "0.4", optional = true }
-speedy = "0.7"
+speedy = "0.8"
 lru = "0.6"
 cpp_demangle = "0.3"
 rustc-demangle = { version = "0.1", optional = true }

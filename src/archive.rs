@@ -203,7 +203,7 @@ impl< 'a, C: Context > Readable< 'a, C > for FramedPacket< 'a > {
                 }
             },
             Cow::Owned( bytes ) => {
-                match Packet::read_from_buffer_owned( &bytes ) {
+                match Packet::read_from_buffer_copying_data( &bytes ) {
                     Ok( packet ) => Ok( FramedPacket::Known( packet ) ),
                     Err( _ ) => Ok( FramedPacket::Unknown( Cow::Owned( bytes ) ) )
                 }
