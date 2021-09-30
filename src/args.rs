@@ -186,7 +186,7 @@ pub struct RecordArgs {
     pub event_source: Option< EventSource >,
 
     /// Size of the gathered stack payloads (in bytes)
-    #[structopt(long, default_value = "24576")]
+    #[structopt(long, default_value = "64512")]
     pub stack_size: u32,
 
     /// Gather data but do not do anything with it; useful only for testing
