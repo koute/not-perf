@@ -18,12 +18,12 @@ use perf_event_open::{Perf, Event, CommEvent, Mmap2Event, EventSource};
 
 pub struct EventRef {
     pid: u32,
-    cpu: u32,
+    cpu: Option< u32 >,
     inner: perf_event_open::EventRef
 }
 
 impl EventRef {
-    pub fn cpu( &self ) -> u32 {
+    pub fn cpu( &self ) -> Option< u32 > {
         self.cpu
     }
 
@@ -65,13 +65,13 @@ impl Drop for StoppedProcess {
 
 struct Member {
     pid: u32,
-    cpu: u32,
+    cpu: Option< u32 >,
     perf: Perf,
     is_closed: Cell< bool >
 }
 
 impl Member {
-    fn new( pid: u32, cpu: u32, perf: Perf ) -> Self {
+    fn new( pid: u32, cpu: Option< u32 >, perf: Perf ) -> Self {
         Member {
             pid,
             cpu,
@@ -189,7 +189,8 @@ impl PerfGroup {
         let mut perf_events = Vec::new();
         let threads = get_threads( pid )?;
 
-        for cpu in 0..num_cpus::get() as u32 {
+        let cpu_count = num_cpus::get();
+        for cpu in 0..cpu_count as u32 {
             let perf = Perf::build()
                 .pid( pid )
                 .only_cpu( cpu as _ )
@@ -203,23 +204,42 @@ impl PerfGroup {
                 .start_disabled()
                 .open()?;
 
-            perf_events.push( (cpu, perf) );
+            perf_events.push( (Some( cpu ), perf) );
+        }
 
+        if cpu_count * (threads.len() + 1) >= 1000 {
             for &(tid, _) in &threads {
                 let perf = Perf::build()
                     .pid( tid )
-                    .only_cpu( cpu as _ )
+                    .any_cpu()
                     .frequency( self.frequency as u64 )
                     .sample_user_stack( self.stack_size )
                     .sample_user_regs( perf_arch::native::REG_MASK )
                     .sample_kernel()
-                    .gather_context_switches()
                     .event_source( self.event_source )
-                    .inherit_to_children()
                     .start_disabled()
                     .open()?;
 
-                perf_events.push( (cpu, perf) );
+                perf_events.push( (None, perf) );
+            }
+        } else {
+            for cpu in 0..cpu_count as u32 {
+                for &(tid, _) in &threads {
+                    let perf = Perf::build()
+                        .pid( tid )
+                        .only_cpu( cpu as _ )
+                        .frequency( self.frequency as u64 )
+                        .sample_user_stack( self.stack_size )
+                        .sample_user_regs( perf_arch::native::REG_MASK )
+                        .sample_kernel()
+                        .gather_context_switches()
+                        .event_source( self.event_source )
+                        .inherit_to_children()
+                        .start_disabled()
+                        .open()?;
+
+                    perf_events.push( (Some( cpu ), perf) );
+                }
             }
         }
 

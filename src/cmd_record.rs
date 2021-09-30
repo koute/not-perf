@@ -196,7 +196,7 @@ pub fn main( args: args::RecordArgs ) -> Result< (), Box< dyn Error > > {
 
                     controller.write_packet( Packet::ContextSwitch {
                         pid: event_ref.pid(),
-                        cpu: event_ref.cpu(),
+                        cpu: event_ref.cpu().expect( "context switch event on a CPU-wide handle" ),
                         kind
                     });
                 },
