@@ -924,6 +924,32 @@ pub(crate) struct DecodeOpts {
     pub granularity: Granularity
 }
 
+fn strip_path( path: &str ) -> &str {
+    if let Some( index ) = path.rfind( "/src/" ) {
+        return &path[ path[ ..index ].rfind( "/" ).map( |index| index + 1 ).unwrap_or( 0 ).. ];
+    }
+
+    get_basename( path )
+}
+
+#[test]
+fn test_strip_path() {
+    assert_eq!(
+        strip_path( "/home/user/.cargo/registry/src/github.com-1ecc6299db9ec823/log-0.4.14/src/lib.rs" ),
+        "log-0.4.14/src/lib.rs"
+    );
+
+    assert_eq!(
+        strip_path( "/rustc/29ef6cf1637aa8317f8911f93f14e18d404c1b0e/library/core/src/ops/function.rs" ),
+        "core/src/ops/function.rs"
+    );
+
+    assert_eq!(
+        strip_path( "/random/path/project/src/module/runtime.rs" ),
+        "project/src/module/runtime.rs"
+    );
+}
+
 pub(crate) fn write_frame< T: fmt::Write >(
     state: &State,
     interner: &StringInterner,
@@ -955,9 +981,8 @@ pub(crate) fn write_frame< T: fmt::Write >(
             }
             let binary = state.get_binary( binary_id );
             let symbol = interner.resolve( symbol ).unwrap();
-            let file = interner.resolve( file ).unwrap();
-            let basename = get_basename( file );
-            write!( output, "{} [{}:{}, {}]", symbol, basename, line, binary.basename ).unwrap()
+            let path = strip_path( interner.resolve( file ).unwrap() );
+            write!( output, "{} [{}:{}, {}]", symbol, path, line, binary.basename ).unwrap()
         },
         FrameKind::UserByFunction { ref binary_id, is_inline, symbol } => {
             if is_inline {
