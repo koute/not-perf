@@ -47,6 +47,10 @@ macro_rules! error { ($($token:expr),*) => { log::error!( $($token),* ) } }
 #[cfg(all(feature = "log", feature = "debug-logs"))]
 macro_rules! debug_logs_enabled { () => { log::log_enabled!( log::Level::Debug ) } }
 
+#[cfg(feature = "local-unwinding")]
+#[macro_use]
+extern crate thread_local_reentrant;
+
 #[macro_use]
 mod elf;
 

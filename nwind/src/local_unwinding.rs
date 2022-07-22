@@ -356,7 +356,7 @@ const SHADOW_STACK_DEFAULT_LENGTH: usize = 256;
 #[cfg(test)]
 const SHADOW_STACK_DEFAULT_LENGTH: usize = 1;
 
-thread_local! {
+thread_local_reentrant! {
     static SHADOW_STACK_TLS_PTR: ShadowStackTlsPtr = {
         unsafe {
             let tls = ShadowStackTls::alloc( SHADOW_STACK_DEFAULT_LENGTH );
@@ -498,7 +498,7 @@ impl ShadowStack {
                 ShadowStackTls::grow( &mut self.tls )
             };
 
-            SHADOW_STACK_TLS_PTR.with( |tls_ptr| {
+            let _ = SHADOW_STACK_TLS_PTR.try_with( |tls_ptr| {
                 unsafe {
                     tls_ptr.set( self.tls );
                 }
@@ -1054,14 +1054,14 @@ fn clear_tls() {
     // Make sure we clear the TLS data from any tests which might
     // have had been previously launched on this thread.
 
-    SHADOW_STACK_TLS_PTR.with( |tls_ptr| {
+    SHADOW_STACK_TLS_PTR.try_with( |tls_ptr| {
         unsafe {
             let new_tls = ShadowStackTls::alloc( SHADOW_STACK_DEFAULT_LENGTH );
 
             ShadowStackTls::dealloc( tls_ptr.get() );
             tls_ptr.set( new_tls );
         }
-    });
+    }).unwrap();
 }
 
 #[test]
