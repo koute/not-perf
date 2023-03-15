@@ -30,6 +30,7 @@ use crate::utils::get_ms;
 use crate::binary::{BinaryData};
 use crate::arch::Endianity;
 use crate::range_map::RangeMap;
+use crate::utils::HexValue;
 
 type DataReader< E > = EndianSlice< 'static, E >;
 
@@ -46,12 +47,23 @@ impl< E: Endianity > ContextCache< E > {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Default, Debug, Hash)]
+#[derive(Clone, PartialEq, Eq, Default, Hash)]
 pub struct AddressMapping {
     pub declared_address: u64,
     pub actual_address: u64,
     pub file_offset: u64,
     pub size: u64
+}
+
+impl std::fmt::Debug for AddressMapping {
+    fn fmt( &self, fmt: &mut std::fmt::Formatter ) -> std::fmt::Result {
+        fmt.debug_struct( "AddressMapping" )
+         .field( "declared_address", &HexValue( self.declared_address ) )
+         .field( "actual_address", &HexValue( self.actual_address ) )
+         .field( "file_offset", &HexValue( self.file_offset ) )
+         .field( "size", &HexValue( self.size ) )
+         .finish()
+    }
 }
 
 type FDE< E > = FrameDescriptionEntry< DataReader< E > >;
