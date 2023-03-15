@@ -67,6 +67,7 @@ impl RawEventLocation {
 }
 
 pub struct SampleEvent< 'a > {
+    pub ip: u64,
     pub timestamp: u64,
     pub pid: u32,
     pub tid: u32,
@@ -144,6 +145,7 @@ pub enum Event< 'a > {
 impl< 'a > fmt::Debug for SampleEvent< 'a > {
     fn fmt( &self, fmt: &mut fmt::Formatter ) -> Result< (), fmt::Error > {
         fmt.debug_map()
+            .entry( &"ip", &self.ip )
             .entry( &"timestamp", &self.timestamp )
             .entry( &"pid", &self.pid )
             .entry( &"tid", &self.tid )
@@ -238,7 +240,7 @@ impl< 'a > RawEvent< 'a > {
                 let mut cur = io::Cursor::new( &raw_data );
 
                 // PERF_SAMPLE_IP
-                let _ = cur.read_u64::< NativeEndian >().unwrap();
+                let ip = cur.read_u64::< NativeEndian >().unwrap();
 
                 // PERF_SAMPLE_TID
                 let pid = cur.read_u32::< NativeEndian >().unwrap();
@@ -302,6 +304,7 @@ impl< 'a > RawEvent< 'a > {
 
                 assert_eq!( cur.position(), self.data.len() as u64 );
                 Event::Sample( SampleEvent {
+                    ip,
                     regs,
                     dynamic_stack_size,
                     stack,
