@@ -511,6 +511,7 @@ pub struct PerfBuilder {
     inherit: bool,
     start_disabled: bool,
     exclude_kernel: bool,
+    exclude_user: bool,
     gather_context_switches: bool
 }
 
@@ -551,6 +552,11 @@ impl PerfBuilder {
         self
     }
 
+    pub fn sample_user( mut self ) -> Self {
+        self.exclude_user = false;
+        self
+    }
+
     pub fn event_source( mut self, event_source: EventSource ) -> Self {
         self.event_source = event_source;
         self
@@ -581,6 +587,7 @@ impl PerfBuilder {
         let inherit = self.inherit;
         let start_disabled = self.start_disabled;
         let exclude_kernel = self.exclude_kernel;
+        let exclude_user = self.exclude_user;
         let gather_context_switches = self.gather_context_switches;
 
         debug!(
@@ -674,11 +681,14 @@ impl PerfBuilder {
             PERF_ATTR_FLAG_MMAP_DATA |
             PERF_ATTR_FLAG_COMM |
             PERF_ATTR_FLAG_FREQ |
-            PERF_ATTR_FLAG_EXCLUDE_CALLCHAIN_USER |
             PERF_ATTR_FLAG_TASK;
 
         if exclude_kernel {
             attr.flags |= PERF_ATTR_FLAG_EXCLUDE_KERNEL;
+        }
+
+        if exclude_user {
+            attr.flags |= PERF_ATTR_FLAG_EXCLUDE_CALLCHAIN_USER;
         }
 
         if inherit {
@@ -759,6 +769,7 @@ impl Perf {
             inherit: false,
             start_disabled: false,
             exclude_kernel: true,
+            exclude_user: true,
             gather_context_switches: false
         }
     }
