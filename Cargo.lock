@@ -257,7 +257,7 @@ dependencies = [
  "cfg-if",
  "crossbeam-utils",
  "lazy_static",
- "memoffset",
+ "memoffset 0.6.4",
  "scopeguard",
 ]
 
@@ -529,6 +529,15 @@ name = "memoffset"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59accc507f1338036a0477ef61afdae33cde60840f4dfe481319ce3ad116ddf9"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
+name = "memoffset"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5de893c32cde5f383baa4c04c5d6dbdd735cfd4a794b0debdb2bb1b421da5ff4"
 dependencies = [
  "autocfg",
 ]
@@ -1033,18 +1042,19 @@ checksum = "fe0f37c9e8f3c5a4a66ad655a93c74daac4ad00c441533bf5c6e7990bb42604e"
 
 [[package]]
 name = "speedy"
-version = "0.8.0"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "703879e10132e194944ab9870b8be5eb89ebe841548695cb7b75afc6feea6f10"
+checksum = "37d686619bd990cf4d94762d6a2ea473f5a8abe206c9289417bf2945dbff9909"
 dependencies = [
+ "memoffset 0.7.1",
  "speedy-derive",
 ]
 
 [[package]]
 name = "speedy-derive"
-version = "0.8.0"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a6186bf16640ac0e9fb6d72fee601faa8cb2bf3141fd56cef20b72c681429ad"
+checksum = "eb2b4a1060801de1cc846aaae9e4255b04d809a1c5977de2b6cc9a2820d8a4f7"
 dependencies = [
  "proc-macro2 1.0.29",
  "quote 1.0.9",
