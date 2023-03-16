@@ -827,17 +827,38 @@ pub struct AddressSpace< A: Architecture > {
     panic_on_partial_backtrace: bool
 }
 
+fn align_down( value: u64, alignment: u64 ) -> u64 {
+    value & !(alignment - 1)
+}
+
+fn align_up( value: u64, alignment: u64 ) -> u64 {
+    if value & alignment - 1 == 0 {
+        value
+    } else {
+        (value + alignment) & !(alignment - 1)
+    }
+}
+
 fn match_mapping( load_headers: &[LoadHeader], region: &Region ) -> Option< AddressMapping > {
     if !region.is_read {
         return None;
     }
 
+    debug!(
+        "Matching region: memory = {:x}..{:x} ({:x}), file = {:x}..{:x}",
+        region.start,
+        region.end,
+        region.end - region.start,
+        region.file_offset,
+        region.file_offset + (region.end - region.start)
+    );
+
     let mut matched: Option< (AddressMapping, &LoadHeader) > = None;
     let mut match_count = 0;
     let mut duplicate_matches = false;
     for header in load_headers {
-        let file_offset_start = header.file_offset & !(header.alignment - 1);
-        let file_offset_end = file_offset_start + header.file_size;
+        let file_offset_start = align_down( header.file_offset, header.alignment );
+        let file_offset_end = align_up( file_offset_start + header.file_size, header.alignment );
 
         if header.is_executable != region.is_executable {
             continue;
@@ -846,21 +867,45 @@ fn match_mapping( load_headers: &[LoadHeader], region: &Region ) -> Option< Addr
         if region.file_offset >= file_offset_start && region.file_offset < file_offset_end {
             let offset = region.file_offset - file_offset_start;
             let current_mapping = AddressMapping {
-                declared_address: (header.address & !(header.alignment - 1)) + offset,
+                declared_address: align_down( header.address, header.alignment ) + offset,
                 actual_address: region.start,
                 file_offset: region.file_offset,
                 size: region.end - region.start
             };
 
+            debug!(
+                "Matched mapping: {:x} ({:x}) inside of {:x}..{:x} ({:x}) (original: {:x}..{:x} ({:x}))",
+                region.file_offset,
+                region.end - region.start,
+                file_offset_start,
+                file_offset_end,
+                file_offset_end - file_offset_start,
+                header.file_offset,
+                header.file_offset + header.file_size,
+                header.file_size
+            );
+
             match_count += 1;
-            if let Some( (_, ref previous_header) ) = matched {
+            if let Some( (ref previous_mapping, ref previous_header) ) = matched {
+                let previous_file_offset_start = align_down( previous_header.file_offset, previous_header.alignment );
+                let previous_file_offset_end = align_up( previous_file_offset_start + previous_header.file_size, previous_header.alignment );
+
                 let previous_file_offset_match = previous_header.file_offset == region.file_offset;
                 let current_file_offset_match = header.file_offset == region.file_offset;
+                let previous_size_match = (region.end - region.start) == (previous_file_offset_end - previous_file_offset_start);
+                let current_size_match = (region.end - region.start) == (file_offset_end - file_offset_start);
                 let previous_permissions_match = previous_header.is_readable == region.is_read && previous_header.is_writable == region.is_write;
                 let current_permissions_match = header.is_readable == region.is_read && header.is_writable == region.is_write;
 
-                let previous_score = previous_file_offset_match as usize * 2 + previous_permissions_match as usize;
-                let current_score = current_file_offset_match as usize * 2 + current_permissions_match as usize;
+                let previous_score =
+                    previous_file_offset_match as usize * 4 +
+                    previous_permissions_match as usize * 2 +
+                    previous_size_match as usize;
+
+                let current_score =
+                    current_file_offset_match as usize * 4 +
+                    current_permissions_match as usize * 2 +
+                    current_size_match as usize;
 
                 if current_score != previous_score {
                     if current_score > previous_score {
@@ -869,7 +914,7 @@ fn match_mapping( load_headers: &[LoadHeader], region: &Region ) -> Option< Addr
                 } else {
                     if match_count == 2 {
                         warn!( "Duplicate PT_LOAD matches for a single memory region: {:?}", region );
-                        warn!( "  Match #0: {:?} => {:?}", previous_header, matched.as_ref().unwrap() );
+                        warn!( "  Match #0: {:?} => {:?}", previous_header, previous_mapping );
                     }
 
                     warn!( "  Match #{}: {:?} => {:?}", match_count - 1, header, current_mapping );
@@ -1813,5 +1858,34 @@ fn test_match_mapping_6() {
         actual_address: 140464087232512,
         file_offset: 8192,
         size: 8192
+    }));
+}
+
+#[test]
+fn test_match_mapping_7() {
+    let load_headers = &[
+        LoadHeader { address: 0x43B7000, file_offset: 0x43B5000, file_size: 0x019B568, memory_size: 0x019C000, alignment: 0x1000, is_readable: true, is_writable: true, is_executable: false },
+        LoadHeader { address: 0x4553570, file_offset: 0x4550570, file_size: 0x000A7A8, memory_size: 0x0013770, alignment: 0x1000, is_readable: true, is_writable: true, is_executable: false }
+    ][..];
+
+    let mapping = match_mapping( &load_headers, &Region {
+        start: 0x564ff40e1000,
+        end: 0x564ff40ec000,
+        is_read: true,
+        is_write: true,
+        is_executable: false,
+        is_shared: false,
+        file_offset: 0x4550000,
+        major: 0,
+        minor: 50,
+        inode: 3568187,
+        name: "substrate".into()
+    });
+
+    assert_eq!( mapping, Some( AddressMapping {
+        declared_address: 0x0000000004553000,
+        actual_address: 0x0000564FF40E1000,
+        file_offset: 0x0000000004550000,
+        size: 0x000000000000B000
     }));
 }
