@@ -204,6 +204,10 @@ pub struct SharedCollationArgs {
     #[structopt(long, short = "d", parse(from_os_str))]
     pub debug_symbols: Vec< OsString >,
 
+    /// A path to a jitdump file
+    #[structopt(long, parse(from_os_str))]
+    pub jitdump: Option< OsString >,
+
     #[structopt(long, raw(hidden = "true"))]
     pub force_stack_size: Option< u32 >,
 
