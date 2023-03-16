@@ -120,7 +120,7 @@ pub enum Granularity {
 
 impl Default for Granularity {
     fn default() -> Self {
-        Granularity::Function
+        Granularity::Line
     }
 }
 
