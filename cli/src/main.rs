@@ -20,7 +20,7 @@ use nperf_core::cmd_flamegraph;
 
 fn main_impl() -> Result< (), Box< dyn Error > > {
     if env::var( "RUST_LOG" ).is_err() {
-        env::set_var( "RUST_LOG", "nperf=info" );
+        env::set_var( "RUST_LOG", "info" );
     }
 
     #[cfg(feature = "env_logger")]
