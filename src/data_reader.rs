@@ -383,7 +383,7 @@ impl< 'a > EventSample< 'a > {
                     if let Some( ref mut output ) = output {
                         output.push( default );
                     }
-                    return true;
+                    continue;
                 }
             };
 
