@@ -227,12 +227,14 @@ impl Architecture for Arch {
                                 next_rip
                             );
 
-                            regs.clear();
-                            regs.append( dwarf::RSP, rbp + 16 );
-                            regs.append( dwarf::RBP, next_rbp );
-                            regs.append( dwarf::RETURN_ADDRESS, next_rip );
-                            *ra_address = Some( next_rip );
-                            return Some( UnwindStatus::InProgress );
+                            if next_rbp != rbp {
+                                regs.clear();
+                                regs.append( dwarf::RSP, rbp + 16 );
+                                regs.append( dwarf::RBP, next_rbp );
+                                regs.append( dwarf::RETURN_ADDRESS, next_rip );
+                                *ra_address = Some( next_rip );
+                                return Some( UnwindStatus::InProgress );
+                            }
                         }
                     }
                 }
