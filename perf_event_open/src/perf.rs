@@ -1,4 +1,5 @@
 use std::mem;
+use std::mem::MaybeUninit;
 use std::io;
 use std::os::unix::io::RawFd;
 use std::ptr;
@@ -919,7 +920,7 @@ pub struct EventIter< 'a > {
 impl< 'a > EventIter< 'a > {
     #[inline]
     fn new( perf: &'a mut Perf ) -> Self {
-        let mut locations: [RawEventLocation; 32] = unsafe { mem::uninitialized() };
+        let mut locations: [RawEventLocation; 32] = unsafe { let m = MaybeUninit::uninit(); m.assume_init() };
         let mut count = 0;
 
         {
