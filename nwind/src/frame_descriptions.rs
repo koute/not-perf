@@ -460,7 +460,12 @@ impl< E: Endianity > FrameDescriptions< E > {
             if debug_logs_enabled!() {
                 match eh_frame_hdr.table().unwrap().lookup( address, bases ) {
                     Ok( gimli::Pointer::Direct( pointer ) ) => {
-                        debug!( "FDE pointer for {:016X} from .eh_frame_hdr: {:016X} (relative: 0x{:X})", address, pointer, pointer - bases.eh_frame_hdr.section.unwrap() );
+                        let base = bases.eh_frame_hdr.section.unwrap();
+                        if pointer < base {
+                            warn!( "FDE pointer for {:016X} from .eh_frame_hdr: {:016X} (relative: -0x{:X}", address, pointer, base - pointer );
+                        } else {
+                            debug!( "FDE pointer for {:016X} from .eh_frame_hdr: {:016X} (relative: 0x{:X})", address, pointer, pointer - base);
+                        }
                     },
                     _ => {}
                 }

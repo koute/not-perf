@@ -1,0 +1,22 @@
+[package]
+name = "nwind-capi"
+version = "0.1.0"
+authors = ["Milian Wolff <mail@milianw.de>"]
+edition = "2018"
+readme = "README.md"
+repository = "https://github.com/koute/not-perf"
+homepage = "https://github.com/koute/not-perf"
+description = """
+Fast caching unw_backtrace implementation based on a shadow stack
+"""
+
+[dependencies]
+nwind = { version = "0.1", path = "../nwind", default-features = false, features = ["local-unwinding"] }
+env_logger = { version = "0.8", optional = true }
+
+[lib]
+name = "nwind_capi"
+crate-type = ["staticlib", "cdylib"]
+
+[features]
+env_logger = ["dep:env_logger", "nwind/debug-logs"]

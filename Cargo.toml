@@ -44,7 +44,7 @@ addr2line = ["nwind/addr2line"]
 debug-logs = ["nwind/debug-logs"]
 
 [workspace]
-members = [".", "cli", "nwind", "proc-maps", "perf_event_open", "thread-local-reentrant"]
+members = [".", "cli", "nwind", "nwind-capi", "proc-maps", "perf_event_open", "thread-local-reentrant"]
 
 [[bench]]
 name = "unwinding"
