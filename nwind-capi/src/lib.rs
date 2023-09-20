@@ -1,9 +1,14 @@
+#[cfg(feature = "env_logger")]
+extern crate env_logger;
+
 use nwind::{LocalAddressSpace, LocalAddressSpaceOptions, LocalUnwindContext, UnwindControl};
 
 use core::ffi::{c_int, c_void};
 
 #[no_mangle]
 pub unsafe extern "C" fn nwind_create_local_address_space() -> *mut LocalAddressSpace {
+    #[cfg(feature = "env_logger")]
+    let _ = env_logger::try_init();
     let opts = LocalAddressSpaceOptions::new().should_load_symbols(false);
     let address_space = LocalAddressSpace::new_with_opts(opts).unwrap();
 
