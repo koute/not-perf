@@ -387,7 +387,9 @@ impl< A: Architecture > Binary< A > {
                                 frame.name = Some( name );
                                 frame.demangled_name = demangled_name;
                             }
-                        } else if let Some( ref name ) = frame.name {
+                        }
+
+                        if let Some( ref name ) = frame.name {
                             frame.demangled_name = demangle( name ).map( |demangled| demangled.into() );
                         }
 
