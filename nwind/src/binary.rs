@@ -16,7 +16,7 @@ use gimli;
 use speedy::{Readable, Writable};
 
 use crate::elf::{self, Endian};
-use crate::utils::{StableIndex, get_major, get_minor};
+use crate::utils::{HexValue, StableIndex, get_major, get_minor};
 use crate::types::{Inode, Bitness, Endianness};
 
 enum Blob {
@@ -45,7 +45,7 @@ pub struct SymbolTable {
     pub is_dynamic: bool
 }
 
-#[derive(Clone, Debug, Readable, Writable)]
+#[derive(Clone, Readable, Writable)]
 pub struct LoadHeader {
     pub address: u64,
     pub file_offset: u64,
@@ -55,6 +55,44 @@ pub struct LoadHeader {
     pub is_readable: bool,
     pub is_writable: bool,
     pub is_executable: bool
+}
+
+struct Perms( bool, bool, bool );
+impl std::fmt::Debug for Perms {
+    fn fmt( &self, fmt: &mut std::fmt::Formatter ) -> std::fmt::Result {
+        if self.0 {
+            fmt.write_str( "r" )?;
+        } else {
+            fmt.write_str( "-" )?;
+        }
+
+        if self.1 {
+            fmt.write_str( "w" )?;
+        } else {
+            fmt.write_str( "-" )?;
+        }
+
+        if self.2 {
+            fmt.write_str( "x" )?;
+        } else {
+            fmt.write_str( "-" )?;
+        }
+
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for LoadHeader {
+    fn fmt( &self, fmt: &mut std::fmt::Formatter ) -> std::fmt::Result {
+        fmt.debug_struct( "LoadHeader" )
+         .field( "address", &HexValue( self.address ) )
+         .field( "file_offset", &HexValue( self.file_offset ) )
+         .field( "file_size", &HexValue( self.file_size ) )
+         .field( "memory_size", &HexValue( self.memory_size ) )
+         .field( "alignment", &HexValue( self.alignment ) )
+         .field( "flags", &Perms( self.is_readable, self.is_writable, self.is_executable ) )
+         .finish()
+    }
 }
 
 pub struct BinaryData {

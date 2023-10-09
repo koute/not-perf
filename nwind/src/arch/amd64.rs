@@ -213,7 +213,34 @@ impl Architecture for Arch {
             }
         }
 
-        let result = dwarf_unwind( nth_frame, memory, &mut state.ctx_cache, &mut state.unwind_cache, regs, &mut state.new_regs )?;
+        let result = match dwarf_unwind( nth_frame, memory, &mut state.ctx_cache, &mut state.unwind_cache, regs, &mut state.new_regs ) {
+            Some( result ) => result,
+            None => {
+                if let Some( rbp ) = regs.get( dwarf::RBP ) {
+                    if let Some( next_rbp ) = memory.get_pointer_at_address( rbp ) {
+                        if let Some( next_rip ) = memory.get_pointer_at_address( rbp + 8 ) {
+                            trace!(
+                                "RBP-based unwinding: RBP: {:x} -> {:x}, RIP: {:x} -> {:x}",
+                                rbp,
+                                next_rbp,
+                                regs.get( dwarf::RETURN_ADDRESS ).expect( "no RIP" ),
+                                next_rip
+                            );
+
+                            if next_rbp != rbp {
+                                regs.clear();
+                                regs.append( dwarf::RSP, rbp + 16 );
+                                regs.append( dwarf::RBP, next_rbp );
+                                regs.append( dwarf::RETURN_ADDRESS, next_rip );
+                                *ra_address = Some( next_rip );
+                                return Some( UnwindStatus::InProgress );
+                            }
+                        }
+                    }
+                }
+                return None;
+            }
+        };
         *initial_address = Some( result.initial_address );
         *ra_address = result.ra_address;
         let cfa = result.cfa?;

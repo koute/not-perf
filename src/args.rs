@@ -120,7 +120,7 @@ pub enum Granularity {
 
 impl Default for Granularity {
     fn default() -> Self {
-        Granularity::Function
+        Granularity::Line
     }
 }
 
@@ -203,6 +203,10 @@ pub struct SharedCollationArgs {
     /// A file or directory with extra debugging symbols; can be specified multiple times
     #[structopt(long, short = "d", parse(from_os_str))]
     pub debug_symbols: Vec< OsString >,
+
+    /// A path to a jitdump file
+    #[structopt(long, parse(from_os_str))]
+    pub jitdump: Option< OsString >,
 
     #[structopt(long, raw(hidden = "true"))]
     pub force_stack_size: Option< u32 >,

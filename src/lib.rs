@@ -34,3 +34,4 @@ pub mod cmd_csv;
 pub mod cmd_collate;
 pub mod cmd_metadata;
 pub mod cmd_trace_events;
+mod jitdump;

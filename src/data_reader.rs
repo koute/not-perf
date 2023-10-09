@@ -1,6 +1,7 @@
 use std::fs;
 use std::ffi::OsStr;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::ops::{Range, Index};
 use std::cmp::{max, min};
@@ -50,6 +51,9 @@ pub(crate) enum FrameKind {
     UserByFunction {
         binary_id: BinaryId,
         is_inline: bool,
+        symbol: StringId
+    },
+    UserByFunctionJit {
         symbol: StringId
     },
     UserByLine {
@@ -241,7 +245,8 @@ pub(crate) struct ReadDataArgs< 'a > {
     without_kernel_callstacks: bool,
     fde_hints: FdeHints,
     from: Option< TimestampBound >,
-    to: Option< TimestampBound >
+    to: Option< TimestampBound >,
+    jitdump_path: Option< &'a OsStr >,
 }
 
 #[derive(Copy, Clone)]
@@ -269,7 +274,8 @@ pub(crate) struct State {
     binary_by_id: HashMap< BinaryId, Binary >,
     unfiltered_first_timestamp: Option< u64 >,
     cpu_count: u32,
-    frequency: Option< u32 >
+    frequency: Option< u32 >,
+    jitdump_names: RangeMap< String >,
 }
 
 impl State {
@@ -376,14 +382,21 @@ impl< 'a > EventSample< 'a > {
         }
 
         for (nth_frame, user_frame) in self.user_backtrace.iter().enumerate() {
-            let default = FrameKind::User( user_frame.initial_address.unwrap_or( user_frame.address ) );
             let region = match self.process.memory_regions.get_value( user_frame.address ) {
                 Some( region ) => region,
                 None => {
                     if let Some( ref mut output ) = output {
-                        output.push( default );
+                        let address = user_frame.initial_address.unwrap_or( user_frame.address );
+                        if let Some( name ) = state.jitdump_names.get_value( address ) {
+                            let string_id = interner.get_or_intern( name );
+                            output.push( FrameKind::UserByFunctionJit {
+                                symbol: string_id
+                            });
+                        } else {
+                            output.push( FrameKind::User( address ) );
+                        }
                     }
-                    return true;
+                    continue;
                 }
             };
 
@@ -489,7 +502,8 @@ pub(crate) fn read_data< F >( args: ReadDataArgs, mut on_event: F ) -> Result< S
         binary_by_id: HashMap::new(),
         unfiltered_first_timestamp: None,
         cpu_count: 1,
-        frequency: None
+        frequency: None,
+        jitdump_names: RangeMap::new()
     };
 
     let mut machine_architecture = String::new();
@@ -502,6 +516,30 @@ pub(crate) fn read_data< F >( args: ReadDataArgs, mut on_event: F ) -> Result< S
     let mut debug_info_index = DebugInfoIndex::new();
     for path in args.debug_symbols {
         debug_info_index.add( path );
+    }
+
+    let mut jitdump_events = VecDeque::new();
+    if let Some( jitdump_path ) = args.jitdump_path {
+        let jitdump = crate::jitdump::JitDump::load( jitdump_path.as_ref() ).map_err( |err| format!( "failed to open jitdump {:?}: {}", jitdump_path, err ) )?;
+        for record in jitdump.records {
+            match record {
+                crate::jitdump::Record::CodeLoad { timestamp, virtual_address, name, code, .. } => {
+                    jitdump_events.push_back( (timestamp, virtual_address..virtual_address + code.len() as u64, name) );
+                },
+                crate::jitdump::Record::Unknown { .. } => {}
+            }
+        }
+    }
+
+    fn process_jitdump( timestamp: u64, jitdump_events: &mut VecDeque< (u64, Range< u64 >, String) >, jitdump_names: &mut RangeMap< String > ) {
+        while let Some( (event_timestamp, _, _) ) = jitdump_events.front() {
+            if *event_timestamp > timestamp {
+                return;
+            }
+
+            let (_, range, name) = jitdump_events.pop_front().unwrap();
+            jitdump_names.push( range, name ).unwrap();
+        }
     }
 
     if args.from.is_some() || args.to.is_some() {
@@ -775,6 +813,8 @@ pub(crate) fn read_data< F >( args: ReadDataArgs, mut on_event: F ) -> Result< S
                 }
             },
             Packet::Sample { user_backtrace, mut kernel_backtrace, pid, tid, cpu, timestamp, .. } => {
+                process_jitdump( timestamp, &mut jitdump_events, &mut state.jitdump_names );
+
                 if first_timestamp.is_none() {
                     first_timestamp = Some( timestamp );
                 } else {
@@ -820,6 +860,8 @@ pub(crate) fn read_data< F >( args: ReadDataArgs, mut on_event: F ) -> Result< S
                 sample_counter += 1;
             },
             Packet::RawSample { mut kernel_backtrace, pid, tid, stack, regs, cpu, timestamp, .. } => {
+                process_jitdump( timestamp, &mut jitdump_events, &mut state.jitdump_names );
+
                 if first_timestamp.is_none() {
                     first_timestamp = Some( timestamp );
                 } else {
@@ -992,6 +1034,10 @@ pub(crate) fn write_frame< T: fmt::Write >(
             let symbol = interner.resolve( symbol ).unwrap();
             write!( output, "{} [{}]", symbol, binary.basename ).unwrap()
         },
+        FrameKind::UserByFunctionJit { symbol } => {
+            let symbol = interner.resolve( symbol ).unwrap();
+            write!( output, "{} [JIT]", symbol ).unwrap()
+        },
         FrameKind::UserByAddress { ref binary_id, is_inline, symbol, address } => {
             write!( output, "0x{:016X} ", address ).unwrap();
             if is_inline {
@@ -1045,7 +1091,8 @@ pub(crate) fn repack_cli_args( args: &args::SharedCollationArgs ) -> (Option< Re
             load_debug_frame: true
         },
         from: args.from.as_ref().map( parse_timestamp_bound ),
-        to: args.to.as_ref().map( parse_timestamp_bound )
+        to: args.to.as_ref().map( parse_timestamp_bound ),
+        jitdump_path: args.jitdump.as_ref().map( |path| path.as_os_str() ),
     };
 
     (omit_regex, read_data_args)
