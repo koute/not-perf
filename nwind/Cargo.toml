@@ -12,7 +12,7 @@ scroll = "0.9"
 memmap = "0.7"
 log = { version = "0.4", optional = true }
 speedy = "0.8"
-lru = "0.6"
+lru = "0.16.3"
 cpp_demangle = "0.3"
 rustc-demangle = { version = "0.1", optional = true }
 addr2line = { version = "0.16", optional = true, default-features = false, features = ["std"] }

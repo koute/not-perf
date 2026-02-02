@@ -5,6 +5,7 @@ use std::ops::Range;
 use std::fmt;
 use std::borrow::Cow;
 use std::ops::Deref;
+use std::num::NonZeroUsize;
 use std::sync::Mutex;
 use std::str;
 
@@ -327,7 +328,7 @@ impl SymbolDecodeCache {
     }
 
     pub fn put( &mut self, address: u64, raw_name: String, name: Option< String > ) {
-        let cache = self.cache.get_or_insert_with( || LruCache::new( 2000 ) );
+        let cache = self.cache.get_or_insert_with( || LruCache::new( NonZeroUsize::new( 2000 ).unwrap() ) );
         cache.put( address, (raw_name, name) );
     }
 }
@@ -418,7 +419,7 @@ impl< A: Architecture > Binary< A > {
         callback( &mut frame );
     }
 
-    fn resolve_symbol( &self, relative_address: u64 ) -> Option< (Cow< str >, Option< Cow< str > >) > {
+    fn resolve_symbol( &self, relative_address: u64 ) -> Option< (Cow< '_, str >, Option< Cow< '_, str > >) > {
         if let Some( symbol_decode_cache ) = self.symbol_decode_cache.as_ref() {
             let mut cache = symbol_decode_cache.lock().unwrap();
             if let Some( (name, raw_name) ) = cache.get( relative_address ) {
@@ -444,7 +445,7 @@ impl< A: Architecture > Binary< A > {
         None
     }
 
-    pub(crate) fn decode_symbol_once( &self, address: u64 ) -> Frame {
+    pub(crate) fn decode_symbol_once( &self, address: u64 ) -> Frame< '_ > {
         let mut output = Frame::from_address( address, address );
         self.decode_symbol_while( address, &mut |frame| {
             mem::swap( &mut output, frame );
@@ -808,7 +809,7 @@ pub trait IAddressSpace {
     fn reload( &mut self, regions: Vec< Region >, try_load: &mut dyn FnMut( &Region, &mut LoadHandle ) ) -> Reloaded;
     fn unwind( &mut self, regs: &mut DwarfRegs, stack: &dyn BufferReader, output: &mut Vec< UserFrame > );
     fn decode_symbol_while< 'a >( &'a self, address: u64, callback: &mut dyn FnMut( &mut Frame< 'a > ) -> bool );
-    fn decode_symbol_once( &self, address: u64 ) -> Frame;
+    fn decode_symbol_once( &self, address: u64 ) -> Frame< '_ >;
     fn set_panic_on_partial_backtrace( &mut self, value: bool );
 }
 
@@ -1279,7 +1280,7 @@ impl< A: Architecture > IAddressSpace for AddressSpace< A > where A::RegTy: Prim
         }
     }
 
-    fn decode_symbol_once( &self, address: u64 ) -> Frame {
+    fn decode_symbol_once( &self, address: u64 ) -> Frame< '_ > {
         if let Some( region ) = self.regions.get_value( address ) {
             region.binary.decode_symbol_once( address )
         } else {

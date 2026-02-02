@@ -2,6 +2,7 @@ use std::slice;
 use std::mem;
 use std::fmt;
 use std::ops::Range;
+use std::num::NonZeroUsize;
 
 use byteorder::{ByteOrder, LittleEndian, BigEndian};
 use lru::LruCache;
@@ -809,7 +810,7 @@ pub struct UnwindInfoCache {
 impl UnwindInfoCache {
     pub fn new() -> Self {
         UnwindInfoCache {
-            cache: LruCache::new( 4096 )
+            cache: LruCache::new( NonZeroUsize::new( 4096 ).unwrap() )
         }
     }
 
@@ -1089,7 +1090,7 @@ pub fn unwind< M >(
 
     {
         let mut rules = Vec::new();
-        if unwind_cache.cache.len() == unwind_cache.cache.cap() {
+        if unwind_cache.cache.len() == unwind_cache.cache.cap().get() {
             rules = unwind_cache.cache.pop_lru().map( |(_, old)| old.rules ).unwrap();
             rules.clear();
         } else {
